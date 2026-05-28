@@ -30,6 +30,8 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 
 Python 3.11+ · oandapyV20>=0.6 · pydantic>=2 · pydantic-settings>=2 · python-dotenv>=1.0 · pandas>=2.0 · custom event-driven backtest engine · Hermes Agent (Nous Research) · anthropic SDK · SQLite→PostgreSQL · Parquet · Streamlit + TW Lightweight Charts
 
+**Dev deps (optional group):** pytest>=7.4 · mypy>=1.8 · responses>=0.25 (HTTP mock for OANDA unit tests)
+
 ---
 
 ## Common Commands
