@@ -4,8 +4,9 @@ Design
 ------
 - Uses a pre-populated in-memory-style SQLite fixture (real file in tmp_path)
   with candle data sufficient for at least one walk-forward window.
-- Mocks ``OandaClient.get_candles`` so no live HTTP calls are made.
-- Runs via ``--dry-run`` so the test never touches the network.
+- All invocations run the runner with ``--dry-run``, which skips OANDA
+  construction entirely (Settings/OandaClient are never built), so no live
+  HTTP is possible. Cached SQLite fixtures provide any candle data.
 
 Assertions
 ----------
@@ -226,14 +227,12 @@ class TestPocRunnerEmptyStore:
         result = _run_poc(empty_db)
         combined = result.stdout + result.stderr
         # These patterns are typical token/key formats we must never log.
-        assert "OANDA_API_TOKEN" not in combined.upper() or "=" not in combined, (
-            "INV-08: raw env var name with value must not appear in output"
+        assert "OANDA_API_TOKEN" not in combined.upper(), (
+            "INV-08: token env name leaked into output"
         )
-        # The token itself cannot be logged because we run with --dry-run and
-        # Settings is not built; this test verifies no settings fields appear.
-        # More specifically: no secret-looking strings of 32+ hex chars.
+        # No secret-looking strings of 32+ hex chars (typical token value shape).
         assert not re.search(r"[0-9a-fA-F]{32,}", combined), (
-            "INV-08: potential token/secret string found in output"
+            "INV-08: possible token value leaked into output"
         )
 
 

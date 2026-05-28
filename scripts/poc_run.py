@@ -239,15 +239,11 @@ def run(argv: Optional[list[str]] = None) -> int:
         dry_run,
     )
 
-    # Build Settings — validation will raise if .env is absent and required
-    # fields are missing (unless we're in dry_run mode).  In dry_run mode the
-    # Settings object is still built (we may need the store path), but we never
-    # call OandaClient (INV-08 — no token access in dry_run is fine because
-    # the client is never constructed, but Settings is harmless to build with a
-    # dummy token if needed).
-    #
-    # For dry_run, we still try to build Settings; if it fails (no .env) we
-    # substitute a no-op client below.
+    # In dry_run mode we skip Settings/OandaClient construction entirely and
+    # operate only against the cached Store at the given db path — no .env is
+    # read and no token is ever accessed (INV-08). Outside dry_run, Settings
+    # validation will raise if .env is absent and required fields are missing,
+    # and OandaClient is constructed from those Settings.
     settings: Optional[Settings] = None
     client: Optional[OandaClient] = None
 
