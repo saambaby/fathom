@@ -228,9 +228,17 @@ class Store:
         ]
 
         if not rows:
-            # Return an empty DataFrame with the correct schema.
+            # Return an empty DataFrame with the correct schema and dtypes.
+            # pd.DataFrame(columns=...) defaults every column to object dtype,
+            # so we must coerce all columns explicitly to match the populated path.
             df = pd.DataFrame(columns=columns)
             df["time"] = pd.to_datetime(df["time"], utc=True).astype("datetime64[ns, UTC]")
+            float_cols = [
+                "open_bid", "high_bid", "low_bid", "close_bid",
+                "open_ask", "high_ask", "low_ask", "close_ask",
+            ]
+            df[float_cols] = df[float_cols].astype("float64")
+            df["volume"] = df["volume"].astype("int64")
             return df
 
         df = pd.DataFrame(rows, columns=columns)

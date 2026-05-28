@@ -166,7 +166,12 @@ class TestStoreRoundTrip:
         assert len(df) == 0, "Incomplete candles must not appear in load results"
 
     def test_empty_range_returns_empty_dataframe(self, mem_store: Store) -> None:
-        """load_candles with no matching rows returns an empty DataFrame."""
+        """load_candles with no matching rows returns an empty DataFrame.
+
+        The empty path must return exactly the same dtypes as the populated
+        path — object columns would poison pd.concat and violate the AC dtype
+        contract expected by T-05.
+        """
         df = mem_store.load_candles(
             "EUR_USD", "H1",
             start=_utc(2020, 1, 1),
@@ -176,6 +181,21 @@ class TestStoreRoundTrip:
         assert len(df) == 0
         # Schema must be correct even when empty.
         assert "time" in df.columns
+        # Dtype contract: empty path must match populated path exactly.
+        assert str(df["time"].dtype) == "datetime64[ns, UTC]", (
+            f"time must be datetime64[ns, UTC], got {df['time'].dtype}"
+        )
+        float_price_cols = [
+            "open_bid", "high_bid", "low_bid", "close_bid",
+            "open_ask", "high_ask", "low_ask", "close_ask",
+        ]
+        for col in float_price_cols:
+            assert df[col].dtype == "float64", (
+                f"{col} must be float64 on empty DataFrame, got {df[col].dtype}"
+            )
+        assert df["volume"].dtype == "int64", (
+            f"volume must be int64 on empty DataFrame, got {df['volume'].dtype}"
+        )
 
     def test_upsert_idempotent(self, mem_store: Store) -> None:
         """Re-inserting the same candle does not create duplicate rows."""
@@ -354,6 +374,25 @@ class TestPartialGapFill:
 
         # Client was called exactly once (for the leading gap).
         assert client.get_candles.call_count == 1
+
+        # The fetch must have been scoped to the missing leading sub-range,
+        # not the whole requested range.  Inspect from_time: it must equal the
+        # requested start (i.e. the gap begins at the start of the window).
+        call_kwargs = client.get_candles.call_args
+        from_time_arg = call_kwargs.kwargs.get(
+            "from_time", call_kwargs.args[3] if len(call_kwargs.args) > 3 else None
+        )
+        assert from_time_arg is not None, "from_time must be passed to get_candles"
+        assert from_time_arg == _utc(2024, 4, 2, 0), (
+            f"from_time should be the requested start (leading gap begins there), "
+            f"got {from_time_arg}"
+        )
+        # from_time must be strictly before the first cached bar (hour 4),
+        # confirming the fetch was scoped to the missing sub-range.
+        assert from_time_arg < _utc(2024, 4, 2, 4), (
+            "from_time must be before the already-cached leading edge (hour 4) — "
+            "fetch was not correctly scoped to the missing sub-range"
+        )
 
         # Result contains all 6 rows.
         assert len(df) == 6
