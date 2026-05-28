@@ -1,8 +1,19 @@
 # Fathom PoC — Task Graph
 
-> ✅ **DECISIONS RESOLVED — READY FOR DISPATCH**
-> Open decisions D-01, D-02, D-03 confirmed by human 2026-05-28.
-> Graph approved. Proceed to `runbook-orchestration-kickoff`.
+> ✅ **CODE COMPLETE — manual acceptance gate (T-08) pending**
+> Orchestration kickoff ran 2026-05-28. All 7 code tasks merged to `main` via PR with fresh-reviewer gates. Decisions D-01/02/03 resolved.
+>
+> **Issue → PR map:** T-01 #2→PR#10 · T-02 #3→PR#12 · T-03 #4→PR#13 · T-04 #5→PR#11 · T-05 #6→PR#14 · T-06 #7→PR#15 · T-07 #8→PR#16 · T-08 #9 = **manual gate, open**
+>
+> **Integrated `main` verified:** 145 tests pass, mypy clean (25 files), `python scripts/poc_run.py --dry-run` exits 0.
+>
+> **Remaining:** T-08 (#9) is `blocked-on-human` — requires `.env` with a real OANDA demo token + account ID, then a human runs `python scripts/poc_run.py` against the live demo API and reviews the approved-set table. See "Post-Approval Handoff" / issue #9.
+
+### Dispatch outcome notes
+
+- **Lead ruling (T-06 approved-set criteria):** the gates are **per-window** — every OOS window must individually have Sharpe > 0 AND trade_count ≥ 5. (The AC phrase "across all OOS windows" was ambiguous; per-window is the consistent, statistically-honest reading. Overridable if intent was aggregate.)
+- **Three tasks needed rework before passing review:** T-02 (INV-03: `CandleRow.time` → `AwareDatetime`), T-03 (empty-DataFrame dtype contract), T-06 (per-window gate + a test that didn't isolate the fix). The reviewer gate caught all three — none reached `main` unfixed.
+- **Follow-up to track (non-blocking):** `backtest/costs.py` `apply_costs` accepts `spread_pips=0.0` directly; the engine path is gated by `CostParams(gt=0)`, but the bare public function could be hardened with a self-defending guard so INV-06 can't be bypassed by a future direct caller.
 
 ---
 
