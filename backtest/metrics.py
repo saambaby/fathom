@@ -242,9 +242,10 @@ def _max_drawdown(equity: pd.Series) -> tuple[float, int]:
     analytics toolkits.
 
     Drawdown percentage is computed relative to the running peak.  When the
-    peak cumulative equity is 0 (or negative — the account started losing from
-    bar 1), the pct is not meaningful; we fall back to 0.0 in that edge case
-    to avoid division by zero.
+    peak cumulative equity is non-positive (account started at or below zero
+    and only declined), the percentage basis would be misleading; we compute
+    the drawdown as a percentage of the absolute decline from the first bar
+    instead so that a purely-losing curve is never reported as 0% drawdown.
     """
     if len(equity) == 0:
         return 0.0, 0
@@ -269,10 +270,15 @@ def _max_drawdown(equity: pd.Series) -> tuple[float, int]:
             trough_val = values[i]
             bars = i - peak_idx + 1  # inclusive: peak bar … trough bar
 
-            if peak_val != 0.0:
-                dd_pct = (trough_val - peak_val) / abs(peak_val) * 100.0
+            if peak_val > 0.0:
+                dd_pct = (trough_val - peak_val) / peak_val * 100.0
             else:
-                dd_pct = 0.0
+                # Peak is zero or negative (curve never rose above its start).
+                # Use absolute decline from the first bar as the basis so that
+                # a purely-losing curve is never falsely reported as 0% drawdown.
+                first_val = values[0]
+                basis = abs(first_val) if first_val != 0.0 else abs(trough_val)
+                dd_pct = (trough_val - first_val) / basis * 100.0 if basis != 0.0 else 0.0
 
             if dd_pct < max_dd_pct:
                 max_dd_pct = dd_pct

@@ -232,6 +232,21 @@ class TestMaxDrawdown:
         assert metrics.max_drawdown_pct == 0.0
         assert metrics.max_drawdown_duration_bars == 0
 
+    def test_max_drawdown_from_zero_declining_curve(self) -> None:
+        """A curve starting at 0 and only declining must NOT report 0% drawdown."""
+        # [0, -5, -10, -15] — peak is 0, curve only declines.
+        # The old code short-circuited to 0.0 when peak_val == 0; now it must
+        # report the actual loss magnitude using the absolute decline as basis.
+        equity_vals = [0.0, -5.0, -10.0, -15.0]
+        result = _make_result(trades=[], equity_values=equity_vals)
+        metrics = compute_metrics(result)
+        assert metrics.max_drawdown_pct != 0.0, (
+            "A purely-losing curve starting at 0 must not report 0% drawdown"
+        )
+        assert metrics.max_drawdown_pct < 0.0, (
+            f"Drawdown must be negative (a loss), got {metrics.max_drawdown_pct}"
+        )
+
     def test_max_drawdown_two_episodes_picks_worst(self) -> None:
         """Two drawdown episodes; we should pick the larger one."""
         # 0→10→8→10→20→12→20 : first DD is -20% (2 bars), second is -40% (2 bars)
@@ -267,8 +282,8 @@ class TestWalkForwardWindowCount:
         strategy.name = name
         return strategy
 
-    def test_two_year_range_produces_five_windows(self) -> None:
-        """2 years, train=12m, test=3m, step=3m → 5 OOS windows.
+    def test_two_year_range_produces_four_windows(self) -> None:
+        """2 years, train=12m, test=3m, step=3m → 4 OOS windows.
 
         Windows:
         1. train: Jan24–Jan25  | test: Jan25–Apr25
@@ -452,7 +467,7 @@ class TestEmptyApprovedSet:
         assert result.windows == []
 
     def test_too_few_total_trades_gives_none(self) -> None:
-        """OOS positive Sharpe but total trades < 5 → approved_set_entry is None."""
+        """OOS positive Sharpe but 1 trade per window → per-window gate rejects."""
         engine = MagicMock()
 
         # Result with 1 trade, positive return → positive Sharpe.
@@ -480,24 +495,107 @@ class TestEmptyApprovedSet:
             end=end,
         )
 
-        # 1 window × 1 trade = 1 total OOS trade < 5 → None.
+        # 1 trade per window < 5 per-window threshold → None.
         assert result.approved_set_entry is None
 
-    def test_approved_set_returns_entry_when_criteria_met(self) -> None:
-        """When all OOS Sharpe > 0 and total trades ≥ 5, entry is returned."""
+    def test_one_trade_per_window_five_windows_rejected(self) -> None:
+        """1 OOS trade per window × 5 windows (total=5, all Sharpe>0) → REJECTED.
+
+        This is the motivating case for the per-window ruling: aggregate total
+        passes (5 >= 5) but each individual window has only 1 trade < 5, so
+        the per-window gate must reject it.
+        """
         engine = MagicMock()
 
-        call_count = {"n": 0}
+        def make_result(*args: Any, **kwargs: Any) -> BacktestResult:
+            # Exactly 1 trade, positive equity → positive Sharpe.
+            trades = [_make_trade(10.0, pnl_pips=11.0, cost_pips=1.0)]
+            equity = _equity_series([0.0, 5.0, 10.0])
+            return BacktestResult(
+                trades=trades,
+                equity_curve=equity,
+                metadata={"swap_modelled": False},
+            )
+
+        engine.run.side_effect = make_result
+        strategy = MagicMock()
+        strategy.name = "one_trade_per_window"
+
+        # 27m → 5 OOS windows; 1 trade per window, total=5 which would pass
+        # the old aggregate gate — must be REJECTED by the per-window gate.
+        start = _utc(2024, 1, 1)
+        end = _utc(2026, 4, 1)
+
+        validator = WalkForwardValidator(engine=engine, strategy=strategy)
+        result = validator.run(
+            instrument="EUR_USD",
+            granularity="H1",
+            start=start,
+            end=end,
+        )
+
+        assert len(result.windows) == 5
+        assert result.approved_set_entry is None, (
+            "Per-window gate must reject: 1 trade/window < 5 even though total == 5"
+        )
+
+    def test_five_trades_per_window_all_windows_approved(self) -> None:
+        """Every window has ≥5 OOS trades and positive Sharpe → APPROVED."""
+        engine = MagicMock()
 
         def make_result(*args: Any, **kwargs: Any) -> BacktestResult:
-            call_count["n"] += 1
-            # 3 winning trades, strongly positive equity → positive Sharpe.
+            # 5 winning trades, varying equity bars so per-bar std is non-zero
+            # (all-equal diffs would produce std=0 → NaN Sharpe).
+            trades = [_make_trade(10.0, pnl_pips=11.0, cost_pips=1.0) for _ in range(5)]
+            equity = _equity_series([0.0, 8.0, 19.0, 29.0, 42.0, 50.0])
+            return BacktestResult(
+                trades=trades,
+                equity_curve=equity,
+                metadata={"swap_modelled": False},
+            )
+
+        engine.run.side_effect = make_result
+        strategy = MagicMock()
+        strategy.name = "five_per_window"
+
+        # 27m → 5 OOS windows; 5 trades per window satisfies the per-window gate.
+        start = _utc(2024, 1, 1)
+        end = _utc(2026, 4, 1)
+
+        validator = WalkForwardValidator(engine=engine, strategy=strategy)
+        result = validator.run(
+            instrument="EUR_USD",
+            granularity="H1",
+            start=start,
+            end=end,
+        )
+
+        entry = result.approved_set_entry
+        assert entry is not None, (
+            "Per-window gate must approve: every window has 5 trades and positive Sharpe"
+        )
+        assert isinstance(entry, ApprovedSetEntry)
+        assert entry.instrument == "EUR_USD"
+        assert entry.granularity == "H1"
+        assert entry.strategy_name == "five_per_window"
+        assert entry.swap_modelled is False  # INV-06 / D-03
+        assert entry.oos_trade_count_total == 25  # 5 windows × 5 trades
+
+    def test_approved_set_returns_entry_when_criteria_met(self) -> None:
+        """When every OOS window has Sharpe > 0 and trade_count >= 5, entry returned."""
+        engine = MagicMock()
+
+        def make_result(*args: Any, **kwargs: Any) -> BacktestResult:
+            # 6 winning trades, strongly positive equity → positive Sharpe.
             trades = [
                 _make_trade(10.0, pnl_pips=11.0, cost_pips=1.0),
                 _make_trade(8.0, pnl_pips=9.0, cost_pips=1.0),
                 _make_trade(12.0, pnl_pips=13.0, cost_pips=1.0),
+                _make_trade(9.0, pnl_pips=10.0, cost_pips=1.0),
+                _make_trade(11.0, pnl_pips=12.0, cost_pips=1.0),
+                _make_trade(7.0, pnl_pips=8.0, cost_pips=1.0),
             ]
-            equity = _equity_series([0.0, 10.0, 18.0, 30.0])
+            equity = _equity_series([0.0, 10.0, 18.0, 30.0, 39.0, 50.0, 57.0])
             return BacktestResult(
                 trades=trades,
                 equity_curve=equity,
@@ -508,7 +606,7 @@ class TestEmptyApprovedSet:
         strategy = MagicMock()
         strategy.name = "winning_strategy"
 
-        # 27m range → 5 windows; 3 OOS trades × 5 = 15 ≥ 5.
+        # 27m range → 5 windows; 6 OOS trades per window, all Sharpe > 0.
         start = _utc(2024, 1, 1)
         end = _utc(2026, 4, 1)
 
@@ -527,7 +625,7 @@ class TestEmptyApprovedSet:
         assert entry.granularity == "H1"
         assert entry.strategy_name == "winning_strategy"
         assert entry.swap_modelled is False  # INV-06 / D-03
-        assert entry.oos_trade_count_total >= 5
+        assert entry.oos_trade_count_total == 30  # 5 windows × 6 trades
 
 
 # ---------------------------------------------------------------------------

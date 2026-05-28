@@ -22,8 +22,8 @@ Approval criteria
 -----------------
 ``approved_set_entry`` is non-None **only when all of**:
 
-* Every OOS window has ``sharpe_ratio > 0``.
-* The *total* OOS trade count across all windows is ≥ 5.
+* Every OOS window individually has ``sharpe_ratio > 0`` (not NaN).
+* Every OOS window individually has ``trade_count ≥ 5``.
 
 An empty approved set is a valid, non-error result — the caller must handle it
 gracefully (INV-10: no strategy runs live without a passed validation).
@@ -219,9 +219,13 @@ class WalkForwardValidator:
     ) -> Optional[ApprovedSetEntry]:
         """Return an :class:`ApprovedSetEntry` iff approval criteria are met.
 
-        Criteria:
-        1. Every OOS window has ``sharpe_ratio > 0``.
-        2. Total OOS trade count across all windows is ≥ 5.
+        Both criteria are evaluated **per window** — every individual OOS window
+        must satisfy each gate independently.  A strategy that passes in the
+        aggregate but fails in any single window is rejected.
+
+        Criteria (per window):
+        1. Every OOS window has ``sharpe_ratio > 0`` (not NaN).
+        2. Every OOS window has ``trade_count >= 5``.
 
         Returns ``None`` when windows is empty (not enough data) or when any
         criterion is not satisfied.  An empty approved set is a valid, non-error
@@ -232,19 +236,21 @@ class WalkForwardValidator:
 
         oos_metrics = [w.out_of_sample_metrics for w in windows]
 
-        # Criterion 1: all OOS Sharpe ratios must be positive.
+        # Criterion 1: every OOS window must have a positive (non-NaN) Sharpe.
         for m in oos_metrics:
             if math.isnan(m.sharpe_ratio) or m.sharpe_ratio <= 0.0:
                 return None
 
-        # Criterion 2: total OOS trade count ≥ 5.
-        total_trades = sum(m.trade_count for m in oos_metrics)
-        if total_trades < 5:
+        # Criterion 2: every OOS window must have at least 5 trades.
+        # Per-window gate — a strategy that spreads 5 trades across many windows
+        # (e.g. 1 per window) does NOT satisfy this criterion.
+        if any(m.trade_count < 5 for m in oos_metrics):
             return None
 
         oos_sharpe_mean = sum(m.sharpe_ratio for m in oos_metrics) / len(
             oos_metrics
         )
+        total_trades = sum(m.trade_count for m in oos_metrics)
 
         # swap_modelled propagated from the last OOS window's backtest metadata
         # (INV-06, D-03).  Always False in the PoC.
