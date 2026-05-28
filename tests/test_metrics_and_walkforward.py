@@ -508,9 +508,11 @@ class TestEmptyApprovedSet:
         engine = MagicMock()
 
         def make_result(*args: Any, **kwargs: Any) -> BacktestResult:
-            # Exactly 1 trade, positive equity → positive Sharpe.
+            # Exactly 1 trade. Non-constant returns ([3.0, 7.0]) give a
+            # non-zero std → positive, non-NaN Sharpe, so the per-window
+            # Sharpe gate PASSES and only the trade-count gate can reject.
             trades = [_make_trade(10.0, pnl_pips=11.0, cost_pips=1.0)]
-            equity = _equity_series([0.0, 5.0, 10.0])
+            equity = _equity_series([0.0, 3.0, 10.0])
             return BacktestResult(
                 trades=trades,
                 equity_curve=equity,
@@ -535,6 +537,14 @@ class TestEmptyApprovedSet:
         )
 
         assert len(result.windows) == 5
+        # Each window's OOS Sharpe is positive (non-NaN) — proving the Sharpe
+        # gate would have PASSED, so the trade-count gate is the only thing
+        # that can reject this scenario.
+        for window in result.windows:
+            assert window.out_of_sample_metrics.sharpe_ratio > 0, (
+                "Per-window OOS Sharpe must be positive so the Sharpe gate "
+                "passes and the trade-count gate is what rejects"
+            )
         assert result.approved_set_entry is None, (
             "Per-window gate must reject: 1 trade/window < 5 even though total == 5"
         )
