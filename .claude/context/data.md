@@ -44,3 +44,40 @@
 - `mypy data/ tests/test_oanda_client.py` → "Success: no issues found in 3 source files", exit 0
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## POC-T-03 — 2026-05-28 (feat/poc-t-03)
+
+**What was done:**
+- Created `data/store.py` with `Store` class:
+  - `__init__(db_path)` — opens SQLite (accepts `":memory:"`), creates `candles` table with PK `(instrument, granularity, time)`.
+  - `upsert(rows: Iterable[CandleRow])` — `INSERT OR REPLACE`; silently drops `complete=False` rows (only completed bars stored).
+  - `load_candles(instrument, granularity, start, end) -> pd.DataFrame` — returns `time (datetime64[ns, UTC])`, bid/ask OHLC `float64`, `volume int64`.
+  - `get_cached_times(instrument, granularity, start, end) -> set[str]` — returns RFC 3339 strings for rows present; used for gap detection.
+  - `_to_rfc3339(dt)` — converts UTC-aware datetime to `"2024-01-15T14:00:00Z"` string (INV-03).
+- Created `data/candles.py` with `fetch_and_cache(client, store, instrument, granularity, start, end) -> pd.DataFrame`:
+  - Gap-aware: calls `get_cached_times` to find leading/trailing gaps; only fetches from OANDA for missing sub-ranges.
+  - Cache-hit: if `[start, end]` is fully covered by the store, zero HTTP calls are made.
+  - Posts `count=50_000` to `client.get_candles` (auto-paginated by OandaClient) to cover up to 2-year PoC windows.
+  - Filters OANDA response to `r.time <= end` and `r.complete` before upsert.
+  - Returns `store.load_candles(...)` as the single source of truth.
+
+**Key patterns and gotchas (D-02 / INV-03):**
+- `pd.to_datetime(..., utc=True)` is required — default produces tz-naive series.
+- pandas 3.x (and 2.x) resolves string timestamps to `datetime64[us, UTC]` by default.
+  We coerce to `datetime64[ns, UTC]` with `.astype("datetime64[ns, UTC]")` to match the AC dtype contract.
+- Time stored as TEXT (never PARSE_DECLTYPES) — see library_defaults note in taskgraph.
+- Gap detection uses min/max of cached timestamps: if `max_cached < end`, trailing gap; if `min_cached > start`, leading gap; both → fetch full range (upsert is idempotent).
+- Cache-hit only triggers when `start == min_cached AND end == max_cached` (or store bounds cover exactly). Tests set `end = last_candle_time` to exercise true zero-call behaviour.
+- `MagicMock()` is the right tool for mocking `OandaClient` — no `responses` library needed here (no HTTP stack involved).
+
+**AC verification results:**
+- `pytest tests/test_store_and_candles.py -v` → 17 passed, exit 0
+- `pytest -v` (full suite) → 91 passed, exit 0
+- `mypy data/ tests/test_store_and_candles.py` → "Success: no issues found in 5 source files", exit 0
+
+**No new dependencies added** (sqlite3 is stdlib; pandas already in pyproject.toml).
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command — CLAUDE.md not edited.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
