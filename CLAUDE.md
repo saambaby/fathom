@@ -28,7 +28,7 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 
 ## Stack at a Glance
 
-Python 3.11+ · oandapyV20 · pydantic v2 · pandas/polars/pyarrow · backtesting.py + custom event-driven engine · Hermes Agent (Nous Research) · anthropic SDK · SQLite→PostgreSQL · Parquet · Streamlit + TW Lightweight Charts
+Python 3.11+ · oandapyV20>=0.6 · pydantic>=2 · pydantic-settings>=2 · python-dotenv>=1.0 · pandas>=2.0 · custom event-driven backtest engine · Hermes Agent (Nous Research) · anthropic SDK · SQLite→PostgreSQL · Parquet · Streamlit + TW Lightweight Charts
 
 ---
 
