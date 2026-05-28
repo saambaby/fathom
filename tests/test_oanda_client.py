@@ -72,7 +72,7 @@ def _make_candles_response(candles: list[dict[str, Any]]) -> dict[str, Any]:
 def _make_settings(env: str = "demo") -> Settings:
     """Construct a Settings instance with dummy credentials."""
     return Settings(
-        env=env,  # type: ignore[arg-type]
+        env=env,
         oanda_api_token=SecretStr("dummy-token-never-used-in-tests"),
         oanda_account_id="001-001-1234567-001",
     )
