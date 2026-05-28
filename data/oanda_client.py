@@ -18,7 +18,7 @@ from typing import Any
 import oandapyV20
 import oandapyV20.endpoints.instruments as oanda_instruments
 from oandapyV20.exceptions import V20Error
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel
 
 from config.settings import Settings
 
@@ -58,7 +58,7 @@ class CandleRow(BaseModel):
 
     instrument: str
     granularity: str
-    time: datetime          # UTC-aware
+    time: AwareDatetime     # UTC-aware (INV-03: naive datetime rejected by pydantic)
     # bid prices
     open_bid: float
     high_bid: float
@@ -189,7 +189,7 @@ class OandaClient:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        oanda_env = _ENV_MAP[settings.env]  # "practice" or "fxtrade" (INV-09)
+        oanda_env = _ENV_MAP[settings.env]  # "practice" or "live" (INV-09)
         self._api = oandapyV20.API(
             access_token=settings.oanda_api_token.get_secret_value(),
             environment=oanda_env,
@@ -279,12 +279,15 @@ class OandaClient:
                 for c in raw_candles
             ]
             rows.extend(page_rows)
-            first_page = False
 
-            # If OANDA returned fewer candles than the page_size (accounting
-            # for the extra +1 anchor), there is no more data to fetch.
-            # "request_count - (0 if first_page else 1)" is the usable slots.
+            # If OANDA returned fewer candles than the usable page slots, there
+            # is no more data to fetch.  Evaluate this BEFORE clearing
+            # first_page so that the first-page slot count (no anchor deduction)
+            # is used correctly.  "usable_slots" on the first page equals
+            # request_count; on subsequent pages it is request_count - 1
+            # (the +1 anchor candle is not a net-new slot).
             usable_slots = request_count if first_page else request_count - 1
+            first_page = False
             if len(raw_candles) < usable_slots:
                 break
 

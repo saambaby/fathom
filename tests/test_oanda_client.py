@@ -24,6 +24,8 @@ import responses as resp_lib
 from pydantic import SecretStr
 from responses import matchers
 
+import pydantic
+
 from config.settings import Settings
 from data.oanda_client import CandleRow, OandaAPIError, OandaClient, _parse_utc
 
@@ -99,6 +101,40 @@ class TestParseUtc:
         dt = _parse_utc("2024-01-15T14:00:00.123456Z")
         assert dt.microsecond == 123456
         assert dt.tzinfo == timezone.utc
+
+
+# ---------------------------------------------------------------------------
+# INV-03: CandleRow rejects naive datetime (AwareDatetime enforcement)
+# ---------------------------------------------------------------------------
+
+class TestCandleRowInv03:
+    def test_naive_time_raises_validation_error(self) -> None:
+        """CandleRow must reject a naive (tz-unaware) datetime for time (INV-03)."""
+        with pytest.raises(pydantic.ValidationError):
+            CandleRow(
+                instrument="EUR_USD",
+                granularity="H1",
+                time=datetime(2024, 1, 1),  # naive — no tzinfo
+                open_bid=1.0, high_bid=1.0, low_bid=1.0, close_bid=1.0,
+                open_ask=1.0, high_ask=1.0, low_ask=1.0, close_ask=1.0,
+                open_mid=1.0, high_mid=1.0, low_mid=1.0, close_mid=1.0,
+                volume=100,
+                complete=True,
+            )
+
+    def test_utc_aware_time_accepted(self) -> None:
+        """CandleRow must accept a UTC-aware datetime for time (INV-03)."""
+        row = CandleRow(
+            instrument="EUR_USD",
+            granularity="H1",
+            time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            open_bid=1.0, high_bid=1.0, low_bid=1.0, close_bid=1.0,
+            open_ask=1.0, high_ask=1.0, low_ask=1.0, close_ask=1.0,
+            open_mid=1.0, high_mid=1.0, low_mid=1.0, close_mid=1.0,
+            volume=100,
+            complete=True,
+        )
+        assert row.time.tzinfo is not None
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +342,29 @@ class TestPagination:
         client = OandaClient(settings)
         rows = client.get_candles("EUR_USD", "H1", 5)
         assert len(rows) == 5
+
+    @resp_lib.activate
+    def test_first_page_returns_499_of_500_requested_issues_only_one_request(self) -> None:
+        """Boundary: count=500, OANDA returns 499 on first page → no second request.
+
+        Regression test for the off-by-one where first_page was cleared before
+        the usable_slots early-exit check, causing a spurious extra request when
+        OANDA returns exactly request_count - 1 candles on the first page.
+        """
+        candles = [
+            _make_candle(f"2024-01-{1 + i // 24:02d}T{i % 24:02d}:00:00.000000000Z")
+            for i in range(499)
+        ]
+        resp_lib.add(resp_lib.GET, CANDLES_URL, json=_make_candles_response(candles), status=200)
+
+        settings = _make_settings()
+        client = OandaClient(settings)
+        rows = client.get_candles("EUR_USD", "H1", 500)
+
+        assert len(resp_lib.calls) == 1, (
+            "Expected exactly one HTTP request when OANDA returns 499 of 500 candles"
+        )
+        assert len(rows) == 499
 
 
 # ---------------------------------------------------------------------------
