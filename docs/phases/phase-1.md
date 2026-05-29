@@ -1,8 +1,8 @@
 # Fathom — Phase 1: Full Research Engine
 
-**Status:** Stub — not started
+**Status:** ✅ COMPLETE (2026-05-29) — 1A (research engine → approved-set, 10/72) + 1B (live-streaming + economic-calendar) both shipped & accepted. Results: [phase-1a-results.md](phase-1a-results.md) · [phase-1b-results.md](phase-1b-results.md).
 **Depends on:** [PoC](poc.md) approved-set table with ≥1 positive entry
-**Unlocks:** [Phase 2](phase-2.md)
+**Unlocks:** [Phase 2](phase-2.md) — now ready
 **Spec layer:** [product-spec.md](../product-spec.md) · [architecture-overview.md](../architecture-overview.md) · [invariants.md](../invariants.md)
 
 ---
