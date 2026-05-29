@@ -84,3 +84,48 @@
 **pyproject.toml:** untouched (no new dep required).
 **CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+## P1A-T-04 — 2026-05-29 (feat/p1a-t-04)
+
+**What was done:**
+- Extended `strategies/trend.py` with `DonchianBreakout(Strategy)`, parameterised by
+  `channel_period: int` (classic values 20 and 55 tested).
+- Channel computed via `high_bid.rolling(channel_period).max().shift(1)` and
+  `low_bid.rolling(channel_period).min().shift(1)` — shift-by-1 excludes the current
+  bar so there is no look-ahead (close-based breakout per spec lean).
+- `stop_distance` = `_indicators.atr(df, 14)` at signal bar (shared helper, INV-11).
+- `target_distance` = `stop_distance × rr_ratio` (default 1.5).
+- `quality_score` = `excess / channel_width` clamped to [0,1], where excess is the
+  distance the close has moved beyond the channel edge and channel_width = ch_high − ch_low.
+- `generated_at` = bar close timestamp (UTC-aware, INV-03); never `datetime.now()`.
+- Updated `strategies/__init__.py` to re-export `DonchianBreakout` and `MACrossover`.
+- Created `tests/test_donchian_breakout.py` — 32 tests covering:
+  - Construction guards (zero/negative channel_period, rr_ratio).
+  - LONG on upward breakout; SHORT on downward breakout; no signal inside channel.
+  - ATR stop > 0; target = stop × rr_ratio; custom rr_ratio.
+  - quality_score ∈ [0,1]; monotonicity (larger breakout → higher score).
+  - INV-03: UTC-aware generated_at; matches bar timestamp in DataFrame.
+  - At most one signal per bar (no duplicate timestamps).
+  - No look-ahead (removing the breakout bar removes the signal).
+  - channel_period ∈ {20, 55} (parametrize).
+  - Edge cases: insufficient data, mutation guard, instrument/timeframe propagation,
+    missing required columns.
+
+**Key patterns / gotchas:**
+- Rolling channel uses `min_periods=channel_period` so the first `channel_period` bars
+  never produce NaN-masked-as-valid values; combined with `.shift(1)` the first valid
+  channel value is at index `channel_period` (i.e. the `channel_period+1`-th row).
+- Quality score denominator `channel_width = ch_high - ch_low` can be 0 on perfectly
+  flat data; guard returns 0.0 in that case.
+- Do NOT add `# type: ignore[assignment]` for the `bar_time` assignment — mypy rejects
+  it as unused on Python 3.12; use a plain assignment instead.
+
+**AC verification results:**
+- `pytest tests/test_donchian_breakout.py -v` → **32 passed**, exit 0
+- `pytest -v` (full suite) → **214 passed**, exit 0
+- `mypy strategies/` → **"Success: no issues found in 4 source files"**, exit 0
+
+**No new runtime dependencies added** (pandas + stdlib only).
+**pyproject.toml:** untouched (no new dep required).
+**CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
