@@ -95,3 +95,74 @@ Per `(broker_trade_id, deviation_type)` key; suppresses repeats within the same
 - No new CLI command.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## P3-T-09 — monitor-alerts — 2026-05-29 (feat/p3-T-09-alerts)
+
+**What was done:**
+
+Added the deviation monitor delivery layer:
+- `monitoring/alerts.py` — `DiscordWebhookClient` (thin `httpx` POST wrapper), `format_alert`
+  (pure formatter), `Alerter` (persist-then-deliver with retry), `build_alerter_from_settings`
+  factory. Satisfies the `monitoring.watcher.Alerter` Protocol duck-typed.
+- `data/store.py` — `_CREATE_DEVIATION_LOG_SQL`, `_INSERT_DEVIATION_LOG_SQL`,
+  `_MARK_DELIVERED_SQL` + three methods: `write_deviation_event`, `mark_deviation_delivered`,
+  `load_deviation_log`. Table created in `_create_tables()` alongside existing tables.
+- `config/settings.py` — Added `discord_webhook_url: Optional[SecretStr] = None` (INV-08).
+- `.env.example` — Added `DISCORD_WEBHOOK_URL=your-discord-webhook-url-here` placeholder.
+- `tests/test_monitor_alerts.py` — 33 new tests (all green).
+
+**deviation_log table schema (pinned by docs/features/monitor-alerts.md DRIFT-08):**
+```sql
+CREATE TABLE IF NOT EXISTS deviation_log (
+    event_id         TEXT NOT NULL PRIMARY KEY,  -- idempotent on INSERT OR IGNORE
+    instrument       TEXT NOT NULL,
+    deviation_type   TEXT NOT NULL,              -- adverse|slippage|vol|feed_health
+    detail           TEXT NOT NULL,
+    broker_trade_id  TEXT,                       -- NULL for feed_health events
+    severity         TEXT NOT NULL,              -- info|warn|severe
+    created_at       TEXT NOT NULL,              -- UTC RFC-3339 (INV-03)
+    delivered        INTEGER NOT NULL DEFAULT 0  -- set to 1 after successful POST
+)
+```
+
+**Persist-then-deliver contract:**
+1. `write_deviation_event(event)` — `INSERT OR IGNORE` on `event_id`; row exists before HTTP.
+2. `format_alert(event)` → `"⚠️ <instrument> <type> | <detail> | <UTC RFC-3339>"` (one line).
+3. `webhook.post(message)` — retried up to `max_retries` times with exponential backoff (`backoff_base × 2^attempt`).
+4. On success: `mark_deviation_delivered(event_id)` sets `delivered=1`.
+5. On full retry exhaustion: log WARNING, return without raising (loop never crashes).
+
+**DRIFT-06 resolution:**
+The monitor is a standalone Python process (`scripts/run_monitor.py`), NOT a Hermes job.
+It posts directly to `DISCORD_WEBHOOK_URL` via `DiscordWebhookClient`. No "Hermes gateway"
+Python object exists. Same channel as Phase 2 watchlist (same `DISCORD_WEBHOOK_URL`).
+
+**Key patterns / gotchas:**
+- `DiscordWebhookClient.__init__` accepts the raw URL string (caller extracts from
+  `SecretStr.get_secret_value()`). The URL is stored in `_url` (private) and NEVER logged.
+- `Alerter` constructor accepts `backoff_base=0.0` for tests (no real `time.sleep` in tests).
+- `WebhookClientProtocol` is a structural Protocol — tests inject stub classes without
+  inheriting from it. `DiscordWebhookClient` also does not inherit (duck-typed).
+- `build_alerter_from_settings(store)` is the live factory; raises `ValueError` if
+  `DISCORD_WEBHOOK_URL` is absent from `.env` at runtime.
+- `store.write_deviation_event` returns `True` (new insert) or `False` (idempotent no-op).
+- `store.load_deviation_log(undelivered_only=True)` enables catch-up delivery passes.
+- The `TYPE_CHECKING`-guarded `from monitoring.watcher import DeviationEvent` in `store.py`
+  avoids a runtime cycle while enabling the type annotation on `write_deviation_event`.
+
+**AC verification results (raw, captured exit codes):**
+- `python -m pytest tests/test_monitor_alerts.py -v` → **33 passed**, exit 0
+- `python -m pytest -q` (full suite) → **932 passed, 87 warnings**, exit 0
+- `python -m mypy .` → **"Success: no issues found in 78 source files"**, exit 0
+
+**New dependency added to pyproject.toml?** NO — `httpx` was already in deps.
+`DISCORD_WEBHOOK_URL` added to `config/settings.py` (Optional[SecretStr]) + `.env.example`.
+
+**CLAUDE.md trigger-table check:**
+- `discord_webhook_url` added to Settings → `.env.example` updated (drift-guard test passes).
+- No new library dep. No new CLI command.
+- CLAUDE.md Stack: no update needed (httpx already listed).
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).

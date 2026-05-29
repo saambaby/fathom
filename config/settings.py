@@ -9,7 +9,7 @@ Usage:
     token = settings.oanda_api_token.get_secret_value()  # explicit secret access
 """
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     Optional fields (have sensible defaults):
         ENV               — "demo" (default) or "live"
         OANDA_BASE_URL    — auto-derived from ENV; only override if you know what you're doing
+        DISCORD_WEBHOOK_URL — Discord webhook URL for alert/watchlist delivery (SecretStr);
+                              required at runtime by the deviation monitor alerter (T-09) and
+                              the Phase 2 Hermes watchlist job.  Optional here so the Settings
+                              model can be constructed in contexts that do not need Discord
+                              (e.g. backtest-only runs). INV-08: stored as SecretStr, never logged.
     """
 
     model_config = SettingsConfigDict(
@@ -42,6 +47,7 @@ class Settings(BaseSettings):
     oanda_api_token: SecretStr
     oanda_account_id: str
     oanda_base_url: str = ""
+    discord_webhook_url: Optional[SecretStr] = None
 
     @model_validator(mode="after")
     def derive_base_url(self) -> "Settings":
