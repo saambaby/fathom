@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 import pytest
@@ -31,6 +31,10 @@ from signals.ranker import (
     NEWS_WINDOW_MEDIUM,
     Candidate,
     Ranker,
+    SessionCheck,
+    SpreadCheck,
+    _default_session_ok,
+    _default_spread_ok,
 )
 from strategies.base import Direction, Signal, Strategy
 
@@ -177,7 +181,7 @@ class StubStrategy(Strategy):
 
 def make_builder(
     spec: dict[tuple[str, str, str], tuple[Direction, float]],
-):
+) -> Callable[[str, str, str], Strategy]:
     """Builder factory: maps (strategy_name, instrument, timeframe) → StubStrategy.
 
     ``spec`` value is ``(direction, quality_score)``.  A combo absent from the
@@ -205,20 +209,16 @@ def make_ranker(
     builder_spec: dict[tuple[str, str, str], tuple[Direction, float]],
     *,
     calendar: Optional[FakeCalendar] = None,
-    spread_ok=None,
-    session_ok=None,
+    spread_ok: Optional[SpreadCheck] = None,
+    session_ok: Optional[SessionCheck] = None,
     empty_candles: bool = False,
 ) -> Ranker:
-    kwargs = {}
-    if spread_ok is not None:
-        kwargs["spread_ok"] = spread_ok
-    if session_ok is not None:
-        kwargs["session_ok"] = session_ok
     return Ranker(
         store=FakeStore(approved, empty_candles=empty_candles),
-        calendar=calendar or FakeCalendar({}),
+        calendar=calendar or FakeCalendar({}),  # type: ignore[arg-type]
         strategy_builder=make_builder(builder_spec),
-        **kwargs,
+        spread_ok=spread_ok if spread_ok is not None else _default_spread_ok,
+        session_ok=session_ok if session_ok is not None else _default_session_ok,
     )
 
 
@@ -227,7 +227,9 @@ def make_ranker(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_approved_set_returns_empty_and_logs(caplog):
+def test_empty_approved_set_returns_empty_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     ranker = make_ranker([], {})
     with caplog.at_level(logging.INFO, logger="signals.ranker"):
         result = ranker.rank(NOW)
@@ -235,7 +237,7 @@ def test_empty_approved_set_returns_empty_and_logs(caplog):
     assert any("Approved-set is empty" in r.message for r in caplog.records)
 
 
-def test_rank_requires_utc_aware_now():
+def test_rank_requires_utc_aware_now() -> None:
     ranker = make_ranker([], {})
     with pytest.raises(ValueError, match="UTC-aware"):
         ranker.rank(datetime(2026, 5, 28, 12, 0, 0))  # naive
@@ -246,7 +248,7 @@ def test_rank_requires_utc_aware_now():
 # ---------------------------------------------------------------------------
 
 
-def test_only_approved_combos_emit():
+def test_only_approved_combos_emit() -> None:
     # Approved: macrossover EUR_USD H1. Builder is asked only for approved
     # combos; an un-approved combo is never built (so never emits).
     approved = [_row("macrossover_eur_usd_h1", "EUR_USD", "H1", 1.0)]
@@ -259,7 +261,7 @@ def test_only_approved_combos_emit():
     assert result[0].strategy_name == "macrossover_eur_usd_h1"
 
 
-def test_gate_join_uses_granularity_dimension():
+def test_gate_join_uses_granularity_dimension() -> None:
     """The DB row's ``granularity`` is matched to ``Signal.timeframe``.
 
     The approved row uses ``granularity='H4'``; the stub emits a signal whose
@@ -276,14 +278,14 @@ def test_gate_join_uses_granularity_dimension():
     assert result[0].direction == "SHORT"
 
 
-def test_flat_signal_produces_no_candidate():
+def test_flat_signal_produces_no_candidate() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.FLAT, 0.5)}
     ranker = make_ranker(approved, spec)
     assert ranker.rank(NOW) == []
 
 
-def test_empty_candles_skips_combo():
+def test_empty_candles_skips_combo() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     ranker = make_ranker(approved, spec, empty_candles=True)
@@ -295,7 +297,7 @@ def test_empty_candles_skips_combo():
 # ---------------------------------------------------------------------------
 
 
-def test_high_impact_news_drops_candidate():
+def test_high_impact_news_drops_candidate() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     cal = FakeCalendar({"USD": Impact.high})  # quote leg has high-impact event
@@ -303,7 +305,7 @@ def test_high_impact_news_drops_candidate():
     assert ranker.rank(NOW) == []
 
 
-def test_medium_impact_news_sets_flag_but_keeps():
+def test_medium_impact_news_sets_flag_but_keeps() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     cal = FakeCalendar({"EUR": Impact.medium})
@@ -313,7 +315,7 @@ def test_medium_impact_news_sets_flag_but_keeps():
     assert result[0].news_flag is True
 
 
-def test_low_or_no_news_clears_flag():
+def test_low_or_no_news_clears_flag() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     cal_low = FakeCalendar({"EUR": Impact.low})
@@ -322,7 +324,7 @@ def test_low_or_no_news_clears_flag():
     assert make_ranker(approved, spec, calendar=cal_none).rank(NOW)[0].news_flag is False
 
 
-def test_news_windows_are_the_documented_lengths():
+def test_news_windows_are_the_documented_lengths() -> None:
     assert NEWS_WINDOW_HIGH == timedelta(hours=4)
     assert NEWS_WINDOW_MEDIUM == timedelta(hours=1)
 
@@ -332,21 +334,21 @@ def test_news_windows_are_the_documented_lengths():
 # ---------------------------------------------------------------------------
 
 
-def test_spread_fail_drops_candidate():
+def test_spread_fail_drops_candidate() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     ranker = make_ranker(approved, spec, spread_ok=lambda i, t, n: False)
     assert ranker.rank(NOW) == []
 
 
-def test_session_fail_drops_candidate():
+def test_session_fail_drops_candidate() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     ranker = make_ranker(approved, spec, session_ok=lambda i, t, n: False)
     assert ranker.rank(NOW) == []
 
 
-def test_passing_filters_set_flags_true():
+def test_passing_filters_set_flags_true() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     c = make_ranker(approved, spec).rank(NOW)[0]
@@ -358,7 +360,7 @@ def test_passing_filters_set_flags_true():
 # ---------------------------------------------------------------------------
 
 
-def test_opposite_direction_same_instrument_timeframe_suppresses_both():
+def test_opposite_direction_same_instrument_timeframe_suppresses_both() -> None:
     approved = [
         _row("long_strat", "EUR_USD", "H1", 1.0),
         _row("short_strat", "EUR_USD", "H1", 2.0),
@@ -371,7 +373,7 @@ def test_opposite_direction_same_instrument_timeframe_suppresses_both():
     assert ranker.rank(NOW) == []
 
 
-def test_same_direction_same_group_not_suppressed():
+def test_same_direction_same_group_not_suppressed() -> None:
     approved = [
         _row("a", "EUR_USD", "H1", 1.0),
         _row("b", "EUR_USD", "H1", 2.0),
@@ -384,7 +386,7 @@ def test_same_direction_same_group_not_suppressed():
     assert len(result) == 2
 
 
-def test_opposite_direction_different_timeframe_ranked_independently():
+def test_opposite_direction_different_timeframe_ranked_independently() -> None:
     approved = [
         _row("a", "EUR_USD", "H1", 1.0),
         _row("b", "EUR_USD", "H4", 2.0),
@@ -403,7 +405,7 @@ def test_opposite_direction_different_timeframe_ranked_independently():
 # ---------------------------------------------------------------------------
 
 
-def test_rank_primary_by_oos_sharpe_descending():
+def test_rank_primary_by_oos_sharpe_descending() -> None:
     approved = [
         _row("low", "EUR_USD", "H1", 0.5),
         _row("high", "GBP_USD", "H1", 2.0),
@@ -419,7 +421,7 @@ def test_rank_primary_by_oos_sharpe_descending():
     assert [c.rank for c in result] == [1, 2, 3]
 
 
-def test_quality_score_breaks_sharpe_ties():
+def test_quality_score_breaks_sharpe_ties() -> None:
     approved = [
         _row("a", "EUR_USD", "H1", 1.0),
         _row("b", "GBP_USD", "H1", 1.0),
@@ -435,7 +437,7 @@ def test_quality_score_breaks_sharpe_ties():
     assert [c.rank for c in result] == [1, 2]
 
 
-def test_final_tiebreak_is_stable_and_deterministic():
+def test_final_tiebreak_is_stable_and_deterministic() -> None:
     # Identical sharpe AND quality → deterministic by (instrument, strategy_name).
     approved = [
         _row("z_strat", "GBP_USD", "H1", 1.0),
@@ -473,11 +475,11 @@ EXPECTED_FIELDS = [
 ]
 
 
-def test_candidate_field_names_and_order_match_inv13():
+def test_candidate_field_names_and_order_match_inv13() -> None:
     assert list(Candidate.model_fields.keys()) == EXPECTED_FIELDS
 
 
-def test_candidate_field_types_match_inv13():
+def test_candidate_field_types_match_inv13() -> None:
     ann = {name: f.annotation for name, f in Candidate.model_fields.items()}
     assert ann["instrument"] is str
     assert ann["timeframe"] is str
@@ -495,7 +497,7 @@ def test_candidate_field_types_match_inv13():
     assert ann["generated_at"] is str
 
 
-def test_candidate_serialisation_round_trip():
+def test_candidate_serialisation_round_trip() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.25)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.7)}
     candidate = make_ranker(approved, spec).rank(NOW)[0]
@@ -517,7 +519,7 @@ def test_candidate_serialisation_round_trip():
     assert payload["direction"] in ("LONG", "SHORT")
 
 
-def test_generated_at_carries_signal_bar_close_time():
+def test_generated_at_carries_signal_bar_close_time() -> None:
     approved = [_row("s1", "EUR_USD", "H1", 1.0)]
     spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
     c = make_ranker(approved, spec).rank(NOW)[0]

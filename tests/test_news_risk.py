@@ -85,33 +85,33 @@ class TestNewsRiskVerdictModel:
 
     def test_all_event_risk_values(self) -> None:
         for risk in ("high", "medium", "low"):
-            v = NewsRiskVerdict(event_risk=risk, reason="ok", suggest_action="proceed")  # type: ignore[arg-type]
+            v = NewsRiskVerdict(event_risk=risk, reason="ok", suggest_action="proceed")
             assert v.event_risk == risk
 
     def test_all_suggest_action_values(self) -> None:
         for action in ("proceed", "reduce_size", "skip"):
-            v = NewsRiskVerdict(event_risk="low", reason="ok", suggest_action=action)  # type: ignore[arg-type]
+            v = NewsRiskVerdict(event_risk="low", reason="ok", suggest_action=action)
             assert v.suggest_action == action
 
     def test_rejects_bad_event_risk_catastrophic(self) -> None:
         with pytest.raises(ValidationError):
-            NewsRiskVerdict(event_risk="catastrophic", reason="x", suggest_action="skip")  # type: ignore[arg-type]
+            NewsRiskVerdict(event_risk="catastrophic", reason="x", suggest_action="skip")
 
     def test_rejects_bad_event_risk_critical(self) -> None:
         with pytest.raises(ValidationError):
-            NewsRiskVerdict(event_risk="critical", reason="x", suggest_action="skip")  # type: ignore[arg-type]
+            NewsRiskVerdict(event_risk="critical", reason="x", suggest_action="skip")
 
     def test_rejects_bad_event_risk_none(self) -> None:
         with pytest.raises(ValidationError):
-            NewsRiskVerdict(event_risk=None, reason="x", suggest_action="skip")  # type: ignore[arg-type]
+            NewsRiskVerdict(event_risk=None, reason="x", suggest_action="skip")
 
     def test_rejects_bad_suggest_action_trade(self) -> None:
         with pytest.raises(ValidationError):
-            NewsRiskVerdict(event_risk="low", reason="x", suggest_action="trade")  # type: ignore[arg-type]
+            NewsRiskVerdict(event_risk="low", reason="x", suggest_action="trade")
 
     def test_rejects_bad_suggest_action_allow(self) -> None:
         with pytest.raises(ValidationError):
-            NewsRiskVerdict(event_risk="low", reason="x", suggest_action="allow")  # type: ignore[arg-type]
+            NewsRiskVerdict(event_risk="low", reason="x", suggest_action="allow")
 
     def test_rejects_missing_event_risk(self) -> None:
         with pytest.raises(ValidationError):

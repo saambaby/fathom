@@ -18,6 +18,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -190,9 +191,11 @@ def test_long_level_axhlines_ordered(tmp_path: Path) -> None:
 
         # Collect the y-values of all horizontal lines drawn by axhline.
         hline_ys = sorted(
-            line.get_ydata()[0]
+            float(np.asarray(line.get_ydata(), dtype=float)[0])
             for line in ax.get_lines()
-            if len(line.get_xdata()) == 2 and line.get_xdata()[0] == 0.0 and line.get_xdata()[1] == 1.0
+            if np.asarray(line.get_xdata(), dtype=float).shape == (2,)
+            and float(np.asarray(line.get_xdata(), dtype=float)[0]) == 0.0
+            and float(np.asarray(line.get_xdata(), dtype=float)[1]) == 1.0
         )
         assert len(hline_ys) == 3, f"Expected 3 axhlines, got {len(hline_ys)}: {hline_ys}"
         stop_y, entry_y, target_y = hline_ys
@@ -238,9 +241,11 @@ def test_short_level_axhlines_ordered(tmp_path: Path) -> None:
         ax.axhline(target, **_TARGET_STYLE) # type: ignore[arg-type]
 
         hline_ys = sorted(
-            line.get_ydata()[0]
+            float(np.asarray(line.get_ydata(), dtype=float)[0])
             for line in ax.get_lines()
-            if len(line.get_xdata()) == 2 and line.get_xdata()[0] == 0.0 and line.get_xdata()[1] == 1.0
+            if np.asarray(line.get_xdata(), dtype=float).shape == (2,)
+            and float(np.asarray(line.get_xdata(), dtype=float)[0]) == 0.0
+            and float(np.asarray(line.get_xdata(), dtype=float)[1]) == 1.0
         )
         assert len(hline_ys) == 3, f"Expected 3 axhlines, got {len(hline_ys)}: {hline_ys}"
         target_y, entry_y, stop_y = hline_ys
