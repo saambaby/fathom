@@ -66,8 +66,18 @@ Maps to product-spec Phase 4. The phase where Fathom gains order authority — k
 | monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
 | execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | ready |
 
-## Later — admin panel & hardening (impl-Phase 4+)
+## Phase 4 — admin panel & hardening, demo only (specs drafted; cross-spec audit pending)
+
+Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the existing store + TradingView Lightweight Charts; the only action is a scan-refresh (no order/execute — INV-01; execution stays the CLI). See [phase-4.md](../phases/phase-4.md).
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| equity-snapshots | `equity_snapshots` table + reconcile appends a timestamped `(equity, day_pl)` point (backend enabler for the equity curve) | [equity-snapshots.md](equity-snapshots.md) | draft |
+| panel-data-layer | `panel/data.py` read-only accessors + view models (blotter, equity series + drawdown, watchlist, deviation log, chart data); the tested seam | [panel-data-layer.md](panel-data-layer.md) | draft |
+| admin-panel | Streamlit app: 5 views + Lightweight Charts overlays + scan-refresh button; INV-01 read-only boundary | [admin-panel.md](admin-panel.md) | draft |
+
+## Later — go-live (impl-Phase 5)
 
 | Feature | Summary | Status |
 |---|---|---|
-| admin-panel | Streamlit + Lightweight Charts dashboard (charts, blotter, equity, watchlist, deviation log) | planned |
+| go-live | live-endpoint switch + small-size deliberate go-live decision (product-spec Phase 6, INV-07) | planned |
