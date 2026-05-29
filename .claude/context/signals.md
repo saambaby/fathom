@@ -221,3 +221,51 @@ in the P2 coordinator branch; `pyproject.toml` NOT modified here).
 
 **Merge plan:** `gh pr merge 63 --squash --delete-branch` (lead action after
 reviewer pass).
+
+## P3-T-02 — 2026-05-29 (feat/p3-T-02-correlation)
+
+**What was done:**
+- Created `signals/correlation.py` — shared Pearson correlation primitive extracted
+  from `signals/portfolio.py` (behaviour-preserving refactor, no logic change).
+  Exports:
+  - `MIN_CORRELATION_OBS: int = 20` (shared constant)
+  - `split_currencies(instrument: str) -> list[str]` (public name)
+  - `_split_currencies` (alias = same object, backward-compat)
+  - `mid_returns(df: pd.DataFrame) -> pd.Series` (public name)
+  - `_mid_returns` (alias)
+  - `pearson_corr(a: pd.Series, b: pd.Series) -> float | None` (public name)
+  - `_pearson_corr` (alias)
+- Edited `signals/portfolio.py` to remove the three function definitions and
+  `MIN_CORRELATION_OBS` declaration; replaced with explicit re-exports:
+  `from signals.correlation import X as X` (the `as X` form satisfies mypy's
+  "explicit re-export" requirement so `from signals.portfolio import _pearson_corr`
+  etc. remain valid for existing callers without mypy errors).
+- Created `tests/test_correlation.py` — 21 focused tests directly on
+  `signals.correlation`: `split_currencies` (5), `mid_returns` (7 including NaN
+  regression guard), `pearson_corr` (8), `MIN_CORRELATION_OBS` sanity (1).
+
+**Key patterns / gotchas:**
+- The `as X` re-export idiom (`from signals.correlation import _pearson_corr as
+  _pearson_corr`) is required by mypy in strict mode to distinguish an intentional
+  public re-export from an accidental private import. Without it mypy raises
+  `[attr-defined]` for any downstream `from signals.portfolio import _pearson_corr`.
+- Public names (`pearson_corr`, `mid_returns`, `split_currencies`) are preferred for
+  Phase 3 `risk/limits.py` use; the underscore aliases exist only for backward
+  compatibility.
+- `signals/portfolio.py` internal behaviour is byte-identical — `_pearson_corr` and
+  `_split_currencies` are still called directly inside `PortfolioLimiter.apply()`
+  and `_load_returns`; the source of those names just moved one level up the import
+  chain.
+
+**AC verification results:**
+- `python -m pytest tests/test_portfolio.py -q` → **35 passed** (unchanged — test
+  file NOT modified), exit 0
+- `python -m pytest tests/test_correlation.py -q` → **21 passed**, exit 0
+- `python -m pytest -q` (full suite) → **772 passed, 87 warnings**, exit 0
+- `python -m mypy .` (whole repo) → **0 errors, 68 source files**, exit 0
+
+**No new runtime dependencies** (pandas + stdlib only). `pyproject.toml` NOT
+modified. `CLAUDE.md` trigger-table check: NOT edited (no new dep, no new CLI).
+
+**Merge plan:** `gh pr merge 91 --squash --delete-branch` (lead action after
+reviewer pass).

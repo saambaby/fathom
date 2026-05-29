@@ -39,6 +39,15 @@ from typing import Protocol
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from signals.correlation import (
+    MIN_CORRELATION_OBS as MIN_CORRELATION_OBS,
+    _mid_returns as _mid_returns,
+    _pearson_corr as _pearson_corr,
+    _split_currencies as _split_currencies,
+    mid_returns as mid_returns,
+    pearson_corr as pearson_corr,
+    split_currencies as split_currencies,
+)
 from signals.ranker import Candidate
 
 _log = logging.getLogger(__name__)
@@ -62,12 +71,6 @@ DEFAULT_MAX_CONCURRENT: int = 5
 #: rolling pairwise correlations.  90 days gives a stable estimate while
 #: remaining within a few seconds of load time on a warm SQLite store.
 DEFAULT_LOOKBACK_DAYS: int = 90
-
-#: Minimum number of overlapping non-NaN return observations required to
-#: treat a computed correlation as reliable.  Below this count the
-#: correlation check is skipped (conservative: the pair is NOT dropped on
-#: insufficient data).
-MIN_CORRELATION_OBS: int = 20
 
 # ---------------------------------------------------------------------------
 # Store Protocol (structural — keeps PortfolioLimiter mockable in tests)
@@ -138,33 +141,6 @@ class PortfolioLimiterConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # PortfolioLimiter
 # ---------------------------------------------------------------------------
-
-
-def _split_currencies(instrument: str) -> list[str]:
-    """Split an OANDA instrument string into its leg currencies.
-
-    ``"EUR_USD"`` → ``["EUR", "USD"]``.  Returns all non-empty parts split
-    on ``"_"`` — defensive; never raises.
-    """
-    return [p for p in instrument.split("_") if p]
-
-
-def _mid_returns(df: pd.DataFrame) -> pd.Series:
-    """Compute daily log-returns from bid/ask mid close prices.
-
-    Uses ``(close_bid + close_ask) / 2`` as the mid price and computes
-    ``pct_change()`` (arithmetic return; sufficient for correlation
-    estimation).  Returns a ``pd.Series`` indexed by ``df["time"]``.
-    If the required columns are absent or the DataFrame is too short,
-    returns an empty Series.
-    """
-    required = {"time", "close_bid", "close_ask"}
-    if not required.issubset(df.columns) or len(df) < 2:
-        return pd.Series(dtype="float64")
-    mid = (df["close_bid"] + df["close_ask"]) / 2.0
-    mid.index = pd.Index(df["time"])
-    returns = mid.pct_change().dropna()
-    return returns
 
 
 class PortfolioLimiter:
@@ -341,34 +317,6 @@ class PortfolioLimiter:
         return _mid_returns(df)
 
 
-# ---------------------------------------------------------------------------
-# Internal correlation helper
-# ---------------------------------------------------------------------------
-
-
-def _pearson_corr(a: pd.Series, b: pd.Series) -> float | None:
-    """Compute Pearson ρ between two return series on their shared index.
-
-    Aligns on the index (timestamps), drops NaN pairs, and returns ``None``
-    if fewer than ``MIN_CORRELATION_OBS`` observations are available (the
-    caller treats ``None`` as "insufficient data — do not drop").
-
-    Returns:
-        Pearson ρ in [-1, 1], or ``None`` if data is insufficient.
-    """
-    if a.empty or b.empty:
-        return None
-
-    # Align on shared timestamps.  ``sort=True`` suppresses the Pandas 4
-    # DeprecationWarning about the default sort behaviour when concatenating
-    # DatetimeIndex-backed Series; aligning by sorted index is the correct
-    # semantic here (we want the shared timestamps in order).
-    aligned = pd.concat([a.rename("a"), b.rename("b")], axis=1, sort=True).dropna()
-    if len(aligned) < MIN_CORRELATION_OBS:
-        return None
-
-    rho: float = aligned["a"].corr(aligned["b"])
-    # corr() returns NaN if std is zero; treat as None (insufficient).
-    if pd.isna(rho):
-        return None
-    return rho
+# _pearson_corr, _mid_returns, _split_currencies, and MIN_CORRELATION_OBS are
+# now defined in signals.correlation and imported at the top of this module.
+# They remain accessible from signals.portfolio for backward compatibility.
