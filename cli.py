@@ -376,6 +376,73 @@ def _fallback_cost(instrument: str) -> InstrumentCost:
 
 
 # ---------------------------------------------------------------------------
+# Candle fetch — parent-side, gap-aware, live only
+# ---------------------------------------------------------------------------
+
+
+def _fetch_candles_for_universe(
+    instruments: list[str],
+    timeframes: list[str],
+    db_path: str,
+    start: datetime,
+    end: datetime,
+) -> None:
+    """Populate the candle store for every (instrument, timeframe) pair.
+
+    Called by the parent process in LIVE mode (NOT ``--dry-run``) before the
+    combo fan-out.  Workers only READ from the store; they must find candles
+    already present — this is the step that puts them there.
+
+    Design notes
+    ------------
+    * One ``OandaClient`` is created from ``Settings()`` (env-scoped, INV-09).
+    * ``fetch_and_cache`` is gap-aware: re-runs are cheap (only missing rows
+      trigger HTTP).  The ``start`` arg is derived from ``--history-years`` and
+      always comfortably exceeds the longest per-timeframe train+test span
+      (D: 24 + 6 = 30 months; default ``--history-years 3`` ≥ 36 months).
+    * Fetches are sequential (one (instrument, timeframe) at a time) — avoids
+      saturating the OANDA rate-limit and keeps progress log readable.
+    * Parquet write is skipped (``write_parquet=False``) — the runner only needs
+      the SQLite operational store; research scans are a separate concern.
+
+    INV-03: ``start`` / ``end`` must be UTC-aware (enforced by
+        ``fetch_and_cache`` itself; the caller builds them via
+        ``_build_date_range`` which uses ``datetime.now(tz=timezone.utc)``).
+    INV-08: never log the token or account ID.
+    INV-09: one client from Settings(), env-scoped.
+    """
+    # Lazy imports so --dry-run NEVER constructs Settings or OandaClient.
+    from config.settings import Settings
+    from data.candles import fetch_and_cache
+    from data.oanda_client import OandaClient
+
+    settings = Settings()
+    _log.info("Fetching candles (env=%s).", settings.env)  # INV-08: log env, not token
+    client = OandaClient(settings)
+    store = Store(db_path)
+    try:
+        pairs = [(inst, tf) for inst in sorted(instruments) for tf in sorted(timeframes)]
+        for inst, tf in pairs:
+            _log.info("Fetching %s/%s from %s to %s …", inst, tf,
+                      start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+            df = fetch_and_cache(
+                client=client,
+                store=store,
+                instrument=inst,
+                granularity=tf,
+                start=start,
+                end=end,
+                write_parquet=False,
+            )
+            _log.info(
+                "Fetched %s/%s: %d candles cached.", inst, tf, len(df)
+            )
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
 # Universe discovery
 # ---------------------------------------------------------------------------
 
@@ -669,6 +736,24 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         strategy_keys,
         args.workers,
     )
+
+    # ---- Candle fetch (LIVE mode only; parent-side, gap-aware). -------------
+    # In LIVE mode the store starts empty on the first run; workers must find
+    # candles already present, so the parent fetches them here before dispatch.
+    # Under --dry-run this step is SKIPPED entirely — the run proceeds against
+    # whatever candles are already cached (no HTTP, no Settings construction).
+    if not dry_run:
+        try:
+            _fetch_candles_for_universe(
+                instruments=instruments,
+                timeframes=timeframes,
+                db_path=db_path,
+                start=start,
+                end=end,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.error("Candle fetch failed: %s", exc)
+            return 1
 
     combos = _build_combos(
         instruments=instruments,

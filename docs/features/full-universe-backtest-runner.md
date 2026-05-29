@@ -31,6 +31,11 @@ Runs every requested combination through `WalkForwardValidator`, prints a summar
 - [ ] Multi-process execution (`--workers N`) so ~1,700 combos complete in reasonable wall-clock; results are deterministic regardless of worker count.
 - [ ] All run timestamps UTC RFC 3339 (INV-03); no credentials logged (INV-08).
 - [ ] Empty approved-set exits 0 with a clear message (PoC behaviour preserved).
+- [ ] **[Added by fix/#28] Candle data is fetched (parent-side, gap-aware) before the walk-forward fan-out in LIVE mode.** The runner must not run walk-forward against an empty store; `fetch_and_cache(client, store, instrument, granularity, start, end)` is called for every unique `(instrument, timeframe)` pair before workers are dispatched. Under `--dry-run` this step is skipped entirely (cache-only, no HTTP, no `Settings` construction). An integration test (`TestLivePathCandleFetch`) must pass: it injects a mock `OandaClient` (no real HTTP), runs `fathom backtest` WITHOUT `--dry-run` against a fresh temp DB, and asserts the store gets populated (`len(candles) > 0`) and `fetch_and_cache` was called for each pair.
+
+## Approach note (amendment — fix/#28)
+
+The original spec under-specified the data-loading step. The composed CLI was designed as "build the combo list, fan out over a process pool" — but never stated explicitly that candle data must be fetched *before* dispatch. On a fresh DB the workers ran walk-forward against 0 rows and approved nothing. The fix wires a `_fetch_candles_for_universe` call in the parent (LIVE mode only) between `_build_date_range` and the combo fan-out. The step uses `fetch_and_cache` (gap-aware: re-runs are cheap, re-fetch is safe), creates one `OandaClient` from `Settings()`, and fetches sequentially to stay within the OANDA rate-limit. Workers remain read-only; this is candle data, not the approved-set (INV-12 single-writer rule applies only to approved-set writes).
 
 ## Component design
 

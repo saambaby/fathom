@@ -151,3 +151,52 @@ EXIT: 0
 its full arg list; PoC runner marked superseded.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## fix/runner-candle-fetch — 2026-05-29 (fix/#28)
+
+**Gap closed:** `fathom backtest` in LIVE mode never fetched candle data before the walk-forward
+fan-out. On a fresh DB the store was empty; all combos ran against 0 rows and approved nothing.
+The integration tests masked the bug because they pre-populated the DB with fixtures.
+
+**What was done:**
+- `cli.py`: Added `_fetch_candles_for_universe(instruments, timeframes, db_path, start, end)`.
+  - Lazy-imports `Settings`, `OandaClient`, `fetch_and_cache` so `--dry-run` NEVER constructs them.
+  - Creates ONE `OandaClient` from `Settings()` (env-scoped, INV-09).
+  - Fetches sequentially for each `(instrument, timeframe)` pair; `fetch_and_cache` is gap-aware.
+  - Passes `write_parquet=False` — runner only needs the SQLite operational store.
+  - Logs `env` and `(instrument, timeframe, count)` only; never logs token or account ID (INV-08).
+- `cli.py` `cmd_backtest`: Inserted `if not dry_run: _fetch_candles_for_universe(...)` between
+  `_build_date_range` and `_build_combos` / combo fan-out.
+- `tests/integration/test_backtest_runner.py`: Added `TestLivePathCandleFetch` with two tests:
+  - `test_store_is_populated_before_walkforward_in_live_mode`: patches `data.candles.fetch_and_cache`
+    (no HTTP), runs `cmd_backtest` with `dry_run=False` against a fresh temp DB, asserts store
+    candle count > 0 for each (instrument, timeframe) pair, and that `fetch_and_cache` was called
+    for each expected pair. FAILS against pre-fix code (store stays empty); passes with fix.
+  - `test_dry_run_never_calls_fetch_and_cache`: spy that raises if called; confirms `--dry-run` path
+    never triggers a fetch.
+- `docs/features/full-universe-backtest-runner.md`: Added the missing AC bullet and an "Approach
+  note (amendment)" explaining the under-specified fetch step.
+
+**Key patterns / gotchas:**
+- Patching `data.candles.fetch_and_cache` (canonical module location) is correct because
+  `_fetch_candles_for_universe` uses `from data.candles import fetch_and_cache` at call time.
+  Patching `cli.fetch_and_cache` would NOT work (import-time binding is not established).
+- `Settings` and `OandaClient` are patched via `unittest.mock.patch` targeting their canonical
+  module paths (`config.settings.Settings`, `data.oanda_client.OandaClient`) — consistent with
+  how the lazy-import pattern in `_fetch_candles_for_universe` resolves them.
+- The `fake_fetch_and_cache` function signature uses `object` for `client` (the mock) and
+  concrete `Store` for the store (so upsert/load_candles work for real). No `type: ignore`
+  required with mypy 2.x.
+
+**AC verification results (raw, captured exit codes):**
+- `pytest tests/integration/test_backtest_runner.py -v` → 13 passed (11 pre-existing + 2 new), exit 0
+- `pytest -q` (full suite) → 362 passed, 85 warnings, exit 0
+- `mypy cli.py tests/integration/test_backtest_runner.py` → "Success: no issues found in 2 source files", exit 0
+- `mypy .` → 53 errors in tests/test_momentum.py + tests/test_breakout.py only (same pre-existing
+  errors; NOT introduced by this fix)
+
+**No new dependencies.** No changes to pyproject.toml.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
