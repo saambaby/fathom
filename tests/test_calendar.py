@@ -19,6 +19,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from data.calendar import (
@@ -491,3 +492,29 @@ class TestNextWeekFetch:
         cal.refresh()
 
         assert mock_fetch.call_count == 1
+
+    def test_next_week_404_is_best_effort_not_fatal(self) -> None:
+        """A failing next-week fetch must NOT lose this-week events (live 404).
+
+        The real ff_calendar_nextweek.xml URL returns 404; refresh() must
+        swallow the httpx error, log, and still persist this-week events.
+        """
+        cal = _make_calendar(include_next_week=True)
+        # this-week fetch succeeds, next-week fetch raises (as the live 404 does)
+        mock_fetch = MagicMock(
+            side_effect=[FIXTURE_XML, httpx.HTTPError("simulated 404 Not Found")]
+        )
+        cal._fetch = mock_fetch  # type: ignore[method-assign]
+
+        # Must not raise despite the next-week failure.
+        n = cal.refresh()
+
+        # Both feeds were attempted (best-effort, not short-circuited)...
+        assert mock_fetch.call_count == 2
+        # ...and the this-week events were still parsed and stored despite the
+        # next-week 404 (the events that were lost in the live acceptance bug).
+        assert n > 0
+        row_count = cal._conn.execute(
+            "SELECT COUNT(*) FROM calendar_events"
+        ).fetchone()[0]
+        assert row_count == n
