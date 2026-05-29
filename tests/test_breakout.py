@@ -27,7 +27,7 @@ from strategies.breakout import SessionRangeBreakout
 
 def _utc(*args: int) -> datetime:
     """Convenience constructor: _utc(Y, M, D, H=0, Min=0)."""
-    return datetime(*args, tzinfo=timezone.utc)
+    return datetime(*args, tzinfo=timezone.utc)  # type: ignore[misc, arg-type]
 
 
 def _make_h1_candles(
