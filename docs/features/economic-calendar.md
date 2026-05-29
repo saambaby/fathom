@@ -1,6 +1,6 @@
 # Feature: economic-calendar
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 1
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -38,17 +38,19 @@ Backend module. `EconomicCalendar(...)` exposing `upcoming_events(currencies, wi
 
 - `config/settings.py` (for any provider key), `data/store.py` (operational persistence) — exist on `main`.
 
-External:
-- An economic-calendar/news data source (provider TBD — see Open questions). Could be a free calendar API or a scraped feed.
+External (provider decided 2026-05-29):
+- **FairEconomy / ForexFactory weekly calendar XML feed** — `https://nfs.faireconomy.media/ff_calendar_thisweek.xml` (and the `nextweek` variant). Free, **no auth/key**. Each `<event>` carries `<title>`, `<country>` (currency code: USD/EUR/GBP/JPY/…), `<date>`, `<time>`, `<impact>` (High/Medium/Low/Holiday), `<forecast>`, `<previous>`. Fits demo-first / self-hosted / no-paid-services. Built behind the `EconomicCalendar` interface so it can be swapped for a paid/official provider later without rippling.
 
 ## Approach
 
-Define `CalendarEvent` + an `EconomicCalendar` interface with a concrete provider implementation behind it. Pull on a schedule (invoked by the Phase 2 Hermes job later; for Phase 1 a manual/CLI refresh suffices), normalise impact + currency, store to SQLite. Keep the provider behind the interface so the (uncertain) data source can change without touching consumers.
+Define `CalendarEvent` + an `EconomicCalendar` ABC, with a concrete `FairEconomyCalendar` provider behind it (fetch the weekly XML via `httpx`, parse with the stdlib XML parser). Normalise `<impact>` → the high/medium/low enum (map `Holiday`→low or skip), tag `<country>` → currency. Pull on demand (Phase 2's Hermes job schedules it later; a manual/CLI refresh suffices for Phase 1). Store to SQLite operational state, idempotent upsert keyed on (currency, event_name, time). Keep the provider behind the interface.
+
+**INV-03 is the sharp edge here:** the FF feed publishes times in a fixed display timezone (historically US Eastern / a feed-configured TZ), **not** UTC. The provider MUST convert each event's date+time from the feed's timezone to UTC before constructing `CalendarEvent.time`. Parse defensively (missing/`All Day`/tentative times) and document the source-TZ assumption; a wrong TZ conversion silently shifts every event.
 
 ## Open questions
 
-- **Provider choice** — this is the main unknown. Options: a free economic-calendar API (rate-limited), a paid feed, or scraping (fragile). OANDA's v20 API does *not* provide an economic calendar (it has a separate, deprecated labs calendar endpoint). Decide the provider before drafting the Plan; it determines auth, rate limits, and the impact-level mapping. **Blocking for this spec's implementation, not for the rest of Phase 1.**
-- Headline/news feed: bundle with the calendar provider, or separate source? (Lean: calendar first; headlines are a softer Phase 2 input.)
+- Feed timezone: confirm the exact TZ the FF XML emits (it has historically been US Eastern; verify against a known event at fetch time). The provider must convert to UTC regardless (INV-03).
+- Headline/news feed: deferred — calendar only for Phase 1; headlines are a softer Phase 2 input.
 
 ## Out of scope
 
