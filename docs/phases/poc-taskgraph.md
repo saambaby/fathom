@@ -1,6 +1,6 @@
 # Fathom PoC — Task Graph
 
-> ✅ **CODE COMPLETE — manual acceptance gate (T-08) pending**
+> ✅ **PoC COMPLETE (2026-05-29)** — all 8 tasks done incl. T-08 live acceptance. Result: empty approved-set (honest negative for MA-crossover-alone); see [poc-results.md](poc-results.md). Decision: proceed to Phase 1.
 > Orchestration kickoff ran 2026-05-28. All 7 code tasks merged to `main` via PR with fresh-reviewer gates. Decisions D-01/02/03 resolved.
 >
 > **Issue → PR map:** T-01 #2→PR#10 · T-02 #3→PR#12 · T-03 #4→PR#13 · T-04 #5→PR#11 · T-05 #6→PR#14 · T-06 #7→PR#15 · T-07 #8→PR#16 · T-08 #9 = **manual gate, open**
