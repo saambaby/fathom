@@ -963,32 +963,36 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     store = Store(db_path)
     try:
-        # FairEconomyCalendar.upcoming_events returns list[CalendarEvent] while
-        # Ranker's _CalendarLike Protocol declares list[object].  Structurally
-        # compatible (CalendarEvent IS an object) but mypy's strict return-type
-        # covariance check rejects it — suppress with ignore on this line only.
-        ranker = Ranker(store=store, calendar=FairEconomyCalendar(db_path=db_path))  # type: ignore[arg-type]
-        limiter = PortfolioLimiter(store=store)
+        try:
+            # FairEconomyCalendar.upcoming_events returns list[CalendarEvent] while
+            # Ranker's _CalendarLike Protocol declares list[object].  Structurally
+            # compatible (CalendarEvent IS an object) but mypy's strict return-type
+            # covariance check rejects it — suppress with ignore on this line only.
+            ranker = Ranker(store=store, calendar=FairEconomyCalendar(db_path=db_path))  # type: ignore[arg-type]
+            limiter = PortfolioLimiter(store=store)
 
-        _log.info(
-            "Running Ranker at %s …", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        )
-        ranked = ranker.rank(now=run_dt)
-        candidates = limiter.apply(ranked)
+            _log.info(
+                "Running Ranker at %s …", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
+            ranked = ranker.rank(now=run_dt)
+            candidates = limiter.apply(ranked)
 
-        _log.info(
-            "Ranker produced %d candidate(s); %d after portfolio limits.",
-            len(ranked),
-            len(candidates),
-        )
+            _log.info(
+                "Ranker produced %d candidate(s); %d after portfolio limits.",
+                len(ranked),
+                len(candidates),
+            )
 
-        # Persist to watchlist table (single transaction, mirrors approved_set).
-        written = store.write_watchlist(candidates, run_timestamp=run_dt)
-        _log.info(
-            "Persisted %d watchlist row(s) (run_timestamp=%s).",
-            written,
-            run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+            # Persist to watchlist table (single transaction, mirrors approved_set).
+            written = store.write_watchlist(candidates, run_timestamp=run_dt)
+            _log.info(
+                "Persisted %d watchlist row(s) (run_timestamp=%s).",
+                written,
+                run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.error("Ranker/portfolio step failed: %s", exc)
+            return 1
     finally:
         store.close()
 

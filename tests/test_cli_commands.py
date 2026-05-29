@@ -133,20 +133,30 @@ def _make_namespace(**kwargs: object) -> argparse.Namespace:
 
 class TestNoOrderPath:
     def test_cli_has_no_execution_import(self) -> None:
-        """cli.py must not import execution or risk at module level (INV-01)."""
+        """cli.py must contain no reference to execution/orders/risk.sizing paths
+        anywhere — module-level OR inside function bodies (INV-01).
+
+        The previous approach only inspected ``cli.__dict__`` module attributes,
+        which misses lazy ``from execution import ...`` inside function bodies.
+        This version does a direct source grep so both import styles are caught.
+        """
+        import inspect
         import importlib
-        import types
 
         module = sys.modules.get("cli") or importlib.import_module("cli")
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name, None)
-            if isinstance(attr, types.ModuleType):
-                assert "execution" not in attr.__name__, (
-                    f"cli.py has a live import of execution module: {attr.__name__}"
-                )
-                assert "orders" not in attr.__name__, (
-                    f"cli.py has a live import of orders module: {attr.__name__}"
-                )
+        source = inspect.getsource(module)
+
+        forbidden_patterns = [
+            "execution",
+            "orders",
+            "risk.sizing",
+            "fathom execute",
+        ]
+        for pattern in forbidden_patterns:
+            assert pattern not in source, (
+                f"cli.py contains a reference to forbidden pattern {pattern!r} "
+                f"(INV-01: no execution/order path in the scan surface)"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +313,52 @@ class TestScanCommand:
         # which is never constructed in --dry-run).
         assert "token" not in buf.getvalue().lower()
         assert "api_key" not in buf.getvalue().lower()
+
+    def test_scan_ranker_raises_returns_exit1_and_logs(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Ranker.rank() raising must: return 1 (not propagate), log an error.
+
+        Distinct from the empty-approved-set → exit-0 path (INV-10).
+        A genuine exception is NOT a valid empty-set; it must be exit 1.
+        """
+        import logging
+
+        db_path = str(tmp_path / "raise.db")
+
+        args = _make_namespace(
+            command="scan",
+            db_path=db_path,
+            instruments="EUR_USD",
+            timeframes="H1",
+            dry_run=True,
+            history_years=1,
+        )
+
+        with (
+            patch("data.calendar.FairEconomyCalendar") as mock_cal_cls,
+            patch("signals.ranker.Ranker") as mock_ranker_cls,
+            patch("signals.portfolio.PortfolioLimiter") as mock_limiter_cls,
+        ):
+            mock_cal_cls.return_value = MagicMock()
+            mock_ranker_inst = MagicMock()
+            mock_ranker_inst.rank.side_effect = RuntimeError("scoring backend offline")
+            mock_ranker_cls.return_value = mock_ranker_inst
+            mock_limiter_cls.return_value = MagicMock()
+
+            with caplog.at_level(logging.ERROR):
+                rc = cli.cmd_scan(args)
+
+        assert rc == 1, (
+            "cmd_scan must return 1 when Ranker.rank() raises, not propagate the "
+            "exception as a raw traceback"
+        )
+        # A log line at ERROR level must be emitted (the Hermes job can detect it).
+        error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_msgs, "Expected at least one ERROR log entry when ranker raises"
+        assert any("scoring backend offline" in m for m in error_msgs), (
+            f"Error message should include the exception text; got: {error_msgs}"
+        )
 
     def test_scan_multiple_candidates_json_shape(self, tmp_path: Path) -> None:
         """scan with two candidates produces correct JSON order and shapes."""
