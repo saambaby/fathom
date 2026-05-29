@@ -59,6 +59,19 @@ fathom watchlist              # output latest persisted watchlist as Candidate[]
 fathom chart <instrument>     # render candidate chart PNG, print path (Hermes tool)
 #   fathom chart EUR_USD [--timeframe H1] [--db-path PATH] [--out-dir DIR] [--history-years N]
 
+# Phase 3 (current) — P3-T-10 — INV-01 gate (operator-only, NEVER Hermes tools)
+fathom execute <candidate-ref>  # run full Phase 3 gate (pretrade → sizing → limits → submit)
+#   fathom execute EUR_USD:H1:macrossover_10_50 [--db-path PATH] [--dry-run] [--yes]
+#   candidate-ref format: instrument:timeframe:strategy_name (must be on latest watchlist)
+#   --dry-run: runs gate steps 1-5, prints would-be order without any v20 submission
+#   --yes: skip the interactive confirm prompt
+
+fathom positions              # print open Position[] JSON from the store
+#   fathom positions [--db-path PATH]
+
+fathom reconcile              # run one broker-truth reconcile pass, print ReconcileReport JSON
+#   fathom reconcile [--db-path PATH]
+
 # PoC (superseded by `fathom backtest`)
 python scripts/poc_run.py     # end-to-end PoC: fetch candles → backtest → approved-set table
 

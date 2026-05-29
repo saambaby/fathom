@@ -127,36 +127,55 @@ def _make_namespace(**kwargs: object) -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# INV-01 guard — no execution import path
+# INV-01 guard — hermes_integration must never reference execute/positions/reconcile
 # ---------------------------------------------------------------------------
 
 
 class TestNoOrderPath:
-    def test_cli_has_no_execution_import(self) -> None:
-        """cli.py must contain no reference to execution/orders/risk.sizing paths
-        anywhere — module-level OR inside function bodies (INV-01).
+    def test_hermes_integration_has_no_execution_commands(self) -> None:
+        """hermes_integration/ must not register or grant access to fathom execute,
+        fathom positions, or fathom reconcile — the Phase 2 allow-list is
+        scan/watchlist/chart only (INV-01).
 
-        The previous approach only inspected ``cli.__dict__`` module attributes,
-        which misses lazy ``from execution import ...`` inside function bodies.
-        This version does a direct source grep so both import styles are caught.
+        P3-T-10 added execute/positions/reconcile to cli.py, which is correct
+        and intentional — cli.py is the canonical INV-01 enforcement point.
+        The invariant is that Hermes (hermes_integration/) must NEVER be given
+        access to order/execution commands.  We scan every text file under
+        hermes_integration/ to assert the allow-list boundary is upheld.
+
+        Patterns checked are the CLI tool/command strings that Hermes would need
+        to reference to gain access: "fathom execute", "fathom positions",
+        "fathom reconcile".  Discussion of why NOT to grant access (as in daily.md)
+        is fine and is not caught by these exact patterns.
         """
-        import inspect
-        import importlib
+        import pathlib
 
-        module = sys.modules.get("cli") or importlib.import_module("cli")
-        source = inspect.getsource(module)
-
+        hermes_dir = pathlib.Path(__file__).parent.parent / "hermes_integration"
+        # These are the exact command strings a Hermes job definition would use
+        # to invoke the forbidden commands.  We do NOT match bare "execute" or
+        # "positions" to avoid flagging legitimate negative mentions (e.g.
+        # "Do not grant execute access").
         forbidden_patterns = [
-            "execution",
-            "orders",
-            "risk.sizing",
             "fathom execute",
+            "fathom positions",
+            "fathom reconcile",
         ]
-        for pattern in forbidden_patterns:
-            assert pattern not in source, (
-                f"cli.py contains a reference to forbidden pattern {pattern!r} "
-                f"(INV-01: no execution/order path in the scan surface)"
-            )
+        for file_path in hermes_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            # Only inspect text/code/markdown files; skip .pyc and __pycache__.
+            if file_path.suffix in (".pyc",) or "__pycache__" in file_path.parts:
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            for pattern in forbidden_patterns:
+                assert pattern not in content, (
+                    f"hermes_integration/{file_path.name} contains forbidden "
+                    f"pattern {pattern!r} — INV-01: Hermes must NOT have access "
+                    "to order/execution commands (allow-list: scan/watchlist/chart)."
+                )
 
 
 # ---------------------------------------------------------------------------
