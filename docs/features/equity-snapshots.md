@@ -22,11 +22,14 @@ side effect). Two pieces:
 - `data/store.py` gains an `equity_snapshots` table and:
   - `write_equity_snapshot(*, as_of: str, equity: float, day_pl: float) -> None` — append-only insert.
   - `load_equity_snapshots(*, since: str | None = None) -> list[dict]` — ordered by `as_of` ascending, optional lower bound.
-- `execution/reconcile.py` — immediately after it computes `nav` and
-  `day_pl = nav − start_of_day_equity` (the existing lines), it appends one
-  snapshot `(as_of=now (RFC-3339 Z), equity=nav, day_pl=day_pl)`. This is purely
-  additive — it does not change the reconcile diff, the `account_state` update, or
-  the `ReconcileReport`.
+- `execution/reconcile.py` — **after `store.write_account_state(...)`** (reconcile.py
+  ~line 536-540, i.e. once the kill-switch truth row is written), it appends one
+  snapshot `(as_of=now (RFC-3339 Z), equity=broker.nav, day_pl=day_pl)`. Note: the
+  reconcile value is `broker.nav` (there is no bare `nav` local). Placing the append
+  *after* `write_account_state` guarantees a snapshot-write failure can never delay
+  or interpose before the kill-switch's `account_state` write. Purely additive — it
+  does not change the reconcile diff, the `account_state` update, or the
+  `ReconcileReport`.
 
 ## Acceptance criteria
 
@@ -60,7 +63,7 @@ write reuses already-computed `nav`/`day_pl`, the snapshot can never disagree wi
 
 ## Depends on
 
-- `execution/reconcile.py` + `data/store.py` (shipped, Phase 3) — this is an additive edit to both (coordinator-serialized — touches shipped files).
+- `execution/reconcile.py` + `data/store.py` (shipped, Phase 3) — additive edits to both (coordinator-serialized — touches shipped files). **Store-edit ownership (D-03):** this spec owns the `equity_snapshots` table + `write_equity_snapshot`/`load_equity_snapshots` and **lands first** on `data/store.py`; [[panel-data-layer]] then adds `load_fills` (serialized after, not parallel).
 
 ## Approach
 

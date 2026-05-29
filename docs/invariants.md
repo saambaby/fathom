@@ -13,6 +13,8 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 **Enforcement:** Execution engine code must not be callable as a Hermes tool. Order placement lives in `execution/orders.py` and is invoked only by the deterministic execution path, never by a Hermes job.
 
+**Enforcement (always-on UI / monitoring surfaces — added Phase 4):** No always-on or operator-facing read surface (`panel/`, the deviation monitor, any future dashboard) may reach order-placement or risk sizing/placement code — **directly or transitively**. Concretely: `panel/` and `monitoring/` must not import `execution.orders`, `execution.models.build_bracket`, `risk.sizing`, or `risk.limits` placement paths, and must not import `cli` (which carries those at module level). A read-only "refresh/scan" affordance must reach the ranker via an order-free entrypoint (`signals/scan.py::run_scan`), not via `cli.cmd_scan`. Enforced by a **transitive-import boundary test** over the surface's module graph — a UI button that can place a trade is exactly the hazard this invariant exists to prevent.
+
 ---
 
 ## INV-02 · All Claude Outputs Feeding Automation Must Be Structured JSON with Safe Defaults
