@@ -6,6 +6,7 @@ __pycache__/
 .hypothesis/
 data/*.db
 data/*.parquet
+charts/
 .venv/
 venv/
 *.egg-info/
