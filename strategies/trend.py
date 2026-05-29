@@ -6,6 +6,13 @@ Generates signals on EMA crossovers:
 - Golden cross (fast EMA crosses ABOVE slow EMA) → LONG signal
 - Death cross  (fast EMA crosses BELOW slow EMA) → SHORT signal
 
+DonchianBreakout
+----------------
+Generates signals on Donchian channel breakouts:
+- Close above the prior channel_period-bar rolling max high → LONG signal
+- Close below the prior channel_period-bar rolling min low  → SHORT signal
+- No signal while price stays inside the channel.
+
 library_defaults (from poc-taskgraph.md):
   pandas.ewm(span=..., adjust=False)   — recursive EMA formulation.
   Default adjust=True gives a different result to the standard recursive EMA
@@ -185,3 +192,185 @@ class MACrossover(Strategy):
 
         return signals
 
+
+class DonchianBreakout(Strategy):
+    """Donchian channel breakout strategy.
+
+    Produces a signal when price closes outside the prior ``channel_period``-bar
+    Donchian channel (the rolling max of highs / rolling min of lows, each
+    shifted by 1 bar so the current bar is excluded — no look-ahead).
+
+    Signal rules (close-based):
+    - LONG  when ``close > channel_high_prev``  (close breaks above prior channel high)
+    - SHORT when ``close < channel_low_prev``   (close breaks below prior channel low)
+    - No signal while close stays inside the channel.
+    - At most one signal per bar (LONG takes priority if both conditions fire
+      simultaneously, which cannot happen in practice for a well-formed channel).
+
+    Parameters
+    ----------
+    channel_period:
+        Look-back in bars for the rolling high/low channel.  Classic values are
+        20 (standard Donchian) and 55 (Turtle system).  Must be >= 1.
+    rr_ratio:
+        Reward-to-risk ratio used to derive ``target_distance`` from
+        ``stop_distance``.  Default 1.5 (target = stop * 1.5).
+    instrument:
+        OANDA instrument identifier (e.g. ``"EUR_USD"``).
+    timeframe:
+        Granularity string (e.g. ``"H1"`` or ``"D"``).
+    atr_period:
+        Look-back for the shared ATR calculation.  Default 14 (INV-11).
+    """
+
+    def __init__(
+        self,
+        channel_period: int,
+        *,
+        rr_ratio: float = 1.5,
+        instrument: str = "",
+        timeframe: str = "",
+        atr_period: int = 14,
+    ) -> None:
+        if channel_period < 1:
+            raise ValueError(f"channel_period must be >= 1, got {channel_period}")
+        if rr_ratio <= 0:
+            raise ValueError(f"rr_ratio must be > 0, got {rr_ratio}")
+
+        self._channel_period = channel_period
+        self._rr_ratio = rr_ratio
+        self._instrument = instrument
+        self._timeframe = timeframe
+        self._atr_period = atr_period
+
+    # ------------------------------------------------------------------
+    # Strategy interface
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return f"DonchianBreakout({self._channel_period})"
+
+    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
+        """Scan the DataFrame for Donchian channel breakouts and return Signals.
+
+        At most one signal is produced per bar.  The DataFrame is never mutated.
+        The channel is computed using the prior ``channel_period`` bars only
+        (shifted by 1 bar) — no look-ahead.
+
+        Parameters
+        ----------
+        df:
+            Candle data with columns: ``time``, ``high_bid``, ``low_bid``,
+            ``close_bid`` (minimum required).  ``time`` must be UTC-aware.
+
+        Returns
+        -------
+        list[Signal]
+        """
+        df = df.copy()  # defensive copy — never mutate the caller's DataFrame
+
+        required = {"time", "high_bid", "low_bid", "close_bid"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"DataFrame missing required columns: {missing}")
+
+        n = len(df)
+        # Need at least channel_period + 1 rows: channel_period for the rolling
+        # window and at least 1 bar beyond to evaluate the breakout.
+        if n < self._channel_period + 1:
+            return []
+
+        high = df["high_bid"].astype(float)
+        low = df["low_bid"].astype(float)
+        close = df["close_bid"].astype(float)
+
+        # Rolling channel over exactly channel_period bars, shifted by 1 so that
+        # bar i's channel is derived from bars [i-channel_period, i-1] (no look-ahead).
+        # min_periods=channel_period ensures we only get a value once the window is full.
+        channel_high: pd.Series[float] = (
+            high.rolling(self._channel_period, min_periods=self._channel_period)
+            .max()
+            .shift(1)
+        )
+        channel_low: pd.Series[float] = (
+            low.rolling(self._channel_period, min_periods=self._channel_period)
+            .min()
+            .shift(1)
+        )
+
+        # ATR(14) — standard True Range average (shared helper, INV-11).
+        atr_series = _atr(df, self._atr_period)
+
+        signals: list[Signal] = []
+
+        for i in range(1, n):
+            ch_high = channel_high.iloc[i]
+            ch_low = channel_low.iloc[i]
+
+            # Skip bars where the channel is not yet fully computed (NaN from shift+rolling).
+            if pd.isna(ch_high) or pd.isna(ch_low):
+                continue
+
+            curr_close = close.iloc[i]
+
+            # Determine breakout direction (close-based, lean from spec).
+            if curr_close > ch_high:
+                direction = Direction.LONG
+            elif curr_close < ch_low:
+                direction = Direction.SHORT
+            else:
+                # Inside the channel — no signal.
+                continue
+
+            # stop_distance = ATR(14) at signal bar (INV-11) — must be > 0.
+            atr_value = float(atr_series.iloc[i])
+            if atr_value <= 0 or pd.isna(atr_value):
+                continue
+
+            stop_distance = atr_value
+            target_distance = stop_distance * self._rr_ratio
+
+            # quality_score: normalised breakout strength in [0, 1].
+            # Measure how far close has moved beyond the channel edge relative to
+            # the channel width.  Channel width = ch_high - ch_low.
+            #   LONG:  excess = close - ch_high  (how far above the upper rail)
+            #   SHORT: excess = ch_low  - close  (how far below the lower rail)
+            channel_width = ch_high - ch_low
+            if channel_width > 0:
+                if direction == Direction.LONG:
+                    excess = curr_close - ch_high
+                else:
+                    excess = ch_low - curr_close
+                quality_score = float(min(excess / channel_width, 1.0))
+            else:
+                quality_score = 0.0
+
+            # generated_at: bar's close timestamp (INV-03 — never datetime.now()).
+            bar_time = df["time"].iloc[i]
+            if hasattr(bar_time, "to_pydatetime"):
+                generated_at: datetime = bar_time.to_pydatetime()
+            else:
+                generated_at = bar_time
+
+            # Ensure UTC-aware (INV-03).
+            if generated_at.tzinfo is None:
+                generated_at = generated_at.replace(tzinfo=timezone.utc)
+
+            entry_ref = float(curr_close)
+
+            signals.append(
+                Signal(
+                    instrument=self._instrument,
+                    direction=direction,
+                    entry_ref=entry_ref,
+                    stop_distance=stop_distance,
+                    target_distance=target_distance,
+                    strategy_name=self.name,
+                    timeframe=self._timeframe,
+                    quality_score=quality_score,
+                    generated_at=generated_at,
+                )
+            )
+
+        return signals
