@@ -1,6 +1,6 @@
 # Feature: execution-cli
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -23,12 +23,19 @@ Extends `cli.py` (the single Phase 3 writer of this file):
 fathom execute <candidate-ref> [--db-path PATH] [--dry-run] [--yes]
 ```
 
-1. Load the named candidate from the **persisted watchlist** (INV-13); error if it
-   isn't on the current watchlist (no executing arbitrary input).
-2. Fetch current equity (OANDA v20 account summary).
+1. Load the named candidate from the **latest persisted watchlist** via
+   `load_watchlist()` (INV-13). The `<candidate-ref>` is
+   `instrument:timeframe:strategy_name` (DRIFT-04) — unique within one watchlist
+   run; error if it isn't on the latest watchlist (no executing arbitrary input).
+   The full `Candidate` row (incl. `generated_at`) is loaded so the
+   `client_order_id` (INV-15) is reconstructible.
+2. **Fresh reconcile** ([[reconciliation]]): fetch account summary + broker open
+   trades and refresh the `account_state` (`day_pl`, `start_of_day_equity`) and
+   `positions` *before* the limits check (AMBIGUOUS-03 — `fathom execute` is
+   operator-initiated and infrequent, so it must not trust a stale `day_pl`).
 3. **Pre-trade check** ([[pretrade-check]]) → `block` aborts (exit non-zero, reason printed).
-4. **Sizing** ([[position-sizing]]) → reject (size 0) aborts with the reason.
-5. **Limits / kill switch** ([[risk-limits-kill-switch]]) → reject aborts with the reason.
+4. **Sizing** ([[position-sizing]], using the freshly-fetched equity) → reject (size 0) aborts with the reason.
+5. **Limits / kill switch** ([[risk-limits-kill-switch]], reading the fresh `account_state`) → reject aborts with the reason.
 6. **Submit** ([[order-placement]]) the bracketed, idempotent order; print the `Fill`.
 7. `--dry-run` runs steps 1–5 and prints what *would* be submitted without placing
    an order (safe rehearsal). `--yes` skips an interactive confirm.
@@ -111,13 +118,16 @@ for any execution-command reference.
 
 ## Open questions
 
-- Candidate ref format: `rank`, `instrument`, or a composite id from the watchlist
-  row? Propose composite `instrument:timeframe:strategy_name` (unambiguous on a
-  watchlist).
 - One candidate per invocation (proposed) vs a batch `--all`. Propose single; the
   book cap is enforced by limits regardless.
 - Interactive confirm default: require `--yes` for a real submit, or confirm prompt?
   Propose a confirm prompt unless `--yes` (demo safety).
+
+**Resolved at cross-spec audit (2026-05-29):** DRIFT-04 — `<candidate-ref>` =
+`instrument:timeframe:strategy_name`, resolved against the latest watchlist run
+(`load_watchlist(run_timestamp=None)`); the full row is loaded for the
+`client_order_id` derivation. AMBIGUOUS-03 — `fathom execute` triggers a fresh
+reconcile before the limits check so the kill switch reads a current `day_pl`.
 
 ## Out of scope
 

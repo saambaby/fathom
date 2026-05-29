@@ -1,6 +1,6 @@
 # Feature: deviation-monitor
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -27,9 +27,22 @@ Backend module `monitoring/watcher.py` + entrypoint `scripts/run_monitor.py`:
   realized slippage beyond a threshold; volatility spike (ATR/range expansion);
   feed-health (no tick within the heartbeat window → stale-feed alert).
 - On a trigger → emit a `DeviationEvent` to the alerter ([[monitor-alerts]]).
-- **Severe-response policy:** `alert_only` (default) | `auto_flatten` |
-  `tighten_stop`, behind a default-off config flag. On demo the default is
-  alert-only; auto-responses are opt-in.
+- **Severe-response policy (AMBIGUOUS-01 resolution):** `alert_only` (default) |
+  `auto_flatten` | `tighten_stop`, behind a default-off config flag. On demo the
+  default is **alert-only**. Any auto-response is **delegated to a deterministic
+  `execution/` function** (close/modify of an *existing* position via
+  `execution/orders.py`) — the watcher never calls the v20 order API inline, and
+  this path is **not** Hermes-reachable. INV-01 holds: the monitor may at most
+  close/modify an existing position when explicitly configured; it never *opens*
+  one.
+
+**`DeviationEvent` (pydantic — this spec, the producer, defines it):**
+`event_id` (str, stable per (position, rule, debounce-window) so re-persistence is
+idempotent), `instrument` (str), `deviation_type`
+(`Literal["adverse","slippage","vol","feed_health"]`), `detail` (str — short
+human-readable figure), `broker_trade_id` (str | None — None for feed-health),
+`severity` (`Literal["info","warn","severe"]`), `created_at` (UTC RFC-3339,
+INV-03). [[monitor-alerts]] consumes this exact shape.
 - `scripts/run_monitor.py` is the long-lived entrypoint (the always-on process on
   the private server).
 
@@ -78,7 +91,7 @@ handling — are inherited from shipped Phase 1B code).
 ## Non-goals
 
 - No alert delivery formatting/transport — that is [[monitor-alerts]].
-- No opening trades — observe-only (plus optional flatten of an *existing* position when explicitly enabled). INV-01 holds: the monitor never opens a position.
+- No opening trades — observe-only (plus optional flatten/modify of an *existing* position when explicitly enabled, delegated to `execution/orders.py`). INV-01 holds: the monitor never opens a position and is never a Hermes tool.
 - No reconciliation logic — it consumes [[reconciliation]] output for fresh positions.
 
 ## Touches

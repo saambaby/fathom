@@ -1,6 +1,6 @@
 # Feature: pretrade-check
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29

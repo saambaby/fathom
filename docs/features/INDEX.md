@@ -50,21 +50,21 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools; the Hermes boundary) | [cli-commands.md](cli-commands.md) | ready |
 | hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | ready |
 
-## Phase 3 — risk, execution & monitoring, demo only (specs drafted; cross-spec audit pending)
+## Phase 3 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
 Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-3.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
-| order-model-and-brackets | frozen `Order`/`Fill`/`Position` models + `build_bracket` (INV-04); prerequisite hub | [order-model-and-brackets.md](order-model-and-brackets.md) | draft |
-| position-sizing | units from stop distance + 0.25% equity cap; rejects on no valid stop (INV-05/11) | [position-sizing.md](position-sizing.md) | draft |
-| risk-limits-kill-switch | exposure + correlation caps + daily-loss kill switch (UTC-day reset) | [risk-limits-kill-switch.md](risk-limits-kill-switch.md) | draft |
-| pretrade-check | in-process Claude veto; pydantic verdict; malformed→abort (INV-02); stubbable adapter | [pretrade-check.md](pretrade-check.md) | draft |
-| order-placement | atomic bracket submit to v20 practice; client-id idempotency; retries; slippage capture (INV-04/07/09) | [order-placement.md](order-placement.md) | draft |
-| reconciliation | broker-vs-db; broker is source of truth; startup + periodic | [reconciliation.md](reconciliation.md) | draft |
-| deviation-monitor | always-on adverse-path/slippage/vol/feed-health detection on open positions | [deviation-monitor.md](deviation-monitor.md) | draft |
-| monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | draft |
-| execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | draft |
+| order-model-and-brackets | frozen `Order`/`Fill`/`Position` models + `build_bracket` (INV-04); prerequisite hub | [order-model-and-brackets.md](order-model-and-brackets.md) | ready |
+| position-sizing | units from stop distance + 0.25% equity cap; rejects on no valid stop (INV-05/11) | [position-sizing.md](position-sizing.md) | ready |
+| risk-limits-kill-switch | exposure + correlation caps + daily-loss kill switch (UTC-day reset) | [risk-limits-kill-switch.md](risk-limits-kill-switch.md) | ready |
+| pretrade-check | in-process Claude veto; pydantic verdict; malformed→abort (INV-02); stubbable adapter | [pretrade-check.md](pretrade-check.md) | ready |
+| order-placement | atomic bracket submit to v20 practice; client-id idempotency; retries; slippage capture (INV-04/07/09) | [order-placement.md](order-placement.md) | ready |
+| reconciliation | broker-vs-db; broker is source of truth; startup + periodic | [reconciliation.md](reconciliation.md) | ready |
+| deviation-monitor | always-on adverse-path/slippage/vol/feed-health detection on open positions | [deviation-monitor.md](deviation-monitor.md) | ready |
+| monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
+| execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | ready |
 
 ## Later — admin panel & hardening (impl-Phase 4+)
 

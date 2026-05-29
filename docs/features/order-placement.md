@@ -1,6 +1,6 @@
 # Feature: order-placement
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -72,10 +72,29 @@ sequenceDiagram
 
 `execution/orders.py` uses `oandapyV20` order endpoints via the existing
 `oanda_client.py` (extended with order + account-summary endpoints; still the only
-reader of `env`). The store gains `orders`/`fills`/`positions` tables (this spec
-owns the migration). Idempotency is enforced two ways: the v20 client-order-id
+reader of `env`). The store gains `orders`/`fills`/`positions` tables (**this spec
+owns the migration**). Idempotency is enforced two ways: the v20 client-order-id
 client extension *and* a pre-submit store check — belt and suspenders against
 double-fills. Unit tests mock v20 with `responses`; no live HTTP in tests. → opus.
+
+**Idempotency key (DRIFT-03 — pinned, INV-15).** `client_order_id =
+sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date}").hexdigest()[:32]`,
+computed by `build_bracket()` in [[order-model-and-brackets]] from the `Candidate`
+fields plus an injected `execution_date` (UTC date of the `fathom execute` run).
+The same approved candidate retried the same day dedups; a genuine re-approval the
+next day yields a distinct id. `order-model`, this spec, and [[execution-cli]] all
+state this one formula.
+
+**Store schema (DRIFT-01/02 — pinned). `orders`:** `client_order_id` (PK),
+`instrument`, `direction`, `units`, `stop_loss_price`, `take_profit_price`,
+`candidate_ref`, `created_at`, `status`. **`fills`:** `client_order_id` (FK),
+`broker_trade_id`, `fill_price`, `units_filled`, `slippage`, `status`
+(`filled`|`partial`|`rejected`), `filled_at`. **`positions`:** `broker_trade_id`
+(PK), `instrument`, `units`, `entry_price`, `stop_loss_price`,
+`take_profit_price`, `candidate_ref`, `opened_at`, `unrealized_pl`, `closed_at`
+(nullable), **`realized_pl`** (nullable until close — written by
+[[reconciliation]] when the broker reports the trade closed; summed into the
+kill-switch `day_pl`). All timestamps UTC RFC-3339 (INV-03).
 
 ## Non-goals
 
@@ -103,13 +122,13 @@ throughout; the live practice submission is exercised at the acceptance gate.
 
 ## Open questions
 
-- **Idempotency key scheme** — propose `client_order_id` = hash of
-  `(instrument, strategy_name, timeframe, generated_at, execution_date)` so a retry
-  of the same approval dedups but a genuine re-approval next day is distinct. Pin here.
-- Store schema migration ownership — this spec owns `orders`/`fills`/`positions`;
-  reconciliation reads them.
-- v20 stop/target as absolute price vs distance — propose absolute price (from
+- v20 stop/target as absolute price vs distance — **resolved:** absolute price (from
   [[order-model-and-brackets]]), instrument precision applied.
+
+**Resolved at cross-spec audit (2026-05-29):** DRIFT-03 idempotency key pinned
+(above, INV-15); DRIFT-01/02 store schema columns pinned (above) incl. `realized_pl`;
+schema-migration ownership = this spec (reconciliation reads/writes `realized_pl`,
+monitor-alerts owns `deviation_log`).
 
 ## Out of scope
 

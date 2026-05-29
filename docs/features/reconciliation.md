@@ -1,6 +1,6 @@
 # Feature: reconciliation
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -24,7 +24,14 @@ Backend module `execution/reconcile.py`. `reconcile(*, client, store, now) -> Re
    - **store-only** position (we think open, broker closed it — stop/target hit) →
      mark it closed in the store, record the realized P&L.
    - **matched** → refresh `unrealized_pl`, stop/target, units.
-3. Update `start_of_day_equity` / `day_pl` used by the kill switch.
+3. Update the persisted `account_state` row used by the kill switch (DRIFT-02/05):
+   - `day_pl` ← the **account-summary's realized day P&L** (the broker's figure —
+     authoritative per INV-16; the store column is a cached mirror, not an
+     independent sum-of-closed-trades).
+   - `start_of_day_equity` ← snapshotted **once, on the first reconcile after the
+     UTC-day boundary** (00:00 UTC, INV-03-consistent with the kill-switch reset).
+     A mid-day process restart re-reads the persisted snapshot — it does **not**
+     re-snapshot (so the kill-switch threshold is stable across restarts).
 4. Return a `ReconcileReport` (`adopted`, `closed`, `matched`, `drift_flags`).
 
 Invoked at monitor startup and every N minutes; also callable via a read-only
@@ -33,7 +40,8 @@ Invoked at monitor startup and every N minutes; also callable via a read-only
 ## Acceptance criteria
 
 - [ ] A broker-open position absent from the store is **adopted** (inserted) — the broker wins. Verified against a mocked v20 open-trades response.
-- [ ] A store-open position the broker has closed is **marked closed** with realized P&L recorded; the kill-switch `day_pl` reflects it. Verified.
+- [ ] A store-open position the broker has closed is **marked closed** with `realized_pl` written to the `positions` row; the `account_state.day_pl` (from account-summary) reflects the day's loss. Verified.
+- [ ] `start_of_day_equity` is snapshotted once per UTC day (first reconcile after 00:00 UTC) and is stable across a mid-day restart (re-read, not re-snapshotted). Verified with a fixture crossing the day boundary.
 - [ ] A matched position has its `unrealized_pl`/stop/target refreshed from the broker.
 - [ ] `start_of_day_equity` and `day_pl` are updated from the account summary so the kill switch reads true figures.
 - [ ] Drift (counts/ids that don't line up) is recorded in `drift_flags` and logged at WARNING — never silently dropped.
@@ -76,8 +84,14 @@ Run on monitor startup and on a timer; expose a read-only operator command.
 - Adoption policy for an *unexpected* broker position (one Fathom never placed):
   adopt-and-flag, or alert-only? Propose adopt-and-flag (broker is truth) + a loud
   drift alert.
-- Source of truth for realized day P&L: account summary vs summing closed trades.
-  Propose account summary.
+
+**Resolved at cross-spec audit (2026-05-29):** DRIFT-05 — realized `day_pl` source
+is the **account-summary** figure (broker-truth, INV-16); the store column mirrors
+it. Caveat noted: the broker's day boundary may differ from UTC-midnight (which the
+kill switch uses for reset) — `account_state` records both the broker figure and the
+UTC-day `start_of_day_equity` so the kill switch reasons in UTC. DRIFT-02 — the
+`account_state` table (`start_of_day_equity`, `day_pl`, `as_of` UTC) is owned by
+this spec's migration; restart re-reads, never re-snapshots.
 
 ## Out of scope
 
