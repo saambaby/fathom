@@ -1,11 +1,15 @@
 """Candle fetch-and-cache logic.
 
-Scope: PoC (POC-T-03).
+Scope: Phase 1 (P1A-T-01 data-layer-expansion; extends PoC POC-T-03).
 
 This module is the single entry point for obtaining candle data.  It is
 gap-aware: it inspects the SQLite store first and only calls OANDA for
 rows that are not already cached.  A second call for the same range makes
 ZERO HTTP requests (cache-hit path).
+
+Dual-write: ``fetch_and_cache`` now writes through to both the SQLite
+operational store (for gap detection) and the Parquet archive (for bulk
+research scans).  The return contract — a ``pd.DataFrame`` — is unchanged.
 
 D-02: data is returned as ``pd.DataFrame`` with ``time`` dtype
     ``datetime64[ns, UTC]``.
@@ -111,6 +115,7 @@ def fetch_and_cache(
     granularity: str,
     start: datetime,
     end: datetime,
+    write_parquet: bool = True,
 ) -> pd.DataFrame:
     """Fetch candles for [start, end], cache them, and return as DataFrame.
 
@@ -120,6 +125,10 @@ def fetch_and_cache(
 
     Only ``complete=True`` candles are stored and returned.
 
+    Dual-write: fetched rows are written to both the SQLite operational
+    store (source of truth for gap detection) and the Parquet archive
+    (columnar bulk store for research scans), unless ``write_parquet=False``.
+
     Args:
         client: Initialised ``OandaClient``.
         store: Initialised ``Store`` instance.
@@ -127,6 +136,9 @@ def fetch_and_cache(
         granularity: OANDA granularity string, e.g. ``"H1"`` or ``"D"``.
         start: Inclusive range start, UTC-aware.
         end: Inclusive range end, UTC-aware.
+        write_parquet: If ``True`` (default) also write newly-fetched rows
+            to the Parquet archive.  Set to ``False`` to skip (e.g. for
+            tests that do not configure an archive directory).
 
     Returns:
         ``pd.DataFrame`` with columns::
@@ -179,6 +191,11 @@ def fetch_and_cache(
         ]
 
         store.upsert(rows_in_range)
+
+        # Dual-write: also persist to Parquet archive for research scans.
+        if write_parquet and rows_in_range:
+            df_new = store.load_candles(instrument, granularity, start, end)
+            store.write_parquet(instrument, granularity, df_new)
 
     # Return the full requested range from the store (single source of truth).
     return store.load_candles(instrument, granularity, start, end)

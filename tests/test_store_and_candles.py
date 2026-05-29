@@ -282,11 +282,13 @@ class TestCacheHit:
         end = t3
 
         # First call — should call client once.
-        df1 = fetch_and_cache(client, mem_store, "EUR_USD", "H1", start, end)
+        df1 = fetch_and_cache(client, mem_store, "EUR_USD", "H1", start, end,
+                              write_parquet=False)
         assert client.get_candles.call_count == 1
 
         # Second call — must NOT call client again.
-        df2 = fetch_and_cache(client, mem_store, "EUR_USD", "H1", start, end)
+        df2 = fetch_and_cache(client, mem_store, "EUR_USD", "H1", start, end,
+                              write_parquet=False)
         assert client.get_candles.call_count == 1, (
             "Second call for the same range must make ZERO HTTP requests (cache hit)"
         )
@@ -305,8 +307,10 @@ class TestCacheHit:
         start = t
         end = t
 
-        fetch_and_cache(client, mem_store, "GBP_USD", "H1", start, end)
-        df = fetch_and_cache(client, mem_store, "GBP_USD", "H1", start, end)
+        fetch_and_cache(client, mem_store, "GBP_USD", "H1", start, end,
+                        write_parquet=False)
+        df = fetch_and_cache(client, mem_store, "GBP_USD", "H1", start, end,
+                             write_parquet=False)
 
         assert str(df["time"].dtype) == "datetime64[ns, UTC]"
         for ts in df["time"]:
@@ -334,6 +338,7 @@ class TestPartialGapFill:
             client, mem_store, "EUR_USD", "H1",
             start=_utc(2024, 4, 1, 0),
             end=_utc(2024, 4, 1, 5),
+            write_parquet=False,
         )
 
         # Client was called exactly once (for the trailing gap).
@@ -370,6 +375,7 @@ class TestPartialGapFill:
             client, mem_store, "EUR_USD", "H1",
             start=_utc(2024, 4, 2, 0),
             end=_utc(2024, 4, 2, 5),
+            write_parquet=False,
         )
 
         # Client was called exactly once (for the leading gap).
@@ -424,6 +430,7 @@ class TestPartialGapFill:
             client, mem_store, "EUR_USD", "H1",
             start=_utc(2024, 6, 1),
             end=_utc(2024, 6, 2),
+            write_parquet=False,
         )
 
         # Only the complete candle should appear.
@@ -462,6 +469,7 @@ class TestFetchAndCacheValidation:
             client, mem_store, "GBP_USD", "H1",
             start=_utc(2024, 7, 4),
             end=_utc(2024, 7, 5),
+            write_parquet=False,
         )
 
         required = {

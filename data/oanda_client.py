@@ -1,6 +1,6 @@
-"""OANDA v20 REST client — candle endpoint only.
+"""OANDA v20 REST client — candle and instrument-metadata endpoints.
 
-Scope: PoC (POC-T-02). No streaming, no order methods.
+Scope: Phase 1 (P1A-T-01 data-layer-expansion). No streaming, no order methods.
 
 INV-03 compliance: all timestamps are UTC-aware datetime from first touch.
 INV-08 compliance: token is read via SecretStr.get_secret_value(); never logged.
@@ -13,12 +13,13 @@ D-01: uses oandapyV20 as the HTTP transport.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, List
 
 import oandapyV20
+import oandapyV20.endpoints.accounts as oanda_accounts
 import oandapyV20.endpoints.instruments as oanda_instruments
 from oandapyV20.exceptions import V20Error
-from pydantic import AwareDatetime, BaseModel
+from pydantic import AwareDatetime, BaseModel, field_validator
 
 from config.settings import Settings
 
@@ -48,6 +49,63 @@ class OandaAPIError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(f"OANDA API error {status_code}: {message}")
+
+
+class InstrumentMeta(BaseModel):
+    """Instrument metadata from the OANDA accounts/instruments endpoint.
+
+    Canonical financing field names are ``long_rate`` / ``short_rate``
+    (the swap-cost model maps these to ``CostParams.swap_long_rate`` /
+    ``swap_short_rate`` at the engine boundary — see AMBIGUOUS-01 audit).
+
+    Wire-format coercion happens here at the boundary:
+    - ``pipLocation`` (int from OANDA) → ``pip_location``.
+    - Financing rates arrive as decimal strings (e.g. ``"-0.0002"``);
+      they are coerced to ``float`` by the field validators below.
+    - ``financing_days_of_week`` is a list of weekday-number ints (0=Mon).
+
+    INV-09: the instrument list is account-scoped (fetched via the account
+    endpoint, not the public instruments list).
+    """
+
+    name: str
+    """OANDA instrument identifier, e.g. ``"EUR_USD"``."""
+
+    pip_location: int
+    """Pip exponent.  −4 for most majors; −2 for JPY pairs."""
+
+    min_trade_size: float
+    """Minimum trade size in units (coerced from OANDA string)."""
+
+    margin_rate: float
+    """Required margin rate (coerced from OANDA decimal string)."""
+
+    display_precision: int
+    """Number of decimal places for display."""
+
+    long_rate: float
+    """Daily financing rate for long positions (canonical name; coerced from
+    OANDA's ``longRate`` decimal string)."""
+
+    short_rate: float
+    """Daily financing rate for short positions (canonical name; coerced from
+    OANDA's ``shortRate`` decimal string)."""
+
+    financing_days_of_week: List[int]
+    """Weekday numbers (0=Mon … 6=Sun) on which financing is charged.
+    Most FX instruments charge 3× on Wednesday."""
+
+    @field_validator("min_trade_size", "margin_rate", mode="before")
+    @classmethod
+    def _coerce_float_str(cls, v: object) -> float:
+        """Coerce OANDA string fields to float at the boundary."""
+        return float(v)  # type: ignore[arg-type]
+
+    @field_validator("long_rate", "short_rate", mode="before")
+    @classmethod
+    def _coerce_rate_str(cls, v: object) -> float:
+        """Coerce OANDA financing rate strings to float."""
+        return float(v)  # type: ignore[arg-type]
 
 
 class CandleRow(BaseModel):
@@ -176,8 +234,59 @@ def _request_page(
         raise OandaAPIError(exc.code, exc.msg) from exc
 
 
+def _instrument_from_raw(raw: dict[str, Any]) -> InstrumentMeta:
+    """Convert a single raw OANDA instrument dict to an ``InstrumentMeta``.
+
+    Handles the OANDA wire-format field names (camelCase) and coerces
+    string rates to float at the boundary.
+
+    Args:
+        raw: A single instrument dict from ``AccountInstruments`` response.
+
+    Returns:
+        A validated ``InstrumentMeta`` instance.
+    """
+    financing = raw.get("financing", {})
+    # financing_days_of_week is a list of dicts: [{"dayOfWeek": "MONDAY", ...}]
+    # or a list of ints in some API versions. We normalise to int (0=Mon…6=Sun).
+    days_raw = financing.get("financingDaysOfWeek", [])
+    _DAY_MAP: dict[str, int] = {
+        "MONDAY": 0,
+        "TUESDAY": 1,
+        "WEDNESDAY": 2,
+        "THURSDAY": 3,
+        "FRIDAY": 4,
+        "SATURDAY": 5,
+        "SUNDAY": 6,
+    }
+    days: list[int] = []
+    for entry in days_raw:
+        if isinstance(entry, dict):
+            day_str = entry.get("dayOfWeek", "")
+            days_count = int(entry.get("daysCharged", 1))
+            if day_str in _DAY_MAP:
+                # Repeat the day for each daysCharged value (usually 1 or 3).
+                # We record the unique weekday number; daysCharged=3 means
+                # 3 days of financing are charged on that single day.
+                # We store the weekday once and let the cost model handle multiplier.
+                days.append(_DAY_MAP[day_str])
+        elif isinstance(entry, int):
+            days.append(entry)
+
+    return InstrumentMeta(
+        name=raw["name"],
+        pip_location=int(raw["pipLocation"]),
+        min_trade_size=raw["minimumTradeSize"],
+        margin_rate=raw["marginRate"],
+        display_precision=int(raw["displayPrecision"]),
+        long_rate=financing.get("longRate", "0"),
+        short_rate=financing.get("shortRate", "0"),
+        financing_days_of_week=days,
+    )
+
+
 class OandaClient:
-    """OANDA v20 REST client — candle data only.
+    """OANDA v20 REST client — candle data and instrument metadata.
 
     Wraps ``oandapyV20`` to provide a typed, paginated interface.
     Authentication and environment selection are taken exclusively from
@@ -194,6 +303,39 @@ class OandaClient:
             access_token=settings.oanda_api_token.get_secret_value(),
             environment=oanda_env,
         )
+
+    def list_instruments(self) -> list[InstrumentMeta]:
+        """Fetch the full tradeable FX instrument list for this account.
+
+        Calls ``GET /v3/accounts/{accountID}/instruments`` via
+        ``oandapyV20.endpoints.accounts.AccountInstruments``.  Only FX
+        instruments (``type == "CURRENCY"``) are returned; other asset
+        classes (CFDs, metals, crypto) are filtered out.
+
+        Results should be cached by the caller (e.g. via
+        ``Store.upsert_instruments`` / ``Store.load_instruments``) to
+        avoid re-fetching on every run.
+
+        Returns:
+            A list of ``InstrumentMeta`` instances, one per tradeable FX
+            instrument.  Order is unspecified (matches OANDA response order).
+
+        Raises:
+            OandaAPIError: If OANDA returns HTTP 4xx or 5xx.
+        """
+        account_id = self._settings.oanda_account_id
+        try:
+            req = oanda_accounts.AccountInstruments(accountID=account_id)
+            response = self._api.request(req)
+        except V20Error as exc:
+            raise OandaAPIError(exc.code, exc.msg) from exc
+
+        raw_instruments: list[dict[str, Any]] = response.get("instruments", [])
+        return [
+            _instrument_from_raw(r)
+            for r in raw_instruments
+            if r.get("type") == "CURRENCY"
+        ]
 
     def get_candles(
         self,
