@@ -19,6 +19,7 @@ import oandapyV20
 import oandapyV20.endpoints.accounts as oanda_accounts
 import oandapyV20.endpoints.instruments as oanda_instruments
 import oandapyV20.endpoints.orders as oanda_orders
+import oandapyV20.endpoints.trades as oanda_trades
 from oandapyV20.exceptions import V20Error
 from pydantic import AwareDatetime, BaseModel, field_validator
 
@@ -403,6 +404,36 @@ class OandaClient:
             return self._api.request(req)  # type: ignore[no-any-return]
         except V20Error as exc:
             raise OandaAPIError(exc.code, exc.msg) from exc
+
+    def open_trades(self) -> list[dict[str, Any]]:
+        """Fetch the broker's currently-open trades (INV-16 source of truth).
+
+        Calls ``GET /v3/accounts/{accountID}/openTrades`` via
+        ``oandapyV20.endpoints.trades.OpenTrades``.  Used by
+        ``execution/reconcile.py`` to diff the broker's view of open positions
+        against the store ``positions`` table — the broker wins on any
+        disagreement (INV-16).  Practice/live is selected once from
+        ``settings.env`` (INV-09); the token is never logged (INV-08).
+
+        Returns:
+            The raw list of v20 trade dicts (the ``trades`` array of the
+            response).  Each dict carries ``id`` (broker trade id),
+            ``instrument``, ``currentUnits``, ``price`` (entry), ``unrealizedPL``,
+            ``realizedPL``, ``openTime`` and (when bracketed) ``stopLossOrder`` /
+            ``takeProfitOrder`` sub-objects.  An account with no open trades
+            yields an empty list.
+
+        Raises:
+            OandaAPIError: on any HTTP 4xx/5xx from OANDA.
+        """
+        account_id = self._settings.oanda_account_id
+        try:
+            req = oanda_trades.OpenTrades(accountID=account_id)
+            response = self._api.request(req)
+        except V20Error as exc:
+            raise OandaAPIError(exc.code, exc.msg) from exc
+        trades: list[dict[str, Any]] = response.get("trades", [])
+        return trades
 
     def get_candles(
         self,
