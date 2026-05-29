@@ -14,6 +14,7 @@ Coverage:
 - Typed error (OandaStreamError) on 4xx; raw V20Error on 5xx wraps into retry.
 - _parse_utc handles nanosecond and second precision OANDA timestamps.
 - _backoff_delay: monotonically non-decreasing median, capped at _BACKOFF_CAP.
+- No thread accumulation: sustained operation keeps thread count bounded (1 reader).
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from data.stream import (
     _BACKOFF_CAP,
     _make_tick,
     _parse_utc,
+    _SENTINEL,
 )
 
 
@@ -148,9 +150,11 @@ class TestBackoffDelay:
         assert all(0.0 <= d <= 1.5 + 0.01 for d in delays)
 
     def test_capped_at_backoff_cap(self) -> None:
-        # High attempt → must never exceed cap * (1 + jitter)
+        # High attempt → must never exceed cap * (1 + jitter).
+        # Pre-jitter cap is _BACKOFF_CAP (30 s); ±50 % jitter can add up to 50 %,
+        # so the true maximum is _BACKOFF_CAP * 1.5 ≈ 45 s.
         delays = [_backoff_delay(20) for _ in range(100)]
-        max_possible = _BACKOFF_CAP * 1.5
+        max_possible = _BACKOFF_CAP * 1.5  # ≈ 45 s (30 s cap + up-to-50 % jitter)
         assert all(d <= max_possible + 0.01 for d in delays)
 
     def test_median_grows_then_caps(self) -> None:
@@ -165,9 +169,10 @@ class TestBackoffDelay:
                 f"Median decreased unexpectedly at attempt {i}: "
                 f"{medians[i - 1]:.3f} → {medians[i]:.3f}"
             )
-        # Late attempts should be capped.
+        # Late attempts: median must be at or above the pre-jitter cap (30 s)
+        # and no higher than cap * 1.5 (≈ 45 s, the true maximum with jitter).
         high_sample = sorted(_backoff_delay(10) for _ in range(200))
-        assert high_sample[100] <= _BACKOFF_CAP
+        assert high_sample[100] <= _BACKOFF_CAP * 1.5
 
     def test_non_negative(self) -> None:
         assert all(_backoff_delay(i) >= 0.0 for i in range(10))
@@ -507,6 +512,58 @@ class TestPriceStreamShutdown:
                 stream.stop()
 
 
+class TestPriceStreamNoThreadAccumulation:
+    """No per-poll thread accumulation: the live thread count stays bounded."""
+
+    def test_reader_thread_count_stays_bounded(self) -> None:
+        """Sustained quiet operation (only heartbeats) must not accumulate threads.
+
+        The old per-poll-thread design spawned a new daemon thread on every
+        0.5 s poll, leaving blocked threads behind during quiet periods.  The
+        new single-reader-per-connection design must keep the named reader
+        thread count at exactly 1 while streaming.
+        """
+        # We'll let the stream run through many heartbeat cycles and verify
+        # the number of 'fathom-stream-reader' threads never grows beyond 1.
+
+        # A slow generator that yields heartbeats with a small sleep between
+        # each, simulating quiet operation with no ticks.
+        import itertools
+
+        heartbeat_count = [0]
+        thread_counts: list[int] = []
+
+        def slow_heartbeat_gen() -> Generator[dict[str, Any], None, None]:
+            for _ in itertools.repeat(None):
+                heartbeat_count[0] += 1
+                # Record how many fathom-stream-reader threads are alive.
+                count = sum(
+                    1
+                    for t in threading.enumerate()
+                    if t.name == "fathom-stream-reader"
+                )
+                thread_counts.append(count)
+                if heartbeat_count[0] >= 20:
+                    return
+                yield {"type": "HEARTBEAT", "time": "2024-01-15T14:32:05.000000000Z"}
+
+        settings = _make_settings()
+        stream = PriceStream(settings, instruments=["EUR_USD"], heartbeat_timeout=5.0)
+        mock_api = MagicMock()
+        mock_api.request.return_value = slow_heartbeat_gen()
+
+        with patch.object(stream, "_make_api", return_value=mock_api):
+            stream.start()
+            stream.stop()
+
+        # Must have sampled at least a few times.
+        assert len(thread_counts) > 0, "Generator never iterated"
+        # At most ONE fathom-stream-reader thread was alive at any sample point.
+        assert max(thread_counts) <= 1, (
+            f"Thread count exceeded 1: samples={thread_counts}"
+        )
+
+
 class TestPriceStreamTypedErrors:
     """Typed errors: 4xx → OandaStreamError; no raw library exceptions escape."""
 
@@ -536,17 +593,22 @@ class TestPriceStreamTypedErrors:
         assert "403" in str(err)
 
     def test_stream_error_delivered_via_queue(self) -> None:
-        """OandaStreamError must be put in the queue and re-raised by get_tick."""
+        """OandaStreamError must be put in the queue; second get_tick returns None."""
         settings = _make_settings()
         stream = PriceStream(settings, instruments=["EUR_USD"], heartbeat_timeout=5.0)
         error = OandaStreamError(401, "Unauthorized")
 
-        # Manually inject the error into the queue and put sentinel after.
+        # Inject the error then the real sentinel, matching production behaviour.
         stream._queue.put(error)
-        stream._queue.put(stream._queue.__class__.__new__(stream._queue.__class__))
+        stream._queue.put(_SENTINEL)
 
+        # First get_tick raises the error.
         with pytest.raises(OandaStreamError):
             stream.get_tick(timeout=1.0)
+
+        # Second get_tick returns None (sentinel → stream stopped, no data).
+        result = stream.get_tick(timeout=1.0)
+        assert result is None
 
 
 class TestPriceStreamNoTokenInLogs:

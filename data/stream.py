@@ -7,12 +7,18 @@ thread-safe queue for consumption.
 Design decisions (per spec and Phase 1B task 1B-T-01):
 - Background thread + `queue.Queue` — simplest fit for the otherwise-synchronous
   codebase (open question in spec resolved as "lean: thread").
+- **One long-lived reader thread per connection** iterates the oandapyV20 generator
+  and pushes each message onto a thread-safe `queue.Queue`; the run/liveness loop
+  reads from that queue with ``queue.get(timeout=…)`` for heartbeat-timeout
+  detection.  At most ONE reader thread is alive at any time; on reconnect the
+  previous reader is signalled to exit and joined before the new one starts — no
+  orphaned threads accumulate.
 - Heartbeats consumed internally and used to reset a liveness timer; they are
   never surfaced to consumers.
 - Heartbeat timeout (no heartbeat within `heartbeat_timeout` seconds) triggers
   a reconnect, exactly like a connection drop.
 - Reconnect uses **capped exponential backoff + jitter** (base 1 s, cap 30 s,
-  ×2 per attempt, ±50 % jitter) so reconnect storms cannot hammer the API.
+  ×2 per attempt, ±50 % jitter — actual maximum delay ≈ 45 s due to jitter).
 - On each reconnect a `gap_detected` flag is set on the next `PriceTick` emitted,
   so downstream consumers know data continuity was broken.
 - `OandaStreamError` is raised (not raw library exceptions) and also delivered
@@ -62,7 +68,7 @@ _SENTINEL: object = object()
 
 # Backoff parameters.
 _BACKOFF_BASE: float = 1.0    # seconds
-_BACKOFF_CAP: float = 30.0    # seconds (hard cap)
+_BACKOFF_CAP: float = 30.0    # seconds (hard cap before jitter; actual max ≈ 45 s)
 _BACKOFF_MULTIPLIER: float = 2.0
 _BACKOFF_JITTER: float = 0.5  # ±50 % multiplicative jitter
 
@@ -131,6 +137,9 @@ def _parse_utc(iso_string: str) -> datetime:
 def _backoff_delay(attempt: int) -> float:
     """Compute a jittered capped exponential backoff delay.
 
+    The pre-jitter cap is ``_BACKOFF_CAP`` (30 s); jitter of ±50 % is then
+    applied, so the actual maximum delay is approximately 45 s.
+
     Args:
         attempt: Zero-based reconnect attempt count.
 
@@ -179,6 +188,13 @@ class PriceStream:
     The stream runs on a background thread.  Parsed `PriceTick` objects are
     put into an internal queue.  The main thread consumes them by iterating
     over the `PriceStream` instance or calling `get_tick()`.
+
+    Threading model: one long-lived reader thread per connection iterates the
+    blocking oandapyV20 generator and pushes raw messages onto an internal
+    message queue.  The run/liveness loop reads from that message queue with a
+    timeout for heartbeat-timeout detection.  On reconnect the previous reader
+    thread is signalled to exit and joined before the new reader is started,
+    guaranteeing at most ONE reader thread alive at any time.
 
     Args:
         settings: Fully-initialised `Settings` instance.  Environment and token
@@ -259,6 +275,8 @@ class PriceStream:
         except queue.Empty:
             raise
         if item is _SENTINEL:
+            # Put the sentinel back so subsequent calls also return None.
+            self._queue.put(_SENTINEL)
             return None
         if isinstance(item, OandaStreamError):
             raise item
@@ -341,6 +359,12 @@ class PriceStream:
     def _stream_once(self, gap_on_next: bool, attempt: int) -> bool:
         """Open one streaming connection and consume until it ends or times out.
 
+        Uses a **single long-lived reader thread** that iterates the blocking
+        oandapyV20 generator and pushes raw messages onto ``_msg_queue``.  The
+        run/liveness loop reads from that queue with a timeout so it can detect
+        heartbeat expiry.  On exit the reader thread is cleanly joined before
+        returning — no orphaned threads are left behind.
+
         Args:
             gap_on_next: Whether to mark the next emitted tick as gap_detected.
             attempt: Current attempt count (for log context).
@@ -366,131 +390,123 @@ class PriceStream:
             # 5xx: transient; let the outer loop retry.
             raise
 
-        first_tick_emitted = gap_on_next
-        last_heartbeat = time.monotonic()
+        # ------------------------------------------------------------------
+        # Reader thread: iterates the blocking generator; pushes results onto
+        # _msg_queue.  Signals done via _READER_DONE sentinel.
+        # ------------------------------------------------------------------
+        _READER_DONE: object = object()
+        _reader_stop = threading.Event()
+        _msg_queue: queue.Queue[Any] = queue.Queue()
 
-        while not self._stop_event.is_set():
-            # Check heartbeat liveness on each iteration.
-            elapsed = time.monotonic() - last_heartbeat
-            if elapsed > self._heartbeat_timeout:
-                logger.warning(
-                    "PriceStream heartbeat timeout after %.1fs (attempt %d) — reconnecting",
-                    elapsed,
-                    attempt,
-                )
-                # Terminate the stream generator cleanly.
-                try:
-                    req.terminate("heartbeat timeout")
-                except (StreamTerminated, ValueError):
-                    pass
-                return True  # signal: gap_on_next for next connection
-
-            # Try to pull the next message.  We use a short-poll approach:
-            # pull from the generator with a tight timeout so we can check
-            # stop_event and liveness regularly.
+        def _reader() -> None:
             try:
-                msg = self._next_with_timeout(generator, timeout=0.5)
-            except StopIteration:
-                # Generator exhausted — server closed the stream.
-                return True
-            except (StreamTerminated, RuntimeError):
-                # Stream was terminated (either by us or by the library).
-                if self._stop_event.is_set():
-                    return False
-                return True
+                for msg in generator:
+                    if _reader_stop.is_set():
+                        break
+                    _msg_queue.put(("ok", msg))
+                _msg_queue.put(("stop", None))
+            except StreamTerminated:
+                _msg_queue.put(("terminated", None))
             except V20Error as exc:
-                if exc.code >= 400 and exc.code < 500:
-                    raise OandaStreamError(exc.code, exc.msg) from exc
-                raise
-            except _TimeoutToken:
-                # No message yet — loop back to check liveness and stop_event.
-                continue
-
-            # Process the message.
-            msg_type = msg.get("type", "")
-
-            if msg_type == "HEARTBEAT":
-                last_heartbeat = time.monotonic()
-                continue
-
-            if msg_type == "PRICE":
-                tick = _make_tick(msg, gap_detected=gap_on_next)
-                if tick is not None:
-                    gap_on_next = False
-                    self._queue.put(tick)
-                continue
-
-            # Unknown message type — log and ignore.
-            logger.debug("PriceStream ignored message type=%r", msg_type)
-
-        # stop_event set: terminate the generator and exit cleanly.
-        try:
-            req.terminate("stop requested")
-        except (StreamTerminated, ValueError):
-            pass
-        return False  # clean stop — no gap for next connection
-
-    def _next_with_timeout(
-        self,
-        gen: Generator[dict[str, Any], None, None],
-        timeout: float,
-    ) -> dict[str, Any]:
-        """Pull the next item from *gen*, raising _TimeoutToken if timeout elapses.
-
-        Because the oandapyV20 generator is a synchronous blocking iterator we
-        run it on a separate daemon thread so we can interrupt the wait.  The
-        result (or exception) is communicated back via a small local queue.
-
-        Args:
-            gen: The oandapyV20 stream generator.
-            timeout: Maximum seconds to wait.
-
-        Returns:
-            The next dict from the generator.
-
-        Raises:
-            _TimeoutToken: If no message arrived within *timeout* seconds.
-            StopIteration: If the generator is exhausted.
-            StreamTerminated: If the generator was terminated.
-            V20Error: On API errors from the generator.
-        """
-        result_q: queue.Queue[Any] = queue.Queue(maxsize=1)
-
-        def _pull() -> None:
-            try:
-                result_q.put(("ok", next(gen)))
-            except StopIteration:
-                result_q.put(("stop", None))
-            except StreamTerminated as exc:
-                result_q.put(("terminated", exc))
-            except V20Error as exc:
-                result_q.put(("v20error", exc))
+                _msg_queue.put(("v20error", exc))
             except Exception as exc:  # pylint: disable=broad-except
-                result_q.put(("error", exc))
+                _msg_queue.put(("error", exc))
+            finally:
+                _msg_queue.put(_READER_DONE)
 
-        t = threading.Thread(target=_pull, daemon=True)
-        t.start()
-        t.join(timeout=timeout)
+        reader_thread = threading.Thread(
+            target=_reader,
+            name="fathom-stream-reader",
+            daemon=True,
+        )
+        reader_thread.start()
 
-        if t.is_alive():
-            # Thread is blocked in the generator — signal a timeout.
-            raise _TimeoutToken()
+        last_heartbeat = time.monotonic()
+        result_gap = True  # default: assume gap unless clean stop
 
-        kind, value = result_q.get_nowait()
-        if kind == "ok":
-            return value  # type: ignore[no-any-return]
-        if kind == "stop":
-            raise StopIteration
-        if kind == "terminated":
-            raise StreamTerminated("stream terminated")
-        if kind == "v20error":
-            raise value
-        raise value  # kind == "error"
+        try:
+            while not self._stop_event.is_set():
+                # Check heartbeat liveness.
+                elapsed = time.monotonic() - last_heartbeat
+                if elapsed > self._heartbeat_timeout:
+                    logger.warning(
+                        "PriceStream heartbeat timeout after %.1fs (attempt %d) — reconnecting",
+                        elapsed,
+                        attempt,
+                    )
+                    # Signal reader to exit; terminate the generator.
+                    _reader_stop.set()
+                    try:
+                        req.terminate("heartbeat timeout")
+                    except (StreamTerminated, ValueError):
+                        pass
+                    result_gap = True
+                    return result_gap
 
+                # Read from the message queue with a short timeout so we can
+                # check liveness and stop_event regularly without spawning any
+                # new threads.
+                try:
+                    item = _msg_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
 
-class _TimeoutToken(BaseException):
-    """Internal sentinel raised when `_next_with_timeout` times out.
+                # Drain the reader-done sentinel; the reader thread is finished.
+                if item is _READER_DONE:
+                    result_gap = True
+                    return result_gap
 
-    Uses BaseException (not Exception) so it cannot be accidentally caught by
-    broad ``except Exception`` handlers in the generator path.
-    """
+                kind, value = item
+
+                if kind == "stop":
+                    # Generator exhausted — server closed the stream.
+                    result_gap = True
+                    return result_gap
+
+                if kind == "terminated":
+                    if self._stop_event.is_set():
+                        result_gap = False
+                    else:
+                        result_gap = True
+                    return result_gap
+
+                if kind == "v20error":
+                    exc_v20: V20Error = value
+                    if exc_v20.code >= 400 and exc_v20.code < 500:
+                        raise OandaStreamError(exc_v20.code, exc_v20.msg) from exc_v20
+                    raise exc_v20
+
+                if kind == "error":
+                    raise value
+
+                # kind == "ok": a normal message dict.
+                msg = value
+                msg_type = msg.get("type", "")
+
+                if msg_type == "HEARTBEAT":
+                    last_heartbeat = time.monotonic()
+                    continue
+
+                if msg_type == "PRICE":
+                    tick = _make_tick(msg, gap_detected=gap_on_next)
+                    if tick is not None:
+                        gap_on_next = False
+                        self._queue.put(tick)
+                    continue
+
+                # Unknown message type — log and ignore.
+                logger.debug("PriceStream ignored message type=%r", msg_type)
+
+        finally:
+            # Always signal and join the reader before returning so no reader
+            # thread is ever orphaned.
+            _reader_stop.set()
+            try:
+                req.terminate("stop requested")
+            except (StreamTerminated, ValueError):
+                pass
+            reader_thread.join()
+
+        # stop_event set cleanly.
+        result_gap = False
+        return result_gap
