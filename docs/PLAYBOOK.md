@@ -20,10 +20,12 @@ up. Every prompt block below is copy-paste ready.
 | **Phase 1B** | Live pricing stream + economic calendar | ✅ Done | Live demo ticks received; 97 FF calendar events stored. Two leaks caught + fixed at the acceptance gate. [phase-1b-results.md](phases/phase-1b-results.md) |
 | **Phase 2** | Signal ranker → watchlist (Candidate contract), portfolio limits, charts, Claude news-risk, narration, CLI, Hermes job defs | ✅ Code merged | All 7 code/config tasks merged. `Candidate` pinned as **INV-13**. |
 | **Phase 2 — T-08** | Live Discord acceptance of the daily watchlist job | ⏳ **Operator gate** | Blocked on human: needs a configured Hermes + Discord webhook + Anthropic key. See *What's next*. |
-| **Phase 3** | Position sizing / order placement | ◻ Not started | The first phase that crosses the INV-01 boundary — design carefully. |
+| **Phase 3** | Risk + execution + monitoring (demo): sizing (0.25% cap), limits + daily kill switch, atomic bracketed idempotent order placement, broker-truth reconciliation, always-on deviation monitor + alerts, `fathom execute` gate | ✅ Code merged | All 10 code/config units merged (#75, #87–96). Order authority gained — kept on the deterministic side of INV-01 (operator CLI, never a Hermes tool). Promoted **INV-14/15/16**. [phase-3-results.md](phases/phase-3-results.md) |
+| **Phase 3 — T-11** | Live demo-loop acceptance (proceed→fill→monitor→alert over demo days) | ⏳ **Operator gate** | Needs `ANTHROPIC_API_KEY` + `DISCORD_WEBHOOK_URL` + a sustained demo run. The gate already runs end-to-end on the live practice account and safely aborts without a key (INV-02 verified). |
+| **Phase 4** | Admin panel & hardening (product-spec Phase 5) | ◻ Not started | Streamlit + Lightweight Charts: charts, blotter, equity curve, watchlist, deviation log. |
 
-**Health (as of last run).** `mypy .` → 0 errors (56 files, strict). `pytest` →
-667 passed. Both are the merge gate — keep them green.
+**Health (as of last run).** `mypy .` → 0 errors (79 files, strict). `pytest` →
+955 passed. Both are the merge gate — keep them green.
 
 ### What's next (concrete)
 
