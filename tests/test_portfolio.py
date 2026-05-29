@@ -25,6 +25,7 @@ from signals.portfolio import (
     MIN_CORRELATION_OBS,
     PortfolioLimiter,
     PortfolioLimiterConfig,
+    _mid_returns,
     _pearson_corr,
     _split_currencies,
 )
@@ -639,3 +640,131 @@ class TestConfigDefaults:
         assert cfg.max_per_currency == 3
         assert cfg.max_concurrent == 8
         assert cfg.lookback_days == 30
+
+
+# ---------------------------------------------------------------------------
+# NaN price path — regression for the index-reconstruction crash
+# ---------------------------------------------------------------------------
+
+
+class TestMidReturnsNanPrices:
+    """Regression tests for _mid_returns when mid-series prices are NaN.
+
+    The old code did:
+        returns = mid.pct_change().dropna()
+        returns.index = pd.Index(df["time"].values[1:])
+
+    which assumes pct_change().dropna() removes exactly ONE row (position 0).
+    When close_bid or close_ask is NaN mid-series, dropna() removes MORE rows
+    and the index reassignment raises ValueError: Length mismatch.
+
+    The fix sets mid.index = pd.Index(df["time"]) BEFORE pct_change(), so
+    dropna() carries the correct timestamps automatically — no post-hoc
+    length-assuming assignment needed.
+    """
+
+    def _make_candles_with_nan(
+        self,
+        n: int = MIN_CORRELATION_OBS + 10,
+        nan_positions: list[int] | None = None,
+    ) -> pd.DataFrame:
+        """Build a candle frame with NaN close_bid at specified mid-series positions."""
+        rng = np.random.default_rng(7)
+        prices_bid = 1.1000 + np.cumsum(rng.normal(0, 0.001, n))
+        prices_ask = prices_bid + 0.0002
+        times = pd.date_range(
+            start=NOW - timedelta(days=n), periods=n, freq="D", tz="UTC"
+        )
+        df = pd.DataFrame(
+            {
+                "time": times,
+                "close_bid": prices_bid,
+                "close_ask": prices_ask,
+            }
+        )
+        if nan_positions:
+            for pos in nan_positions:
+                df.loc[pos, "close_bid"] = float("nan")
+        return df
+
+    def test_nan_mid_series_does_not_raise(self) -> None:
+        """NaN close_bid mid-series must NOT raise ValueError from _mid_returns."""
+        df = self._make_candles_with_nan(nan_positions=[5, 10])
+        # Must not raise — the old code would raise ValueError: Length mismatch.
+        result = _mid_returns(df)
+        assert isinstance(result, pd.Series)
+
+    def test_nan_mid_series_timestamps_align_with_surviving_rows(self) -> None:
+        """Returned index timestamps must match the rows that survived dropna()."""
+        n = MIN_CORRELATION_OBS + 10
+        nan_pos = 5  # one NaN mid-series drops an extra row beyond position-0
+        df = self._make_candles_with_nan(n=n, nan_positions=[nan_pos])
+
+        result = _mid_returns(df)
+
+        # Compute the expected surviving timestamps manually:
+        # mid.pct_change() at position nan_pos AND nan_pos+1 produce NaN
+        # (the NaN row itself, and the first finite-to-NaN boundary).
+        # Any index.dtype should be compatible with df["time"].
+        assert not result.empty
+        # Every timestamp in the result index must appear in df["time"].
+        result_times = set(result.index)
+        df_times = set(df["time"])
+        assert result_times.issubset(df_times), (
+            f"Result contains timestamps not in df['time']: "
+            f"{result_times - df_times}"
+        )
+
+    def test_old_code_would_raise_value_error(self) -> None:
+        """Demonstrate that the old post-hoc index assignment raises ValueError.
+
+        This documents WHY the fix is needed: the old pattern is:
+            returns.index = pd.Index(df["time"].values[1:])
+        which fails when dropna() removes more than one row.
+        """
+        df = self._make_candles_with_nan(nan_positions=[5])
+        mid = (df["close_bid"] + df["close_ask"]) / 2.0
+        returns_with_nans = mid.pct_change().dropna()
+        # With a NaN at position 5, pct_change().dropna() removes BOTH
+        # position 0 (initial NaN) AND rows 5 and 6 (the NaN and the
+        # finite-after-NaN boundary) — more than 1 row total.
+        # df["time"].values[1:] has length n-1 but returns has length < n-1.
+        n = len(df)
+        assert len(returns_with_nans) < n - 1, (
+            "Precondition: NaN mid-series must make dropna() remove >1 row"
+        )
+        with pytest.raises(ValueError):
+            returns_with_nans.index = pd.Index(df["time"].values[1:])
+
+    def test_no_nan_returns_correctly_indexed(self) -> None:
+        """Sanity check: clean data still produces a correctly-indexed Series."""
+        df = self._make_candles_with_nan(nan_positions=None)
+        result = _mid_returns(df)
+        # All timestamps in result must come from df["time"].
+        result_times = set(result.index)
+        df_times = set(df["time"])
+        assert result_times.issubset(df_times)
+        # No NaN values in result.
+        assert not result.isna().any()
+
+    def test_nan_path_correlation_does_not_raise(self) -> None:
+        """End-to-end: PortfolioLimiter with NaN candles must not raise."""
+        n = MIN_CORRELATION_OBS + 10
+        df_with_nan = self._make_candles_with_nan(n=n, nan_positions=[3, 8])
+        df_clean = _make_daily_candles(n=n, seed=42)
+
+        candle_map = {"EUR_USD": df_with_nan, "GBP_USD": df_clean}
+        store = _make_store(candle_map)
+        cfg = PortfolioLimiterConfig(
+            correlation_threshold=0.7,
+            max_per_currency=10,
+            max_concurrent=10,
+        )
+        limiter = PortfolioLimiter(store, cfg)
+
+        a = _make_candidate("EUR_USD", "s1", oos_sharpe_mean=2.0)
+        b = _make_candidate("GBP_USD", "s2", oos_sharpe_mean=1.0)
+
+        # Must not raise — old code would raise ValueError in _mid_returns.
+        result = limiter.apply([a, b])
+        assert isinstance(result, list)

@@ -162,9 +162,8 @@ def _mid_returns(df: pd.DataFrame) -> pd.Series:
     if not required.issubset(df.columns) or len(df) < 2:
         return pd.Series(dtype="float64")
     mid = (df["close_bid"] + df["close_ask"]) / 2.0
+    mid.index = pd.Index(df["time"])
     returns = mid.pct_change().dropna()
-    if hasattr(df["time"], "values"):
-        returns.index = pd.Index(df["time"].values[1:])
     return returns
 
 
