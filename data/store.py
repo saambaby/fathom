@@ -9,7 +9,7 @@ Storage design:
   - SQLite ``instruments`` table: metadata cache for ``InstrumentMeta``.
     Refreshable (upsert on re-fetch).
   - Parquet archive: bulk columnar store for full-universe research scans.
-    Partitioned as ``{archive_dir}/{instrument}/{YYYY-MM-DD}.parquet``.
+    Partitioned as ``{archive_dir}/{instrument}/{granularity}/{YYYY-MM-DD}.parquet``.
     Written via ``pyarrow``; read back as ``pd.DataFrame`` with the same
     dtype contract as ``load_candles``.
 
@@ -76,7 +76,8 @@ class Store:
     Creates and manages a ``candles`` table (gap detection / operational state)
     and an ``instruments`` table (metadata cache) in SQLite.
 
-    Parquet files are written to ``{archive_dir}/{instrument}/{YYYY-MM-DD}.parquet``
+    Parquet files are written to
+    ``{archive_dir}/{instrument}/{granularity}/{YYYY-MM-DD}.parquet``
     when ``write_parquet`` is called.  The archive directory is created on first
     write if it does not exist.
 

@@ -263,12 +263,10 @@ def _instrument_from_raw(raw: dict[str, Any]) -> InstrumentMeta:
     for entry in days_raw:
         if isinstance(entry, dict):
             day_str = entry.get("dayOfWeek", "")
-            days_count = int(entry.get("daysCharged", 1))
             if day_str in _DAY_MAP:
-                # Repeat the day for each daysCharged value (usually 1 or 3).
-                # We record the unique weekday number; daysCharged=3 means
-                # 3 days of financing are charged on that single day.
-                # We store the weekday once and let the cost model handle multiplier.
+                # We store the unique weekday number once; daysCharged=3 means
+                # 3 days of financing are charged on that single day — the cost
+                # model handles the multiplier, so we do not capture it here.
                 days.append(_DAY_MAP[day_str])
         elif isinstance(entry, int):
             days.append(entry)

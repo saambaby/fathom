@@ -564,26 +564,63 @@ class TestFetchAndCacheDualWrite:
         assert parquet_file.exists(), "Parquet file must be written on first fetch"
 
     def test_no_parquet_write_when_flag_false(self, tmp_path: Path) -> None:
-        """``write_parquet=False`` must skip the Parquet write entirely."""
-        db_path = tmp_path / "test.db"
-        archive_dir = tmp_path / "archive"
-        store = Store(db_path, archive_dir=archive_dir)
+        """``write_parquet=False`` must skip the Parquet write entirely.
+
+        Two-sided check: the same correct path that IS written when
+        ``write_parquet=True`` must NOT exist when ``write_parquet=False``.
+        """
+        # --- write_parquet=True: file must exist at the granularity-scoped path ---
+        db_path_true = tmp_path / "test_true.db"
+        archive_dir_true = tmp_path / "archive_true"
+        store_true = Store(db_path_true, archive_dir=archive_dir_true)
 
         t1 = _utc(2024, 5, 2, 10)
         t2 = _utc(2024, 5, 2, 11)
 
-        mock_client = MagicMock()
-        mock_client.get_candles.return_value = [
+        mock_client_true = MagicMock()
+        mock_client_true.get_candles.return_value = [
             _make_candle_row("EUR_USD", "H1", t1),
             _make_candle_row("EUR_USD", "H1", t2),
         ]
 
         fetch_and_cache(
-            mock_client, store, "EUR_USD", "H1", t1, t2, write_parquet=False
+            mock_client_true, store_true, "EUR_USD", "H1", t1, t2, write_parquet=True
         )
 
-        parquet_file = archive_dir / "EUR_USD" / "2024-05-02.parquet"
-        assert not parquet_file.exists(), "No Parquet file when write_parquet=False"
+        parquet_file_true = archive_dir_true / "EUR_USD" / "H1" / "2024-05-02.parquet"
+        assert parquet_file_true.exists(), (
+            "Parquet file must be written at "
+            "{archive_dir}/{instrument}/{granularity}/{date}.parquet "
+            "when write_parquet=True"
+        )
+
+        # --- write_parquet=False: the same correct path must NOT exist ---
+        db_path_false = tmp_path / "test_false.db"
+        archive_dir_false = tmp_path / "archive_false"
+        store_false = Store(db_path_false, archive_dir=archive_dir_false)
+
+        mock_client_false = MagicMock()
+        mock_client_false.get_candles.return_value = [
+            _make_candle_row("EUR_USD", "H1", t1),
+            _make_candle_row("EUR_USD", "H1", t2),
+        ]
+
+        fetch_and_cache(
+            mock_client_false,
+            store_false,
+            "EUR_USD",
+            "H1",
+            t1,
+            t2,
+            write_parquet=False,
+        )
+
+        parquet_file_false = archive_dir_false / "EUR_USD" / "H1" / "2024-05-02.parquet"
+        assert not parquet_file_false.exists(), (
+            "No Parquet file must exist at "
+            "{archive_dir}/{instrument}/{granularity}/{date}.parquet "
+            "when write_parquet=False"
+        )
 
     def test_cache_hit_makes_no_http_call(self, tmp_path: Path) -> None:
         """Second fetch_and_cache with same range must not call OANDA."""
