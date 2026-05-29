@@ -30,6 +30,7 @@ INV-09: No demo/live branch in logic; any future provider-URL config is read
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
@@ -41,6 +42,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from data.store import _to_rfc3339  # shared RFC 3339 formatter (INV-03)
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Feed timezone assumption (INV-03)
@@ -255,7 +258,7 @@ class FairEconomyCalendar(EconomicCalendar):
         self,
         db_path: str,
         *,
-        include_next_week: bool = True,
+        include_next_week: bool = False,
         this_week_url: str = FF_THIS_WEEK_URL,
         next_week_url: str = FF_NEXT_WEEK_URL,
         http_timeout: float = HTTP_TIMEOUT_SECONDS,
@@ -287,8 +290,19 @@ class FairEconomyCalendar(EconomicCalendar):
         events.extend(self._parse_xml(xml_bytes))
 
         if self._include_next_week:
-            xml_bytes_next = self._fetch(self._next_week_url)
-            events.extend(self._parse_xml(xml_bytes_next))
+            # Best-effort: the next-week feed is an optional extension and its
+            # URL is not always available (e.g. returns 404). A failure here
+            # must NOT lose the this-week events we already have — log and
+            # continue rather than propagating.
+            try:
+                xml_bytes_next = self._fetch(self._next_week_url)
+                events.extend(self._parse_xml(xml_bytes_next))
+            except httpx.HTTPError as exc:
+                _log.warning(
+                    "next-week calendar feed unavailable (%s) — "
+                    "continuing with this-week events only.",
+                    exc,
+                )
 
         self._upsert(events)
         return len(events)
