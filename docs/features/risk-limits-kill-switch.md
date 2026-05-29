@@ -1,6 +1,6 @@
 # Feature: risk-limits-kill-switch
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -41,11 +41,19 @@ read-only `kill_switch_status()` lets the CLI/monitor report state.
 
 ## Component design
 
-`risk/limits.py` is a pure decision function over injected state. The correlation
-source reuses Phase 2's `portfolio.py` correlation grouping where possible (shared
-helper) so the watchlist and the book speak the same correlation language. The
-kill switch reads `day_pl` (realized, from the store) and `start_of_day_equity`;
-the UTC-day boundary is computed from the injected `now`.
+`risk/limits.py` is a pure decision function over injected state. **Correlation
+source (DRIFT-09 resolution):** shipped `signals/portfolio.py` inlines its
+correlation logic inside `PortfolioLimiter.apply()` (a private `_pearson_corr` +
+returns loaders, doing *pairwise admission-time dropping* — not bucket grouping).
+There is no reusable grouping helper today. Resolution: a **prerequisite
+coordinator task extracts `_pearson_corr` + the returns loaders
+(`_mid_returns`/`_load_returns`/`_split_currencies`) into `signals/correlation.py`**
+(a refactor of the shipped, tested `portfolio.py` — coordinator-serialized, flagged
+in code-map), so the watchlist and the book share one correlation primitive.
+`risk/limits.py` then builds its *bucket-grouping* (shared-exposure-per-bucket) on
+that primitive — a different shape than portfolio's per-currency cap, kept distinct.
+The kill switch reads `day_pl` and `start_of_day_equity` from the `account_state`
+row ([[reconciliation]]); the UTC-day boundary is computed from the injected `now`.
 
 ## Non-goals
 
@@ -60,12 +68,12 @@ the UTC-day boundary is computed from the injected `now`.
 
 ## Depends on
 
-- [[position-sizing]] (order risk), [[order-model-and-brackets]], `signals/portfolio.py` correlation helper (Phase 2, on `main`), store `day_pl`/positions (from [[order-placement]]/[[reconciliation]]).
+- [[position-sizing]] (order risk), [[order-model-and-brackets]], the extracted `signals/correlation.py` primitive (prerequisite coordinator task — see Component design), `account_state` + `positions` (from [[reconciliation]]/[[order-placement]]).
 
 ## Approach
 
-`risk/limits.py`. Reuse the Phase 2 correlation grouping. Inject all state for
-testability. Config defaults proposed below; confirm at cross-spec audit.
+`risk/limits.py`. Build bucket-grouping on the extracted `signals/correlation.py`
+primitive (see Component design). Inject all state for testability.
 
 ## Open questions
 
@@ -74,7 +82,12 @@ testability. Config defaults proposed below; confirm at cross-spec audit.
 - Kill-switch reset — propose **UTC midnight** (INV-03-consistent) vs broker-day.
 - `max_concurrent` / `max_book_risk` / correlation thresholds — propose defaults
   (e.g. 5 concurrent, 1.0% book risk, 2 per correlation group); confirm.
-- Correlation source: reuse Phase 2's static/rolling correlation? Propose the same source as `portfolio.py`.
+
+**Resolved at cross-spec audit (2026-05-29):** DRIFT-09 — extract the correlation
+primitive to `signals/correlation.py` (coordinator task touching shipped
+`portfolio.py`), build bucket-grouping on it here; `max_per_correlation_group` is a
+distinct concept from portfolio's `max_per_currency`. DRIFT-02 — `day_pl` /
+`start_of_day_equity` come from the `account_state` row, not an ad-hoc store read.
 
 ## Out of scope
 

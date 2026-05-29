@@ -1,6 +1,6 @@
 # Feature: position-sizing
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -17,13 +17,19 @@ risk budget — never a fixed lot. This is the first gate that can reject a trad
 
 Backend module `risk/sizing.py`. `size_position(candidate, equity, *, instrument_meta, risk_fraction=0.0025) -> SizingResult`:
 
-1. Compute the per-unit risk = `stop_distance` converted to account-currency value
-   per unit (via `InstrumentMeta` pip value / quote conversion).
+1. Compute the per-unit risk in account currency (DRIFT-07): for a base/quote pair,
+   the loss-per-unit if the stop is hit is `stop_distance × quote_to_account_rate`
+   (price units × the quote→account-currency rate). For a quote==account pair the
+   rate is 1; for a non-account-quote pair (e.g. USD_JPY with a USD account) apply
+   the conversion rate. **There is no `InstrumentMeta.pip_value` field — per-unit
+   risk is derived from `stop_distance` (a price distance) and the quote rate; only
+   `pip_location` is used, and only to validate price precision.**
 2. `risk_budget = equity × risk_fraction` (0.25% default).
 3. `units = floor(risk_budget / per_unit_risk)`, signed by direction.
-4. Clamp to the instrument's min/max trade size; **reject** (return a
-   `SizingResult` with `units=0` and a reason) if the budget cannot fund even the
-   minimum size, or if `stop_distance ≤ 0`.
+4. **Reject** (return a `SizingResult` with `units=0` and a reason) if the budget
+   cannot fund the instrument's `InstrumentMeta.min_trade_size`, or if
+   `stop_distance ≤ 0`. (No max-trade-size clamp — OANDA's `InstrumentMeta` exposes
+   no per-instrument max; the book-level cap is enforced by [[risk-limits-kill-switch]].)
 
 `SizingResult` carries `units`, `risk_amount` (actual money at risk), `reason`
 (when rejected). The execution CLI surfaces the reason on rejection.
@@ -33,7 +39,7 @@ Backend module `risk/sizing.py`. `size_position(candidate, equity, *, instrument
 - [ ] For a worked example (known equity, stop distance, pip value), `units` is the largest size whose stop-loss equals ≤ 0.25% of equity — verified by hand-computed fixtures for EUR_USD (quote=USD) and USD_JPY (quote=JPY, conversion required).
 - [ ] The realized risk (`units × per_unit_risk`) never exceeds `equity × risk_fraction` — property-tested across random equity/stop combinations (INV-05).
 - [ ] `stop_distance ≤ 0` → reject (`units=0`, reason set); never sizes naked (INV-04/11 boundary).
-- [ ] A budget too small for the instrument minimum → reject with a clear reason; never rounds up to the minimum.
+- [ ] A budget too small for `InstrumentMeta.min_trade_size` → reject with a clear reason; never rounds up to the minimum. (No max-size clamp.)
 - [ ] `risk_fraction` is a parameter defaulting to `0.0025`; it is read from config, and the default cap cannot be exceeded silently.
 - [ ] Quote-currency conversion is correct for non-USD-quote pairs (uses current rate from the candle store / account summary); a JPY-quote fixture pins it.
 - [ ] Pure and deterministic — no network, no clock; equity and rates are inputs.
@@ -71,8 +77,13 @@ account-currency assumption (USD) is config-driven, not hard-coded.
 ## Open questions
 
 - Account currency: assume USD (demo account) for Phase 3, config-driven? Propose yes.
-- Rate source for quote conversion: latest cached candle close vs account-summary
-  margin rate. Propose latest cached mid; confirm in spec.
+
+**Resolved at cross-spec audit (2026-05-29):** DRIFT-07 — per-unit risk derives from
+`stop_distance × quote_to_account_rate` (no `pip_value` field); the max-size clamp
+is dropped (no source). AMBIGUOUS-02 — the quote→account **rate source is the latest
+cached candle mid** for the conversion pair; `equity` is the live account-summary
+value fetched once by [[execution-cli]]. The freshness mismatch (cached rate vs live
+equity) is accepted — it perturbs the 0.25% cap by less than intraday rate drift.
 
 ## Out of scope
 

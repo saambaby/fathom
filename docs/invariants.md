@@ -132,3 +132,33 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 **Reason:** `Candidate` is consumed by `portfolio.py`, `charts.py`, `cli.py`, `narration.py`, and the Hermes daily job. Once shipped, a silent field rename ripples across all of them and breaks the Discord watchlist. Freezing the contract (as INV-11 freezes the `Signal` stop/target derivation) makes the dependency explicit and reviewable. Note: `timeframe` is the same dimension the approved-set/DB calls `granularity`; the INV-10 gate join is `signal.timeframe == approved_set.granularity`.
 
 **Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `chart-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. Reviewer checks any `Candidate` field change against this invariant.
+
+---
+
+## INV-14 · The `Order`/`Fill`/`Position` Models Are the Frozen Execution Contract
+
+**Rule:** `execution/models.py`'s `Order`, `Fill`, and `Position` pydantic models are the stable in-process execution contract. Their field names (snake_case), types, and flat shape are frozen once `order-model-and-brackets` ships. `position-sizing`, `order-placement`, `reconciliation`, the deviation monitor, and the alerter all build against this exact shape. A change to field names/types/shape is a breaking change across the execution path and must be treated as an amendment to this invariant.
+
+**Reason:** like `Candidate` (INV-13), these models are consumed by many modules; a silent rename ripples across sizing, placement, reconciliation, and monitoring. Freezing them makes the dependency explicit and reviewable. This is the execution-side analogue of INV-13.
+
+**Enforcement:** a serialisation round-trip test pins each model's JSON shape; the field tables live in `docs/features/order-model-and-brackets.md` (and the persisted column lists in `order-placement.md`), and consumers reference them rather than re-listing fields. Reviewer checks any field change against this invariant.
+
+---
+
+## INV-15 · Every Order Carries a Deterministic Client-Order-ID; Retries Never Double-Fill
+
+**Rule:** every `Order` submitted to OANDA carries a `client_order_id` deterministically derived from `(instrument, strategy_name, timeframe, generated_at, execution_date)`. Submission is idempotent: re-submitting the same `client_order_id` (a network retry, or an operator re-run of `fathom execute`) must return the existing fill, never create a second broker order.
+
+**Reason:** a network retry or an operator re-run must not open a duplicate position. A double-fill costs real money and corrupts the book the kill switch and monitor trust. Idempotency is a first-class safety feature, not an afterthought.
+
+**Enforcement:** `build_bracket()` computes the id; `execution/orders.py` checks the store and attaches the v20 client-extension id before every submit (belt-and-suspenders). A duplicate-submit test asserts exactly one filled position.
+
+---
+
+## INV-16 · The Broker Is the Source of Truth for Positions and Realized P&L
+
+**Rule:** on any disagreement between Fathom's local `positions`/`account_state` and the OANDA account (open trades, account summary), the broker wins: local state is corrected to match. A broker-only position is adopted; a locally-open position the broker has closed is marked closed with its realized P&L; the realized day P&L and equity the kill switch reads are sourced from the broker account summary.
+
+**Reason:** a crashed process or a missed fill must be recoverable, not silently wrong — the kill switch (INV-05 daily cap) and the deviation monitor both trust this state. Operational risk is real risk; reconciliation is a first-class feature.
+
+**Enforcement:** `execution/reconcile.py` applies broker-wins on startup and every N minutes; drift is logged at WARNING, never silently dropped. The kill switch reads `day_pl`/`start_of_day_equity` from the reconciled `account_state` row.

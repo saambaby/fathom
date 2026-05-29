@@ -12,12 +12,15 @@ Single Python repo (not a monorepo) — "areas" are package directories.
 | `data` | `data/oanda_client.py`, `data/candles.py`, `data/store.py`, `data/stream.py`, `data/calendar.py` | OANDA access, candle fetch/cache, storage, live stream, calendar | partial (PoC: client+candles+store) |
 | `strategies` | `strategies/base.py`, `strategies/_indicators.py`, `strategies/trend.py`, `strategies/mean_reversion.py`, `strategies/momentum.py`, `strategies/breakout.py` | strategy interface + shared indicators (`atr()`) + implementations | partial (PoC: base + trend/MACrossover) |
 | `backtest` | `backtest/engine.py`, `backtest/costs.py`, `backtest/walkforward.py`, `backtest/metrics.py` | event-driven engine, cost model, walk-forward, metrics | shipped (PoC); `costs.py` extended in Phase 1 |
-| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/charts.py` | ranker (score/filter/dedup/conflict), portfolio correlation+exposure caps, chart PNG rendering | Phase 2 (not started) |
-| `hermes_integration` | `hermes_integration/news_risk.py`, `hermes_integration/narration.py`, `hermes_integration/prompts/`, `hermes_integration/jobs/` | Claude response models+validators (INV-02), prompt templates, plain-English Hermes job (configured, not coded) | Phase 2 (not started) |
-| `cli` | `cli.py` | `fathom backtest` (Phase 1), `scan\|watchlist\|chart` (Phase 2) | new in Phase 1 |
-| `scripts` | `scripts/poc_run.py` | one-off runners | shipped (PoC) |
+| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/charts.py`, `signals/correlation.py` | ranker, portfolio caps, chart PNG; `correlation.py` = shared Pearson primitive **extracted from `portfolio.py` in Phase 3** | shipped (Phase 2); `correlation.py` new in Phase 3 |
+| `hermes_integration` | `hermes_integration/news_risk.py`, `narration.py`, `pretrade_check.py`, `prompts/`, `jobs/` | Claude response models+validators (INV-02); `pretrade_check.py` = in-process pre-trade veto (Phase 3) | shipped (Phase 2); `pretrade_check.py` new in Phase 3 |
+| `risk` | `risk/sizing.py`, `risk/limits.py` | stop-derived sizing (INV-05), exposure/correlation caps + daily-loss kill switch | Phase 3 |
+| `execution` | `execution/models.py`, `execution/orders.py`, `execution/reconcile.py` | frozen Order/Fill/Position (INV-14), bracket submit + idempotency (INV-04/15), broker reconciliation (INV-16) | Phase 3 |
+| `monitoring` | `monitoring/watcher.py`, `monitoring/alerts.py` | always-on deviation detection; `DiscordWebhookClient` alert delivery | Phase 3 |
+| `cli` | `cli.py` | `fathom backtest` (P1), `scan\|watchlist\|chart` (P2), `execute\|positions\|reconcile` (P3) | new in Phase 1 |
+| `scripts` | `scripts/poc_run.py`, `scripts/run_monitor.py` | one-off runners; `run_monitor.py` = always-on monitor entrypoint (Phase 3) | shipped (PoC); monitor new in Phase 3 |
 | `tests` | `tests/`, `tests/integration/` | test suites (per-area files) | shipped (PoC) |
-| _future_ | `risk/`, `execution/`, `monitoring/`, `panel/` | Phase 3+ | not started |
+| _future_ | `panel/` | Phase 4+ (admin panel) | not started |
 
 ## Shared / coordinator-owned files
 
@@ -62,3 +65,18 @@ Edits to these go through the **coordinator branch** or are **serialized** — n
 | `hermes-job-definitions` | `hermes_integration/jobs/daily.md` (config, not code) | capstone — depends on cli + both Claude specs; runs last. Its live Discord acceptance is a **manual/human-admin** task (D-P2-5). |
 
 **Safe-parallel set for Phase 2 (after `signal-ranker` locks the `Candidate` shape):** `{portfolio-limits (portfolio.py)}`, `{chart-generation (charts.py)}`, `{news-risk-assessment (hermes_integration/news_risk.py)}`, `{watchlist-narration (hermes_integration/narration.py)}` run concurrently — distinct files. `cli-commands (cli.py)` is the join (after ranker+portfolio+charts); `hermes-job-definitions` is the capstone (config + manual acceptance). `matplotlib` dep via coordinator.
+
+## Phase 3 dispatch implications (pre-resolved collisions)
+
+| Collision | Files | Resolution |
+|---|---|---|
+| **Coordinator pre-step: extract correlation primitive** | `signals/portfolio.py` (shipped) → new `signals/correlation.py` | DRIFT-09. Touches a **shipped, tested** file → **coordinator-serialized**, before `risk-limits`. Move `_pearson_corr` + returns loaders out; `portfolio.py` imports them back (behaviour-preserving; re-run Phase 2 portfolio tests). |
+| **Coordinator pre-step: `anthropic` dep** | `pyproject.toml` + `CLAUDE.md` | `pretrade-check` needs it → coordinator edit before that task (mirrors Phase 2 matplotlib). |
+| `order-model-and-brackets` defines Order/Fill/Position (INV-14) | `execution/models.py` | **load-bearing prerequisite** — sizing, order-placement, reconcile, monitor build against it. Lock + round-trip test first; do not fan out until it passes. |
+| `order-placement` owns the store migration | `execution/orders.py` + `data/store.py` (orders/fills/positions tables) | **ONLY Phase 3 task that migrates those tables.** `reconciliation` adds `account_state`; `monitor-alerts` adds `deviation_log` — distinct tables, no collision. `data/store.py` edits serialized across these 3 (declare table ownership; coordinator watches). |
+| `data/oanda_client.py` gains order + account-summary endpoints | `data/oanda_client.py` (shipped) | order-placement + reconciliation both need new endpoints → **serialized** (or one adds both, the other imports). Still the only reader of `env` (INV-09). |
+| `cli-commands` → `execution-cli` | `cli.py` (shared with P1/P2) | **ONLY Phase 3 task that edits `cli.py`** — the join. Depends on pretrade-check + sizing + limits + orders + reconcile. |
+| `pretrade-check` | `hermes_integration/pretrade_check.py` + `prompts/pretrade.md` | distinct files → parallel-safe with the risk/execution tasks once `Candidate` (shipped) is the only input. |
+| monitor pair | `monitoring/watcher.py` (+ `scripts/run_monitor.py`) vs `monitoring/alerts.py` | distinct files → parallel-safe; `watcher` defines `DeviationEvent`, `alerts` consumes it (sequence watcher→alerts logically). |
+
+**Drafting/dispatch order for Phase 3:** coordinator pre-steps (`signals/correlation.py` extract, `anthropic` dep) → `order-model-and-brackets` (lock) → `{position-sizing, risk-limits-kill-switch, pretrade-check}` ∥ → `{order-placement, reconciliation}` (serialize `store.py`/`oanda_client.py` edits) → `{deviation-monitor, monitor-alerts}` ∥ → `execution-cli` (join). `data/store.py` and `data/oanda_client.py` are shipped files touched by multiple Phase 3 tasks → **serialize, don't parallelize** those edits.

@@ -47,7 +47,7 @@ deferred to impl-Phase 5.
 - [ ] `execution/reconcile.py` fetches the broker's open trades on startup and periodically, reconciles against the DB, and treats **the broker as the source of truth**.
 - [ ] `hermes_integration/pretrade_check.py` makes a final structured Claude veto immediately before submission; malformed/unavailable → **safe default = abort** (INV-02). Offline-testable; live key wired at acceptance.
 - [ ] `monitoring/watcher.py` runs always-on against the live stream: detects adverse path, slippage, volatility spikes, and feed-health loss on open positions; severe-response policy is configurable (default alert-only on demo).
-- [ ] `monitoring/alerts.py` delivers deviation alerts to the **same Discord channel** as the watchlist, via Hermes' Discord gateway.
+- [ ] `monitoring/alerts.py` delivers deviation alerts to the **same Discord channel** as the watchlist, via a direct `DiscordWebhookClient` (`DISCORD_WEBHOOK_URL`) — the monitor is a standalone process, not a Hermes job (DRIFT-06).
 - [ ] `scripts/run_monitor.py` is the always-on monitor entrypoint.
 - [ ] `fathom execute <candidate>` runs the full deterministic gate (pretrade-check → sizing → limits → order) for an operator-approved candidate; it is **not** a Hermes tool.
 - [ ] The full demo loop runs end-to-end: approve → sized bracketed demo order placed through the gate → fill recorded → monitor tracks it → deviation alerts fire — over a sustained demo period.
@@ -65,7 +65,7 @@ Adds to Phase 2: `hermes_integration/pretrade_check.py`, the `risk/` module, the
 graph TD
     subgraph ext["External"]
         OANDA["OANDA v20 API\nREST orders + HTTP stream\n(practice endpoint only)"]
-        HERMES_GW["Hermes Discord gateway\n(alert delivery only)"]
+        WEBHOOK["Discord webhook\nDISCORD_WEBHOOK_URL\n(shared watchlist channel)"]
         DISCORD["Discord\nwatchlist + deviation alerts"]
         CLAUDE_PT["Anthropic API\nClaude — pre-trade veto\n(in-process SDK, INV-02)"]
     end
@@ -101,7 +101,7 @@ graph TD
 
         subgraph monitor_layer["Monitoring (always-on)"]
             WATCHER["monitoring/watcher.py\nadverse path · slippage\nvol spike · feed health"]
-            ALERTS["monitoring/alerts.py\nDiscord via Hermes gateway"]
+            ALERTS["monitoring/alerts.py\nDiscordWebhookClient (direct POST)"]
             RUNMON["scripts/run_monitor.py\nentrypoint"]
         end
     end
@@ -121,8 +121,8 @@ graph TD
     STREAM -->|"live ticks"| WATCHER
     STORE -->|"open positions"| WATCHER
     WATCHER --> ALERTS
-    ALERTS -->|"alert"| HERMES_GW
-    HERMES_GW --> DISCORD
+    ALERTS -->|"POST (httpx)"| WEBHOOK
+    WEBHOOK --> DISCORD
     RUNMON --> WATCHER
     CLIENT --> OANDA
 ```
@@ -142,7 +142,7 @@ equity-curve / blotter / deviation-log UI, and any live-endpoint wiring (INV-07)
 | `risk/limits.py` | Exposure caps (max concurrent, max book risk), correlation-aware shared exposure, daily-loss kill switch (halt + alert). |
 | `hermes_integration/pretrade_check.py` | Final pre-submission Claude veto; pydantic verdict + parser; INV-02 safe-default = **abort**; live `anthropic` call behind a stubbable adapter. |
 | `monitoring/watcher.py` | Always-on deviation detection on open positions: adverse path, slippage, vol spike, feed-health loss; configurable severe-response (default alert-only). |
-| `monitoring/alerts.py` | Deviation-alert delivery to Discord via Hermes' gateway (same channel as the watchlist). |
+| `monitoring/alerts.py` | Deviation-alert delivery to Discord via a direct `DiscordWebhookClient` (`DISCORD_WEBHOOK_URL`, same channel as the watchlist); owns the `deviation_log` table. |
 | `scripts/run_monitor.py` | Entrypoint for the always-on monitor process. |
 | `cli.py` (extend) | `fathom execute <candidate>` operator command (the deterministic gate join); optionally `fathom positions` / `fathom reconcile` read-only operator helpers. **Single-writer task** (only one Phase 3 task edits `cli.py`). |
 | `data/store.py` (extend) | `orders`, `fills`, `positions` tables (state for execution + reconciliation + monitoring). |
@@ -167,8 +167,13 @@ of the wall:
 - **The pre-trade Claude check can only *subtract*.** It can veto (abort) a trade;
   it can never cause one. Malformed/unavailable → abort (INV-02). It is the finer
   veto on top of the deterministic gate, not a green light.
-- **Alerts go *out* through Hermes' gateway** — that is delivery, not order
-  authority, and is allowed.
+- **Alerts go *out* via a direct Discord webhook** (`DISCORD_WEBHOOK_URL`) from the
+  standalone monitor process — that is outbound delivery, not order authority, and
+  is not mediated by a Hermes job (DRIFT-06 resolution).
+- **The monitor may close/modify an *existing* position when explicitly configured**
+  (default-off on demo), delegated to a deterministic `execution/` function — it
+  never *opens* a position and is never a Hermes tool. "Deterministic close/modify of
+  an open position is permitted; opening is not" (AMBIGUOUS-01 ruling).
 
 ---
 
@@ -208,11 +213,14 @@ of the wall:
 - **INV-09** — demo and live share one code path; only `oanda_client.py` reads `env`.
 - **INV-11** — sizing consumes the ATR-derived stop; symmetric across strategies.
 - **INV-13** — execution consumes the frozen `Candidate` contract unchanged.
+- **INV-14** — the `Order`/`Fill`/`Position` models are the frozen execution contract.
+- **INV-15** — deterministic `client_order_id`; retries never double-fill.
+- **INV-16** — the broker is the source of truth for positions and realized P&L.
 
-**Invariant-promotion candidates (decide at cross-spec audit):** the
-`Order`/`Fill`/`Position` model as a frozen contract (à la INV-13 for `Candidate`);
-client-order-ID idempotency as a promoted rule; "broker is source of truth" for
-reconciliation.
+**Invariant promotions — DONE (cross-spec audit, 2026-05-29):** the three candidates
+were promoted to **INV-14** (frozen Order/Fill/Position), **INV-15** (client-order-id
+idempotency), and **INV-16** (broker is source of truth). See
+[phase-3-spec-audit-2026-05-29.md](phase-3-spec-audit-2026-05-29.md).
 
 ---
 
@@ -225,6 +233,6 @@ reconciliation.
 - [ ] Feature spec: `order-placement` (bracket submit, idempotency, retries, slippage capture)
 - [ ] Feature spec: `reconciliation` (broker-vs-db, broker = truth)
 - [ ] Feature spec: `deviation-monitor` (watcher + run_monitor entrypoint)
-- [ ] Feature spec: `monitor-alerts` (Discord via Hermes gateway)
+- [ ] Feature spec: `monitor-alerts` (Discord via direct webhook client)
 - [ ] Feature spec: `execution-cli` (`fathom execute`, the operator join)
 - [ ] Task graph for Phase 3

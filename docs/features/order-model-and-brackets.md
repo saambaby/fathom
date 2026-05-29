@@ -1,6 +1,6 @@
 # Feature: order-model-and-brackets
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 3
 **Owner.** saambaby
 **Last updated.** 2026-05-29
@@ -20,19 +20,37 @@ watchlist. No I/O, no OANDA calls — models and bracket maths only.
 Backend module `execution/models.py` (models) + a `build_bracket()` pure function.
 Not a CLI surface; consumed by other Phase 3 modules.
 
-- `Order` — an intent to open a position: `client_order_id` (idempotency key),
-  `instrument`, `direction`, `units` (signed: +long/−short), `entry_type`
-  (`market`), `stop_loss_price`, `take_profit_price`, `candidate_ref` (the
-  originating `Candidate` identity), `created_at` (UTC).
+- `Order` — an intent to open a position: `client_order_id` (idempotency key,
+  derived — see below), `instrument`, `direction`, `units` (signed: +long/−short),
+  `entry_type` (`market`), `stop_loss_price`, `take_profit_price`, `candidate_ref`
+  (the originating `Candidate` identity — see below), `created_at` (UTC).
 - `Fill` — the broker's confirmation: `client_order_id`, `broker_trade_id`,
-  `fill_price`, `units_filled`, `slippage` (fill vs `Candidate.entry_ref`),
+  `fill_price`, `units_filled` (signed), `slippage` (signed — see convention),
   `filled_at` (UTC), `status` (`filled`|`partial`|`rejected`).
-- `Position` — current open state: `broker_trade_id`, `instrument`, `units`,
-  `entry_price`, `stop_loss_price`, `take_profit_price`, `opened_at`,
-  `unrealized_pl`, `candidate_ref`.
-- `build_bracket(candidate, units, *, precision) -> Order` — converts the
-  `Candidate`'s **price-distance** stop/target into **absolute** bracket prices for
-  the order's direction, rounded to the instrument's price precision.
+- `Position` — current open state: `broker_trade_id`, `instrument`, `units`
+  (signed), `entry_price`, `stop_loss_price`, `take_profit_price`, `opened_at`,
+  `unrealized_pl`, `closed_at` (nullable), `realized_pl` (nullable until close),
+  `candidate_ref`. (Persisted column list is pinned in [[order-placement]].)
+- `build_bracket(candidate, units, *, execution_date, precision) -> Order` —
+  converts the `Candidate`'s **price-distance** stop/target into **absolute**
+  bracket prices for the order's direction, rounded to `precision`, and computes the
+  `client_order_id`. `precision` is bound to `InstrumentMeta.display_precision`
+  (DRIFT-07).
+
+**`client_order_id` derivation (DRIFT-03 / INV-15).** `build_bracket` computes
+`client_order_id = sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date}").hexdigest()[:32]`
+from the `Candidate` fields + the injected `execution_date`. The same formula is
+stated in [[order-placement]] and [[execution-cli]].
+
+**`candidate_ref` (DRIFT-04).** A string `f"{instrument}:{timeframe}:{strategy_name}"`
+— the same value `fathom execute` ([[execution-cli]]) accepts as its argument and
+resolves against the latest persisted watchlist. It is provenance, distinct from the
+`client_order_id` (which additionally folds in `generated_at` + `execution_date`).
+
+**Sign convention (AMBIGUOUS-05).** `units`/`units_filled` are signed to match
+OANDA v20 (long > 0, short < 0). `slippage` is signed so **positive = adverse**
+(worse than `Candidate.entry_ref`) regardless of direction. Pinned by the AC worked
+examples.
 
 ## Acceptance criteria
 
@@ -70,6 +88,8 @@ breaking and reviewable.
 - [INV-03] — UTC timestamps on all models.
 - [INV-11] — consumes the ATR-derived `stop_distance`/`target_distance` unchanged.
 - [INV-13] — reads the frozen `Candidate`; never mutates it.
+- [INV-14] — these models **are** the frozen execution contract (this spec defines it).
+- [INV-15] — computes the deterministic `client_order_id`.
 
 ## Depends on
 
@@ -87,8 +107,12 @@ fan-out begins.
 - Entry type: market-only for Phase 3, or also limit/stop-entry? Propose
   **market-only** (the watchlist `entry_ref` is a reference, fills at market);
   revisit if slippage capture shows it matters.
-- Does `Position` carry realized P&L too, or only unrealized? Propose unrealized
-  here; realized P&L is a reconciliation/store concern.
+
+**Resolved at cross-spec audit (2026-05-29):** `Position` carries both
+`unrealized_pl` and `realized_pl` (the latter written by [[reconciliation]] on
+close); `precision` binds to `InstrumentMeta.display_precision` (DRIFT-07);
+`client_order_id`/`candidate_ref`/sign conventions pinned above; models promoted to
+**INV-14**.
 
 ## Out of scope
 
