@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from backtest.walkforward import ApprovedSetEntry
     from signals.ranker import Candidate
     from execution.models import Fill, Order, Position
+    from monitoring.watcher import DeviationEvent
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +302,48 @@ class Store:
             (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
+    # ------------------------------------------------------------------
+    # deviation_log table (Phase 3 — monitor-alerts T-09 owns this migration).
+    # Column list is pinned by docs/features/monitor-alerts.md (DRIFT-08).
+    # ``event_id`` is the stable PK so re-persisting the same event is
+    # idempotent (INSERT OR IGNORE).  All timestamps are UTC RFC 3339 (INV-03).
+    # ``delivered`` is stored as INTEGER (0/1); set to 1 after a successful POST.
+    # ------------------------------------------------------------------
+
+    #: SQL to create the ``deviation_log`` table if it does not already exist.
+    #: Column list is pinned by docs/features/monitor-alerts.md.
+    _CREATE_DEVIATION_LOG_SQL: str = """
+        CREATE TABLE IF NOT EXISTS deviation_log (
+            event_id         TEXT    NOT NULL PRIMARY KEY,
+            instrument       TEXT    NOT NULL,
+            deviation_type   TEXT    NOT NULL,
+            detail           TEXT    NOT NULL,
+            broker_trade_id  TEXT,
+            severity         TEXT    NOT NULL,
+            created_at       TEXT    NOT NULL,
+            delivered        INTEGER NOT NULL DEFAULT 0
+        )
+    """
+
+    #: Insert one deviation_log row.  ``INSERT OR IGNORE`` is the idempotency
+    #: guarantee: re-persisting the same ``event_id`` is a no-op (the existing
+    #: row is kept as-is, preserving the original ``created_at`` / ``delivered``
+    #: state from the first persistence — the watcher's "durable truth" posture).
+    _INSERT_DEVIATION_LOG_SQL: str = """
+        INSERT OR IGNORE INTO deviation_log
+            (event_id, instrument, deviation_type, detail,
+             broker_trade_id, severity, created_at, delivered)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    #: Mark a deviation_log row as delivered after a successful Discord POST.
+    _MARK_DELIVERED_SQL: str = """
+        UPDATE deviation_log
+        SET    delivered = 1
+        WHERE  event_id  = ?
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -353,8 +396,9 @@ class Store:
     # ------------------------------------------------------------------
 
     def _create_tables(self) -> None:
-        """Create the ``candles``, ``instruments``, ``approved_set``, and
-        ``watchlist`` tables if they do not already exist."""
+        """Create all tables (candles, instruments, approved_set, watchlist,
+        orders, fills, positions, account_state, deviation_log) if they do
+        not already exist."""
         self._conn.execute(self._CREATE_CANDLES_SQL)
         self._conn.execute(self._CREATE_INSTRUMENTS_SQL)
         self._conn.execute(self._CREATE_APPROVED_SET_SQL)
@@ -363,6 +407,7 @@ class Store:
         self._conn.execute(self._CREATE_FILLS_SQL)
         self._conn.execute(self._CREATE_POSITIONS_SQL)
         self._conn.execute(self._CREATE_ACCOUNT_STATE_SQL)
+        self._conn.execute(self._CREATE_DEVIATION_LOG_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1239,6 +1284,112 @@ class Store:
             (float(start_of_day_equity), float(day_pl), _to_rfc3339(as_of)),
         )
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # deviation_log table (Phase 3 — monitor-alerts T-09; DRIFT-08)
+    # ------------------------------------------------------------------
+
+    def write_deviation_event(self, event: "DeviationEvent") -> bool:
+        """Persist a ``DeviationEvent`` to ``deviation_log`` (idempotent).
+
+        Uses ``INSERT OR IGNORE`` on the ``event_id`` PK: re-persisting the
+        same event is a no-op — the first persistence wins (the durable truth).
+        This is the "persist FIRST" guarantee: callers must invoke this before
+        any delivery attempt so the event is durable even if Discord is down.
+
+        Args:
+            event: The ``DeviationEvent`` to persist.
+
+        Returns:
+            ``True`` if the row was newly inserted; ``False`` if the event was
+            already present (idempotent no-op).  Callers can use this to skip
+            re-delivery of already-persisted events, but the primary use is
+            simply to guarantee durability.
+        """
+        cursor = self._conn.execute(
+            self._INSERT_DEVIATION_LOG_SQL,
+            (
+                event.event_id,
+                event.instrument,
+                event.deviation_type,
+                event.detail,
+                event.broker_trade_id,  # nullable — None stored as NULL
+                event.severity,
+                _to_rfc3339(event.created_at),  # UTC RFC 3339 (INV-03)
+                0,  # delivered=False until a successful POST
+            ),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_deviation_delivered(self, event_id: str) -> None:
+        """Set ``delivered=True`` on a ``deviation_log`` row after successful POST.
+
+        Idempotent: marking the same event delivered twice is a no-op.
+
+        Args:
+            event_id: The stable PK of the deviation event to mark.
+        """
+        self._conn.execute(self._MARK_DELIVERED_SQL, (event_id,))
+        self._conn.commit()
+
+    def load_deviation_log(
+        self,
+        *,
+        undelivered_only: bool = False,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Load deviation log rows as plain dicts.
+
+        Args:
+            undelivered_only: If ``True``, return only rows where
+                ``delivered=0``.  Useful for a catch-up delivery pass.
+            limit: Maximum number of rows to return (most recent first by
+                ``created_at`` descending).  ``None`` returns all rows.
+
+        Returns:
+            A list of dicts with keys matching the ``deviation_log`` column
+            names (``event_id``, ``instrument``, ``deviation_type``,
+            ``detail``, ``broker_trade_id``, ``severity``, ``created_at``,
+            ``delivered`` as ``bool``).  Empty list when no rows match.
+        """
+        where_clause = "WHERE delivered = 0" if undelivered_only else ""
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        cursor = self._conn.execute(
+            f"""
+            SELECT event_id, instrument, deviation_type, detail,
+                   broker_trade_id, severity, created_at, delivered
+            FROM   deviation_log
+            {where_clause}
+            ORDER  BY created_at DESC
+            {limit_clause}
+            """
+        )
+        result: list[dict[str, object]] = []
+        for row in cursor.fetchall():
+            (
+                event_id,
+                instrument,
+                deviation_type,
+                detail,
+                broker_trade_id,
+                severity,
+                created_at,
+                delivered_int,
+            ) = row
+            result.append(
+                {
+                    "event_id": event_id,
+                    "instrument": instrument,
+                    "deviation_type": deviation_type,
+                    "detail": detail,
+                    "broker_trade_id": broker_trade_id,  # None if NULL
+                    "severity": severity,
+                    "created_at": created_at,
+                    "delivered": bool(delivered_int),
+                }
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Parquet archive
