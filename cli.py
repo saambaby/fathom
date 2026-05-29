@@ -1,5 +1,7 @@
-"""Fathom CLI — ``fathom backtest`` (P1A-T-08, the Phase 1A capstone).
+"""Fathom CLI — multi-phase operator entrypoint.
 
+Phase 1A: ``fathom backtest`` (P1A-T-08)
+-----------------------------------------
 The full-universe backtest runner: it walk-forward-validates **every**
 requested (strategy × instrument × timeframe) combination and persists the
 resulting approved-set table to SQLite.  That table is the **INV-10 gate** —
@@ -58,6 +60,30 @@ Usage
 
 An empty approved set is a valid, exit-0 result (INV-10: empty means "no
 signals", not "all signals").
+
+Phase 3: ``fathom execute`` / ``fathom positions`` / ``fathom reconcile`` (P3-T-10)
+------------------------------------------------------------------------------------
+The canonical **INV-01 enforcement point**: ``fathom execute`` is the
+human-run CLI command that turns an approved watchlist candidate into a trade.
+It is NEVER a Hermes tool — execution authority belongs to the operator.
+
+Gate ordering (pretrade → sizing → limits → submit):
+1. Load candidate from the latest persisted watchlist (INV-13).
+2. Fresh reconcile → refresh account_state + positions (AMBIGUOUS-03).
+3. Pretrade check → ``block`` aborts (exit ≠ 0, reason).
+4. Sizing (risk_fraction=0.0025, INV-05 cap) → reject aborts.
+5. Limits / kill switch → reject aborts with kill-switch status.
+6. Build bracket + submit order → print Fill.
+
+``--dry-run`` runs steps 1–5 and prints the would-be order WITHOUT any v20
+submission.  ``--yes`` skips the interactive confirm before a real submit.
+
+``fathom positions`` and ``fathom reconcile`` are read-only operator helpers.
+
+INV-01: execute/positions/reconcile are NEVER registered as Hermes tools.
+INV-07: practice endpoint only (INV-09 one-code-path).
+INV-03: all timestamps UTC.
+INV-08: no secret logged.
 """
 
 from __future__ import annotations
@@ -80,6 +106,28 @@ from strategies.breakout import SessionRangeBreakout
 from strategies.mean_reversion import BollingerReversion, RSIReversion
 from strategies.momentum import ROCMomentum
 from strategies.trend import DonchianBreakout, MACrossover
+
+# ---------------------------------------------------------------------------
+# Phase 3 execution imports (P3-T-10) — module-level for testability.
+# INV-01: these are imported for the operator CLI gate, NEVER registered as
+# Hermes tools.  The Hermes allow-list (scan/watchlist/chart) is unchanged.
+# ---------------------------------------------------------------------------
+# Lazy fallback: these may not be importable in minimal test envs without the
+# full stack installed.  They are only used inside the Phase 3 command
+# functions (cmd_execute, cmd_positions, cmd_reconcile), never at import time.
+try:
+    from config.settings import Settings
+    from data.oanda_client import OandaClient
+    from execution.models import build_bracket
+    from execution.orders import OrderRejected, submit_order
+    from execution.reconcile import reconcile
+    from hermes_integration.pretrade_check import pretrade_check
+    from risk.limits import LimitsConfig, check_limits, kill_switch_status
+    from risk.sizing import DEFAULT_RISK_FRACTION, size_position
+except ImportError:  # pragma: no cover
+    # During module-level import in environments where execution deps are
+    # absent, defer to runtime so the non-execution subcommands still work.
+    pass
 
 # ---------------------------------------------------------------------------
 # Logging — UTC RFC 3339 timestamps (INV-03)
@@ -753,6 +801,79 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Years of candle history to load for the chart window.",
     )
 
+    # ---- execute ------------------------------------------------------------
+    # INV-01: this subcommand is NEVER registered as a Hermes tool.
+    # The canonical human-operator execution gate (P3-T-10).
+    ex = sub.add_parser(
+        "execute",
+        help=(
+            "Run a watchlist candidate through the full Phase 3 gate "
+            "(pretrade → sizing → limits → submit). INV-01: operator-only, "
+            "never a Hermes tool."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ex.add_argument(
+        "candidate_ref",
+        help=(
+            "Candidate reference: instrument:timeframe:strategy_name, "
+            "e.g. EUR_USD:H1:macrossover_10_50_eur_usd_h1. "
+            "Must be present on the latest persisted watchlist (INV-13)."
+        ),
+    )
+    ex.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+    ex.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Run gate steps 1–5 and print the would-be order WITHOUT "
+            "submitting to OANDA. Safe rehearsal."
+        ),
+    )
+    ex.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip the interactive confirm prompt before a real submit.",
+    )
+
+    # ---- positions ----------------------------------------------------------
+    # INV-01: read-only operator helper; never a Hermes tool.
+    pos = sub.add_parser(
+        "positions",
+        help=(
+            "Print open Position[] JSON from the store. "
+            "INV-01: operator-only, never a Hermes tool."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    pos.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+
+    # ---- reconcile ----------------------------------------------------------
+    # INV-01: operator-initiated broker-truth sync; never a Hermes tool.
+    rec = sub.add_parser(
+        "reconcile",
+        help=(
+            "Run one reconciliation pass against the OANDA broker and print "
+            "the ReconcileReport. INV-01: operator-only, never a Hermes tool."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    rec.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+
     return parser
 
 
@@ -1163,6 +1284,519 @@ def cmd_chart(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 — execute, positions, reconcile commands (P3-T-10)
+# ---------------------------------------------------------------------------
+# INV-01: these three subcommands are operator-only CLI commands.  They are
+# NEVER registered as Hermes tools.  The Phase 2 daily.md allow-list is
+# scan/watchlist/chart and remains unchanged.
+#
+# Gate ordering for ``execute`` (exactly as specced):
+#   1. Load candidate from latest watchlist (INV-13).
+#   2. Fresh reconcile → refresh account_state + open positions (AMBIGUOUS-03).
+#   3. Pretrade check  → ``block`` aborts (exit ≠ 0).
+#   4. Sizing (risk_fraction=0.0025, INV-05 cap) → reject (units=0) aborts.
+#   5. Limits / kill switch → reject aborts with kill-switch status.
+#   6. ``--dry-run``? print would-be order, return 0.  Otherwise confirm +
+#      build_bracket + submit_order → print Fill.
+
+
+def _load_candidate(
+    candidate_ref: str,
+    db_path: str,
+) -> "tuple[Optional[object], Optional[tuple[str, int]]]":
+    """Load a Candidate from the latest persisted watchlist.
+
+    Returns ``(candidate, None)`` on success or ``(None, (error_msg, exit_code))``
+    on failure.  Never executes off-watchlist input (INV-13, first AC).
+
+    The ref format is ``instrument:timeframe:strategy_name`` (DRIFT-04).
+    """
+    from signals.ranker import Candidate  # lazy — no HTTP in tests
+
+    parts = candidate_ref.split(":", 2)
+    if len(parts) != 3:
+        return (
+            None,
+            (
+                f"Invalid candidate ref {candidate_ref!r}: expected "
+                "instrument:timeframe:strategy_name "
+                "(e.g. EUR_USD:H1:macrossover_10_50).",
+                2,
+            ),
+        )
+    instrument, timeframe, strategy_name = parts
+
+    store = Store(db_path)
+    try:
+        rows = store.load_watchlist()  # latest run, run_timestamp=None
+    finally:
+        store.close()
+
+    if not rows:
+        return (
+            None,
+            ("No watchlist found in store. Run 'fathom scan' first.", 1),
+        )
+
+    matches = [
+        r for r in rows
+        if (
+            r["instrument"] == instrument
+            and r["timeframe"] == timeframe
+            and r["strategy_name"] == strategy_name
+        )
+    ]
+    if not matches:
+        all_refs = [
+            f"{r['instrument']}:{r['timeframe']}:{r['strategy_name']}"
+            for r in rows
+        ]
+        return (
+            None,
+            (
+                f"Candidate {candidate_ref!r} not found on the latest "
+                f"watchlist. Available refs: {all_refs}",
+                1,
+            ),
+        )
+
+    candidate = Candidate(**matches[0])
+    return (candidate, None)
+
+
+def cmd_execute(args: argparse.Namespace) -> int:
+    """Execute the ``fathom execute <candidate-ref>`` command.
+
+    Phase 3 gate (P3-T-10) — the canonical INV-01 enforcement point.
+    This command is NEVER a Hermes tool.
+
+    Gate ordering: load → reconcile → pretrade → sizing → limits → submit.
+
+    Returns the process exit code (0 = success / dry-run success,
+    non-zero = abort at any gate stage).
+    """
+    run_dt = datetime.now(tz=timezone.utc)
+    _log.info(
+        "fathom execute started at %s (dry_run=%s, yes=%s, candidate_ref=%r)",
+        run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        args.dry_run,
+        args.yes,
+        args.candidate_ref,
+    )
+
+    db_path: str = args.db_path
+    dry_run: bool = args.dry_run
+    skip_confirm: bool = args.yes
+
+    # ------------------------------------------------------------------
+    # Step 1: Load candidate from latest persisted watchlist (INV-13).
+    # ------------------------------------------------------------------
+    candidate_or_none, err = _load_candidate(args.candidate_ref, db_path)
+    if err is not None:
+        err_msg, exit_code = err
+        _log.error("execute: candidate resolution failed: %s", err_msg)
+        print(f"ERROR: {err_msg}", file=sys.stderr)
+        return exit_code
+
+    from signals.ranker import Candidate as _Candidate
+
+    if not isinstance(candidate_or_none, _Candidate):
+        # Should never happen: _load_candidate returns (Candidate, None) on success.
+        print("ERROR: unexpected internal error in candidate resolution.", file=sys.stderr)
+        return 1
+
+    candidate = candidate_or_none
+
+    _log.info(
+        "execute: loaded candidate %s/%s/%s from watchlist.",
+        candidate.instrument,
+        candidate.timeframe,
+        candidate.strategy_name,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2: Fresh reconcile BEFORE limits (AMBIGUOUS-03).
+    # Refresh account_state (day_pl, start_of_day_equity) and open
+    # positions from the broker so the kill switch reads current data.
+    # ------------------------------------------------------------------
+    settings = Settings()
+    _log.info("execute: connecting to OANDA (env=%s).", settings.env)  # INV-08: no token
+    client = OandaClient(settings)
+    store = Store(db_path)
+    try:
+        recon_report = reconcile(client=client, store=store, now=run_dt)
+    except Exception as exc:  # noqa: BLE001
+        _log.error("execute: reconcile failed: %s", exc)
+        print(f"ERROR: reconciliation failed: {exc}", file=sys.stderr)
+        store.close()
+        return 1
+    _log.info(
+        "execute: reconcile complete — adopted=%d closed=%d matched=%d "
+        "day_pl=%.4f start_of_day_equity=%.4f",
+        len(recon_report.adopted),
+        len(recon_report.closed),
+        len(recon_report.matched),
+        recon_report.day_pl,
+        recon_report.start_of_day_equity,
+    )
+
+    # Read the freshly-reconciled state.
+    account_state = store.load_account_state()
+    open_positions = store.load_open_positions()
+    store.close()
+
+    if account_state is None:
+        _log.error("execute: no account_state after reconcile — cannot continue.")
+        print(
+            "ERROR: account_state not available after reconcile.",
+            file=sys.stderr,
+        )
+        return 1
+
+    day_pl: float = float(account_state["day_pl"])  # type: ignore[arg-type]
+    start_of_day_equity: float = float(account_state["start_of_day_equity"])  # type: ignore[arg-type]
+    # NAV from the reconcile broker fetch is the current equity for sizing.
+    equity: float = start_of_day_equity + day_pl  # nav = snapshot + today's delta
+
+    # ------------------------------------------------------------------
+    # Step 3: Pretrade check.
+    # ``block`` aborts with a clear reason and non-zero exit.
+    # ------------------------------------------------------------------
+    verdict = pretrade_check(candidate)
+    if verdict.decision == "block":
+        _log.warning(
+            "execute: pretrade-check blocked: %s", verdict.reason
+        )
+        print(
+            f"BLOCKED by pretrade check: {verdict.reason}",
+            file=sys.stderr,
+        )
+        return 1
+
+    _log.info("execute: pretrade check → proceed (%s).", verdict.reason)
+
+    # ------------------------------------------------------------------
+    # Step 4: Sizing (risk_fraction = DEFAULT_RISK_FRACTION = 0.0025,
+    # the INV-05 cap — never above it).
+    # ``units == 0`` rejects with a reason; abort.
+    # ------------------------------------------------------------------
+    # Resolve instrument metadata from the cached store for min_trade_size
+    # and display_precision.
+    store2 = Store(db_path)
+    try:
+        instrument_metas = {m.name: m for m in store2.load_instruments()}
+    finally:
+        store2.close()
+
+    inst_meta = instrument_metas.get(candidate.instrument)
+    if inst_meta is None:
+        _log.error(
+            "execute: no InstrumentMeta cached for %s — run 'fathom backtest' "
+            "or 'fathom scan' (live) first.",
+            candidate.instrument,
+        )
+        print(
+            f"ERROR: no instrument metadata for {candidate.instrument}. "
+            "Run 'fathom scan' (live) first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # quote_to_account_rate: for pairs where the quote currency is USD
+    # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid.
+    # Simple heuristic: if instrument ends in "_USD", rate = 1.0; otherwise
+    # load the latest close_mid from the candle store as the proxy rate.
+    # If unavailable, fall back to 1.0 with a warning (safe — sizing still runs,
+    # may reject on the minimum-trade-size floor if the rate is very wrong).
+    rate: float = 1.0
+    if not candidate.instrument.endswith("_USD"):
+        store3 = Store(db_path)
+        try:
+            end_dt = datetime.now(tz=timezone.utc)
+            start_dt = end_dt - timedelta(days=3)
+            candles = store3.load_candles(
+                instrument=candidate.instrument,
+                granularity=candidate.timeframe,
+                start=start_dt,
+                end=end_dt,
+            )
+            if not candles.empty and "close_mid" in candles.columns:
+                last_mid = float(candles["close_mid"].iloc[-1])
+                if last_mid > 0:
+                    rate = 1.0 / last_mid
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "execute: could not derive quote→account rate for %s "
+                "(using 1.0 fallback): %s",
+                candidate.instrument,
+                exc,
+            )
+        finally:
+            store3.close()
+
+    sizing_result = size_position(
+        candidate,
+        equity,
+        instrument_meta=inst_meta,
+        rate=rate,
+        risk_fraction=DEFAULT_RISK_FRACTION,  # 0.0025 — never above INV-05 cap
+    )
+    if sizing_result.units == 0:
+        _log.warning("execute: sizing rejected: %s", sizing_result.reason)
+        print(
+            f"REJECTED by sizing: {sizing_result.reason}",
+            file=sys.stderr,
+        )
+        return 1
+
+    _log.info(
+        "execute: sizing approved — units=%d risk_amount=%.6g.",
+        sizing_result.units,
+        sizing_result.risk_amount,
+    )
+
+    # ------------------------------------------------------------------
+    # Build the bracketed Order (INV-04, INV-15).
+    # build_bracket is called here — before the limits check — so the
+    # fully-formed Order (with correct bracket prices) is passed to
+    # check_limits.  This is still within step 5: the Order is NOT
+    # submitted yet; it is used as the limits-gate input.
+    # ------------------------------------------------------------------
+    order = build_bracket(
+        candidate,
+        sizing_result.units,
+        execution_date=run_dt,
+        precision=inst_meta.display_precision,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5: Limits / kill switch.
+    # Any rejection aborts with a clear reason and non-zero exit.
+    # ------------------------------------------------------------------
+    limits_config = LimitsConfig()
+    limit_decision = check_limits(
+        order,
+        open_positions=open_positions,
+        day_pl=day_pl,
+        equity=equity,
+        start_of_day_equity=start_of_day_equity,
+        config=limits_config,
+        now=run_dt,
+        order_risk=sizing_result.risk_amount,
+    )
+
+    if not limit_decision.allowed:
+        if limit_decision.kill_switch_active:
+            ks = kill_switch_status(
+                day_pl=day_pl,
+                start_of_day_equity=start_of_day_equity,
+                config=limits_config,
+                now=run_dt,
+            )
+            _log.warning(
+                "execute: kill switch ACTIVE — day_pl=%.6g cap_amount=%.6g "
+                "reset_at=%s",
+                ks.day_pl,
+                ks.cap_amount,
+                ks.reset_at.isoformat(),
+            )
+            print(
+                f"REJECTED by limits (kill switch ACTIVE): {limit_decision.reason}\n"
+                f"Kill switch resets at {ks.reset_at.isoformat()}.",
+                file=sys.stderr,
+            )
+        else:
+            _log.warning("execute: limits rejected: %s", limit_decision.reason)
+            print(
+                f"REJECTED by limits: {limit_decision.reason}",
+                file=sys.stderr,
+            )
+        return 1
+
+    _log.info("execute: limits check → allowed.")
+
+    # ------------------------------------------------------------------
+    # --dry-run: print the would-be order and exit 0 (no v20 call).
+    # ------------------------------------------------------------------
+    if dry_run:
+        order_dict = order.model_dump()
+        # Convert non-serialisable types for display.
+        order_dict["created_at"] = order.created_at.isoformat()
+        order_dict["direction"] = str(order.direction.value)
+        order_dict["entry_type"] = str(order.entry_type.value)
+        print("[DRY-RUN] Would submit the following order (no v20 call made):")
+        print(json.dumps(order_dict, indent=2, default=str))
+        _log.info(
+            "execute --dry-run: gate passed, order NOT submitted "
+            "(client_order_id=%s).",
+            order.client_order_id,
+        )
+        return 0
+
+    # ------------------------------------------------------------------
+    # Step 6: Interactive confirm (unless --yes) + submit.
+    # ------------------------------------------------------------------
+    if not skip_confirm:
+        summary = (
+            f"  Instrument : {order.instrument}\n"
+            f"  Direction  : {order.direction.value}\n"
+            f"  Units      : {order.units}\n"
+            f"  Stop       : {order.stop_loss_price}\n"
+            f"  Target     : {order.take_profit_price}\n"
+            f"  ID         : {order.client_order_id}\n"
+        )
+        print(f"\nAbout to submit order to OANDA ({settings.env}):\n{summary}")
+        try:
+            answer = input("Confirm submit? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.", file=sys.stderr)
+            return 1
+        if answer not in ("y", "yes"):
+            print("Aborted by operator.", file=sys.stderr)
+            return 1
+
+    store_submit = Store(db_path)
+    try:
+        fill = submit_order(
+            order,
+            client=client,
+            store=store_submit,
+            entry_ref=candidate.entry_ref,
+            precision=inst_meta.display_precision,
+            now=run_dt,
+        )
+    except OrderRejected as exc:
+        _log.error("execute: broker rejected order: %s", exc)
+        print(f"ORDER REJECTED by broker: {exc}", file=sys.stderr)
+        store_submit.close()
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        _log.error("execute: order submission failed: %s", exc)
+        print(f"ERROR: order submission failed: {exc}", file=sys.stderr)
+        store_submit.close()
+        return 1
+    finally:
+        store_submit.close()
+
+    # Print the Fill to stdout (INV-14 contract).
+    fill_dict = {
+        "client_order_id": fill.client_order_id,
+        "broker_trade_id": fill.broker_trade_id,
+        "fill_price": fill.fill_price,
+        "units_filled": fill.units_filled,
+        "slippage": fill.slippage,
+        "status": str(fill.status.value),
+        "filled_at": fill.filled_at.isoformat(),
+    }
+    print(json.dumps(fill_dict, indent=2))
+    _log.info(
+        "fathom execute finished at %s. Fill: %s/%s price=%.5f slippage=%.5f.",
+        _utc_now_rfc3339(),
+        fill.broker_trade_id,
+        fill.status.value,
+        fill.fill_price,
+        fill.slippage,
+    )
+    return 0
+
+
+def cmd_positions(args: argparse.Namespace) -> int:
+    """Execute the ``fathom positions`` command.
+
+    Prints the store's open ``Position[]`` as JSON (INV-14 shape).
+    No live HTTP — pure DB read.
+
+    INV-01: never a Hermes tool.
+    """
+    _log.info("fathom positions started at %s.", _utc_now_rfc3339())
+
+    db_path: str = args.db_path
+    store = Store(db_path)
+    try:
+        open_positions = store.load_open_positions()
+    finally:
+        store.close()
+
+    output_list = []
+    for pos in open_positions:
+        pos_dict = {
+            "broker_trade_id": pos.broker_trade_id,
+            "instrument": pos.instrument,
+            "units": pos.units,
+            "entry_price": pos.entry_price,
+            "stop_loss_price": pos.stop_loss_price,
+            "take_profit_price": pos.take_profit_price,
+            "opened_at": pos.opened_at.isoformat(),
+            "unrealized_pl": pos.unrealized_pl,
+            "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
+            "realized_pl": pos.realized_pl,
+            "candidate_ref": pos.candidate_ref,
+        }
+        output_list.append(pos_dict)
+
+    print(json.dumps(output_list, indent=2, default=str))
+    _log.info(
+        "fathom positions finished at %s. Open positions: %d.",
+        _utc_now_rfc3339(),
+        len(open_positions),
+    )
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Execute the ``fathom reconcile`` command.
+
+    Runs one broker-truth reconciliation pass and prints the
+    ``ReconcileReport`` as JSON.
+
+    INV-01: never a Hermes tool.
+    INV-07: practice endpoint only (settings.env).
+    INV-08: no token logged.
+    INV-03: all timestamps UTC.
+    """
+    run_dt = datetime.now(tz=timezone.utc)
+    _log.info("fathom reconcile started at %s.", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    db_path: str = args.db_path
+    settings = Settings()
+    _log.info("reconcile: connecting to OANDA (env=%s).", settings.env)  # INV-08
+
+    client = OandaClient(settings)
+    store = Store(db_path)
+    try:
+        report = reconcile(client=client, store=store, now=run_dt)
+    except Exception as exc:  # noqa: BLE001
+        _log.error("reconcile: failed: %s", exc)
+        print(f"ERROR: reconcile failed: {exc}", file=sys.stderr)
+        store.close()
+        return 1
+    finally:
+        store.close()
+
+    report_dict = {
+        "adopted": report.adopted,
+        "closed": report.closed,
+        "matched": report.matched,
+        "drift_flags": report.drift_flags,
+        "start_of_day_equity": report.start_of_day_equity,
+        "day_pl": report.day_pl,
+        "snapshotted_today": report.snapshotted_today,
+        "as_of": run_dt.isoformat(),
+    }
+    print(json.dumps(report_dict, indent=2))
+    _log.info(
+        "fathom reconcile finished at %s. adopted=%d closed=%d matched=%d "
+        "day_pl=%.4f.",
+        _utc_now_rfc3339(),
+        len(report.adopted),
+        len(report.closed),
+        len(report.matched),
+        report.day_pl,
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1179,6 +1813,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_watchlist(args)
     if args.command == "chart":
         return cmd_chart(args)
+    if args.command == "execute":
+        return cmd_execute(args)
+    if args.command == "positions":
+        return cmd_positions(args)
+    if args.command == "reconcile":
+        return cmd_reconcile(args)
     parser.error(f"Unknown command: {args.command}")
     return 2  # unreachable — parser.error exits
 

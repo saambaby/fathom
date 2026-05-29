@@ -287,3 +287,77 @@ CREATE TABLE IF NOT EXISTS watchlist (
   arg list.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## P3-T-10 — 2026-05-29 (feat/p3-T-10-cli) — execution-cli (the INV-01 gate join)
+
+**What was done:**
+- Extended `cli.py` with three Phase 3 subcommands: `execute`, `positions`, `reconcile`.
+  **This is the ONLY Phase 3 task that edits `cli.py`** (join point per task graph).
+- **This is the canonical INV-01 enforcement point**: `fathom execute` is a human-run
+  CLI command, NEVER a Hermes tool. The Phase 2 daily.md allow-list (scan/watchlist/chart)
+  is unchanged.
+
+**`fathom execute <candidate-ref>`** (`cmd_execute`) — gate ordering:
+1. Load candidate from latest watchlist via `_load_candidate(ref, db_path)` (INV-13).
+   Ref format: `instrument:timeframe:strategy_name` (DRIFT-04). Error + exit ≠ 0 if not found.
+2. Fresh reconcile (`reconcile(client, store, now)`) BEFORE limits (AMBIGUOUS-03).
+   Refreshes `account_state` (day_pl, start_of_day_equity) + open positions from broker.
+3. Pretrade check (`pretrade_check(candidate)`) → `block` → exit ≠ 0.
+4. Sizing (`size_position(..., risk_fraction=DEFAULT_RISK_FRACTION)`) — **always 0.0025,
+   never above the INV-05 cap**. `units=0` → exit ≠ 0.
+5. `build_bracket(candidate, units, execution_date, precision)` → produces the full `Order`
+   (used for both the limits check AND the eventual submit).
+6. Limits check (`check_limits(order, ..., order_risk=sizing_result.risk_amount)`) →
+   reject → exit ≠ 0; kill-switch active → prints reset-at time.
+7. `--dry-run`: prints `[DRY-RUN] Would submit the following order:` + JSON, **no v20 call**.
+8. `--yes`: skips the interactive confirm prompt. Default: `Confirm submit? [y/N]`.
+9. Submit (`submit_order(order, client, store, entry_ref, precision, now)`) → prints Fill JSON.
+
+**`fathom positions`** (`cmd_positions`): DB-only read (`store.load_open_positions()`), prints
+`Position[]` as JSON. No live HTTP.
+
+**`fathom reconcile`** (`cmd_reconcile`): Calls `reconcile(client, store, now)` once, prints
+`ReconcileReport` as JSON (adopted/closed/matched/drift_flags/day_pl/start_of_day_equity).
+
+**Module-level imports for testability:**
+- Execution module imports (`Settings`, `OandaClient`, `build_bracket`, `OrderRejected`,
+  `submit_order`, `reconcile`, `pretrade_check`, `LimitsConfig`, `check_limits`,
+  `kill_switch_status`, `DEFAULT_RISK_FRACTION`, `size_position`) are at the module level
+  in a `try/except ImportError` block so they're patchable as `cli.<name>`.
+  Tests use `patch("cli.reconcile", ...)`, `patch("cli.size_position", ...)` etc.
+
+**INV-01 boundary tested in two places:**
+1. `tests/test_execution_cli.py::TestInv01Boundary` — scans `hermes_integration/` for
+   `"fathom execute"`, `"fathom positions"`, `"fathom reconcile"` (exact command strings).
+2. `tests/test_cli_commands.py::TestNoOrderPath` — updated from the Phase 2 check (which
+   forbade "execution" in cli.py — now outdated since P3-T-10 legitimately adds it) to
+   the correct boundary: checks that `hermes_integration/` has none of the Phase 3 commands.
+
+**Key patterns / gotchas:**
+- `build_bracket` is called BEFORE `check_limits` so the limits gate receives a fully-formed
+  `Order` (with correct bracket prices). This is still within "step 5 (limits)" — the order
+  is NOT submitted yet; it is just constructed for the limits input.
+- `load_account_state()` returns `dict[str, object] | None`. To pass `day_pl`/
+  `start_of_day_equity` to `float()`, use `# type: ignore[arg-type]` (the dict values
+  are float at runtime, but the type annotation is `object`).
+- `equity = start_of_day_equity + day_pl` — this is the current NAV (snapshot + today's delta).
+- `quote_to_account_rate`: defaults to 1.0 for `_USD`-quoted instruments; for others, loads
+  the latest `close_mid` from the candle store and derives `rate = 1/mid`. Falls back to 1.0
+  with a WARNING if candles are unavailable.
+
+**AC verification results (raw, captured exit codes):**
+- `python -m pytest tests/test_execution_cli.py -v` → **23 passed**, exit 0
+- `python -m pytest tests/test_cli_commands.py tests/test_execution_cli.py -v` → **40 passed**, exit 0
+- `python -m pytest -q` (full suite) → **955 passed, 87 warnings**, exit 0
+- `python -m mypy .` → **"Success: no issues found in 79 source files"**, exit 0
+- `fathom --help` → lists `execute`, `positions`, `reconcile` alongside `backtest`, `scan`,
+  `watchlist`, `chart`.
+
+**No new dependencies.** No changes to pyproject.toml.
+
+**CLAUDE.md trigger-table check:** New CLI commands `fathom execute`, `fathom positions`,
+`fathom reconcile` → CLAUDE.md Commands section updated (YES).
+
+**Merge plan:** `gh pr merge 85 --squash --delete-branch` (lead action after reviewer pass).
