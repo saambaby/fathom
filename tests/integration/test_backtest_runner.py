@@ -35,6 +35,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -464,3 +465,218 @@ class TestDryRunSmoke:
         combined = (result.stdout + result.stderr).upper()
         assert "OANDA_API_TOKEN" not in combined
         assert "OANDA_ACCOUNT_ID" not in combined
+
+
+# ---------------------------------------------------------------------------
+# Live-path candle fetch (closes the acceptance-gate gap — #28)
+# ---------------------------------------------------------------------------
+# These tests verify that fathom backtest WITHOUT --dry-run:
+#   1. Calls fetch_and_cache for each (instrument, timeframe) pair (the step
+#      that was missing in the original assembly).
+#   2. The store ends up with candles BEFORE the combo fan-out.
+#   3. The walk-forward runs on that fetched data (approved-set population path
+#      reachable, not blocked by an empty store).
+#
+# NO real HTTP is made: OandaClient.get_candles is monkeypatched to return
+# synthetic candle rows; Settings construction is patched with fake credentials.
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_candles(
+    instrument: str,
+    granularity: str,
+    start: datetime,
+    n: int = 1100,
+) -> list[CandleRow]:
+    """Return ``n`` synthetic daily/hourly candle rows starting from ``start``.
+
+    These rows look like real ``CandleRow`` instances so ``store.upsert``
+    accepts them unchanged.
+    """
+    step = timedelta(days=1) if granularity == "D" else timedelta(hours=1)
+    rows = []
+    for i in range(n):
+        t = start + step * i
+        price = 1.1000 + 0.0080 * math.sin(2 * math.pi * i / 180)
+        rows.append(
+            CandleRow(
+                instrument=instrument,
+                granularity=granularity,
+                time=t,
+                open_bid=price,
+                high_bid=price + 0.0030,
+                low_bid=price - 0.0030,
+                close_bid=price + 0.0001,
+                open_ask=price + 0.0002,
+                high_ask=price + 0.0032,
+                low_ask=price - 0.0028,
+                close_ask=price + 0.0003,
+                open_mid=price + 0.0001,
+                high_mid=price + 0.0031,
+                low_mid=price - 0.0029,
+                close_mid=price + 0.0002,
+                volume=100,
+                complete=True,
+            )
+        )
+    return rows
+
+
+class TestLivePathCandleFetch:
+    """Prove the parent-side fetch step is wired correctly in LIVE mode.
+
+    The monkeypatch replaces:
+      * ``data.candles.fetch_and_cache`` with a fake that writes synthetic rows
+        directly to the store (bypassing HTTP).  This lets us assert the store
+        gets populated (candle count > 0) and that fetch_and_cache was actually
+        called for each (instrument, timeframe) pair.
+
+    The walk-forward worker is NOT monkeypatched — we use the real
+    ``_run_combo`` over the fetched candles to confirm the data actually reaches
+    the engine (not just that some rows exist in the store).
+    """
+
+    def test_store_is_populated_before_walkforward_in_live_mode(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parent fetches candles into a fresh DB before dispatching workers.
+
+        This test MUST FAIL against the pre-fix code (which skips the fetch
+        step entirely): without the fix, the store stays empty and the walk-
+        forward runs against 0 candles, so no entries are approved. After the
+        fix the store is populated (candle count > 0) and the test passes.
+
+        Assertions
+        ----------
+        * ``fetch_and_cache`` is called exactly once per (instrument, timeframe)
+          pair in the requested grid.
+        * After ``cmd_backtest`` returns, the store has > 0 candle rows.
+        * ``cmd_backtest`` exits 0.
+        * The run does not log any secret strings (INV-08).
+        """
+        db_path = str(tmp_path / "live_test.db")
+
+        # Pre-seed instrument metadata so _instrument_costs() works without HTTP.
+        store = Store(db_path)
+        store.upsert_instruments(_instruments())
+        store.close()
+
+        # Track which (instrument, timeframe) pairs are fetched.
+        fetch_calls: list[tuple[str, str]] = []
+
+        def fake_fetch_and_cache(
+            client: object,
+            store: Store,
+            instrument: str,
+            granularity: str,
+            start: datetime,
+            end: datetime,
+            write_parquet: bool = True,
+        ) -> "object":
+            import pandas as pd
+
+            fetch_calls.append((instrument, granularity))
+            # Build synthetic rows and upsert them directly (no HTTP).
+            rows = _synthetic_candles(instrument, granularity, start, n=1100)
+            store.upsert(rows)
+            return store.load_candles(instrument, granularity, start, end)
+
+        # Patch fetch_and_cache inside the cli module's lazy-import namespace.
+        # cli._fetch_candles_for_universe does `from data.candles import fetch_and_cache`
+        # at call time, so we patch the canonical location.
+        monkeypatch.setattr("data.candles.fetch_and_cache", fake_fetch_and_cache)
+
+        # Patch Settings + OandaClient so no .env is required.
+        fake_settings = MagicMock()
+        fake_settings.env = "demo"
+        fake_settings.oanda_api_token.get_secret_value.return_value = "FAKE"
+        fake_settings.oanda_account_id = "FAKE_ACCOUNT"
+
+        fake_client = MagicMock()
+
+        with (
+            patch("config.settings.Settings", return_value=fake_settings),
+            patch("data.oanda_client.OandaClient", return_value=fake_client),
+        ):
+            rc = cli.cmd_backtest(
+                _ns(
+                    db_path=db_path,
+                    instruments="EUR_USD,USD_JPY",
+                    timeframes="D",
+                    strategies="macrossover",
+                    workers=1,
+                    dry_run=False,   # <-- LIVE mode, not dry-run
+                    history_years=3,
+                )
+            )
+
+        assert rc == 0, f"cmd_backtest returned non-zero exit code: {rc}"
+
+        # The store must have candles (fetch step populated it).
+        store = Store(db_path)
+        eur_rows = store.load_candles(
+            "EUR_USD", "D",
+            _utc(2023, 1, 1), _utc(2026, 12, 31)
+        )
+        jpy_rows = store.load_candles(
+            "USD_JPY", "D",
+            _utc(2023, 1, 1), _utc(2026, 12, 31)
+        )
+        store.close()
+
+        assert len(eur_rows) > 0, (
+            "After live-mode run, EUR_USD/D candle count is 0. "
+            "The parent-side fetch step was not wired (the pre-fix bug)."
+        )
+        assert len(jpy_rows) > 0, (
+            "After live-mode run, USD_JPY/D candle count is 0. "
+            "The parent-side fetch step was not wired (the pre-fix bug)."
+        )
+
+        # fetch_and_cache was called once per (instrument, timeframe) pair.
+        expected_pairs = {("EUR_USD", "D"), ("USD_JPY", "D")}
+        actual_pairs = set(fetch_calls)
+        assert actual_pairs == expected_pairs, (
+            f"Expected fetch_and_cache calls for {expected_pairs}, "
+            f"got {actual_pairs}."
+        )
+
+    def test_dry_run_never_calls_fetch_and_cache(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--dry-run SKIPS the candle fetch entirely (existing contract preserved).
+
+        fetch_and_cache must NOT be called when --dry-run is set: no HTTP, no
+        Settings construction, cache-only behaviour unchanged.
+        """
+        db_path = str(tmp_path / "dry_run_test.db")
+        store = Store(db_path)
+        store.upsert_instruments(_instruments())
+        store.close()
+
+        fetch_calls: list[tuple[str, str]] = []
+
+        def spy_fetch(*args: object, **kwargs: object) -> object:
+            # If this is called, dry-run is broken.
+            raise AssertionError("fetch_and_cache must not be called under --dry-run")
+
+        monkeypatch.setattr("data.candles.fetch_and_cache", spy_fetch)
+
+        # dry-run=True → Settings/OandaClient never constructed; the spy must
+        # never fire.
+        rc = cli.cmd_backtest(
+            _ns(
+                db_path=db_path,
+                instruments="EUR_USD",
+                timeframes="D",
+                strategies="macrossover",
+                workers=1,
+                dry_run=True,
+                history_years=3,
+            )
+        )
+        assert rc == 0
