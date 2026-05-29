@@ -236,3 +236,61 @@
 - `mypy strategies/` → **"Success: no issues found in 5 source files"**, exit 0
 
 **No new runtime dependencies added** (pandas + stdlib only).
+
+## P1A-T-07 — 2026-05-29 (feat/p1a-t-07)
+
+**What was done:**
+- Created `strategies/breakout.py`:
+  - `SessionRangeBreakout(Strategy)` parameterised by `range_lookback`, optional `buffer_pips`
+    (default 0.0), `rr_ratio` (default 1.5), `instrument`, `timeframe`.
+  - `atr_period` parameter removed; ATR period hard-coded to 14 (INV-11 mandates 14-bar ATR
+    unconditionally for cross-strategy ranking/sizing comparability; exposing the param as a
+    constructor arg was a policy hole — INV-11/WARN-2 compliance fix).
+  - Rolling N-bar range variant (Phase 1 lean): `rolling_high = high.shift(1).rolling(N).max()`,
+    `rolling_low = low.shift(1).rolling(N).min()` — look-ahead free via `shift(1)`,
+    `min_periods=range_lookback` (NaN until full window available).
+  - LONG when `close > rolling_high + buffer_pips`; SHORT when `close < rolling_low - buffer_pips`.
+  - Once-per-UTC-day-per-direction latch: `day_latches: dict[str, set[Direction]]` keyed on
+    `generated_at.strftime("%Y-%m-%d")` (UTC date — INV-03). Latches are independent per direction
+    and reset automatically at UTC midnight.
+  - `stop_distance` = `_atr(df, 14)` at signal bar via shared `strategies._indicators.atr()` (INV-11).
+  - `target_distance` = `stop_distance * rr_ratio`.
+  - `quality_score` = `min(max(break_distance / atr_val, 0.0), 1.0)` — clamped to [0, 1].
+  - `generated_at` = bar close timestamp (UTC-aware, INV-03) — never `datetime.now()`.
+  - Defensive `df.copy()` at top of `generate_signals`.
+- Created `tests/test_breakout.py` — 38 tests covering:
+  - Construction guards (lookback/buffer/rr_ratio validation, name encoding).
+  - Insufficient data guards (< lookback+1 bars, empty df, missing columns).
+  - LONG signal: fires above range high, not on equality, buffer gating (insufficient + sufficient).
+  - SHORT signal: fires below range low, silent inside range.
+  - Once-per-day latch: only first LONG/SHORT fires per day, latches are independent, latch
+    resets on new UTC day.
+  - UTC timestamps (INV-03): generated_at is UTC-aware, equals bar close time (not datetime.now()),
+    UTC day boundary is respected for latch grouping.
+  - INV-11: stop_distance > 0, equals ATR(14) at signal bar, target = stop * rr_ratio, quality
+    score in [0, 1], bounded at 0 for marginal breaks and 1 for massive breaks.
+  - At-most-one signal per bar.
+  - No-mutation guarantee.
+  - Rolling-range variant on H1 with lookback=5 and lookback=20; no-lookahead verification.
+
+**Key patterns / gotchas:**
+- `shift(1).rolling(N, min_periods=N)` is the canonical look-ahead-free range in pandas.
+  Using `rolling(N)` without `shift(1)` would include the current bar's price in the reference
+  range — a look-ahead bias. Always shift before rolling for range-based strategies.
+- Once-per-day latch is a `dict[str, set[Direction]]` keyed by UTC date string. Using UTC day
+  string (`%Y-%m-%d`) avoids DST ambiguity (INV-03). The dict grows across bars so the latch
+  state is inherently stateless after each call (each `generate_signals` invocation starts fresh).
+- Long and Short latches must be independent. Do NOT use a single bool per day — use a set of
+  fired directions so both can fire within the same day.
+- `min_periods=range_lookback` on the rolling window is required; without it, `min_periods=1`
+  would produce partial-window results (e.g. max of 1 bar called "range high") giving false signals
+  during the warm-up phase.
+- No new runtime dependencies.
+
+**AC verification results (post INV-11 fix):**
+- `pytest tests/test_breakout.py -v` → **38 passed**, exit 0
+- `mypy strategies/` → **"Success: no issues found in 5 source files"**, exit 0
+
+**pyproject.toml:** untouched (no new dep required).
+**CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
