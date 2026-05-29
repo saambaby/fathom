@@ -228,9 +228,17 @@ def _find_signal_bar_index(df: pd.DataFrame, generated_at: str) -> Optional[int]
         return int(exact[0])
 
     # Nearest bar (signal may fall after the last stored bar, or between bars).
-    times = df["time"].values  # numpy array of ns-since-epoch UTC
-    ts_ns = ts.value  # ns since epoch (int)
-    diffs = abs(times.astype("int64") - ts_ns)
+    # Under pandas 3.x, df["time"].values is datetime64[us]; .astype("int64")
+    # yields MICROseconds.  Timestamp.value and iloc[n].value are NANOseconds.
+    # Fix: cast the numpy array to datetime64[ns] first so all int64 values are
+    # on the same ns-since-epoch scale as ts.value / iloc[n].value.
+    times_ns = (
+        pd.to_datetime(df["time"], utc=True)
+        .values.astype("datetime64[ns]")
+        .astype("int64")
+    )
+    ts_ns = ts.value  # ns since epoch (Timestamp.value is always ns)
+    diffs = abs(times_ns - ts_ns)
     nearest_idx = int(diffs.argmin())
 
     # Only annotate if the nearest bar is within ±2 * median bar spacing.

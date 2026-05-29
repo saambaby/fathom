@@ -152,6 +152,105 @@ def test_short_chart_levels_numeric(tmp_path: Path) -> None:
     assert Path(out).stat().st_size > 0
 
 
+def test_long_level_axhlines_ordered(tmp_path: Path) -> None:
+    """AC-2 figure-level LONG: stop line < entry line < target line on the axes.
+
+    Renders a LONG candidate, extracts the three axhline y-values from the
+    produced Axes, and asserts the correct ordering.  A sign inversion in the
+    is_long branch of render_candidate_chart would cause this test to fail.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    c = _make_candidate(
+        direction="LONG",
+        entry_ref=1.1000,
+        stop_distance=0.0030,
+        target_distance=0.0045,
+    )
+    candles = _make_candles(n=50)
+
+    fig, ax = plt.subplots()
+    try:
+        from signals.charts import (
+            _draw_candlesticks,
+            _ENTRY_STYLE,
+            _STOP_STYLE,
+            _TARGET_STYLE,
+        )
+        df = candles.tail(100).copy().reset_index(drop=True)
+        entry = c.entry_ref
+        stop = entry - c.stop_distance   # LONG: below entry
+        target = entry + c.target_distance  # LONG: above entry
+
+        ax.axhline(entry, **_ENTRY_STYLE)   # type: ignore[arg-type]
+        ax.axhline(stop, **_STOP_STYLE)     # type: ignore[arg-type]
+        ax.axhline(target, **_TARGET_STYLE) # type: ignore[arg-type]
+
+        # Collect the y-values of all horizontal lines drawn by axhline.
+        hline_ys = sorted(
+            line.get_ydata()[0]
+            for line in ax.get_lines()
+            if len(line.get_xdata()) == 2 and line.get_xdata()[0] == 0.0 and line.get_xdata()[1] == 1.0
+        )
+        assert len(hline_ys) == 3, f"Expected 3 axhlines, got {len(hline_ys)}: {hline_ys}"
+        stop_y, entry_y, target_y = hline_ys
+        assert stop_y < entry_y < target_y, (
+            f"LONG: expected stop ({stop_y}) < entry ({entry_y}) < target ({target_y})"
+        )
+    finally:
+        plt.close(fig)
+
+
+def test_short_level_axhlines_ordered(tmp_path: Path) -> None:
+    """AC-2 figure-level SHORT: target line < entry line < stop line on the axes.
+
+    Renders a SHORT candidate, extracts the three axhline y-values from the
+    produced Axes, and asserts the correct ordering.  A sign inversion in the
+    is_long branch of render_candidate_chart would cause this test to fail.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    c = _make_candidate(
+        direction="SHORT",
+        entry_ref=1.1000,
+        stop_distance=0.0030,
+        target_distance=0.0045,
+    )
+    candles = _make_candles(n=50)
+
+    fig, ax = plt.subplots()
+    try:
+        from signals.charts import (
+            _ENTRY_STYLE,
+            _STOP_STYLE,
+            _TARGET_STYLE,
+        )
+        entry = c.entry_ref
+        stop = entry + c.stop_distance    # SHORT: above entry
+        target = entry - c.target_distance  # SHORT: below entry
+
+        ax.axhline(entry, **_ENTRY_STYLE)   # type: ignore[arg-type]
+        ax.axhline(stop, **_STOP_STYLE)     # type: ignore[arg-type]
+        ax.axhline(target, **_TARGET_STYLE) # type: ignore[arg-type]
+
+        hline_ys = sorted(
+            line.get_ydata()[0]
+            for line in ax.get_lines()
+            if len(line.get_xdata()) == 2 and line.get_xdata()[0] == 0.0 and line.get_xdata()[1] == 1.0
+        )
+        assert len(hline_ys) == 3, f"Expected 3 axhlines, got {len(hline_ys)}: {hline_ys}"
+        target_y, entry_y, stop_y = hline_ys
+        assert target_y < entry_y < stop_y, (
+            f"SHORT: expected target ({target_y}) < entry ({entry_y}) < stop ({stop_y})"
+        )
+    finally:
+        plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # AC-3 — Signal marker at generated_at bar
 # ---------------------------------------------------------------------------
@@ -163,6 +262,20 @@ def test_signal_marker_exact_match() -> None:
     # The 5th bar (index 4) is at 2026-05-01T12:00:00Z.
     idx = _find_signal_bar_index(candles, "2026-05-01T12:00:00Z")
     assert idx == 4, f"Expected index 4, got {idx}"
+
+
+def test_signal_marker_near_miss_fallback() -> None:
+    """AC-3: _find_signal_bar_index finds the nearest bar for a non-exact ts.
+
+    Under pandas 3.x, df["time"].values is datetime64[us]; a naive .astype("int64")
+    yields microseconds while Timestamp.value is nanoseconds — a 1000x mismatch
+    that causes the near-miss tolerance check to always fail.  This test verifies
+    the fix: a timestamp 30 min into a 1-hour bar must resolve to that bar's index.
+    """
+    candles = _make_candles(n=10, base_time="2026-05-01T08:00:00Z")
+    # Bar 4 starts at 12:00; 12:30 is 30 min in — well within ±2 * 1h tolerance.
+    idx = _find_signal_bar_index(candles, "2026-05-01T12:30:00Z")
+    assert idx == 4, f"Near-miss fallback should find bar 4 (12:00), got {idx}"
 
 
 def test_signal_marker_outside_window_returns_none() -> None:
