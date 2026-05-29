@@ -177,3 +177,75 @@ does not need updating for offline unit tests.
 **New CLI command?** NO.
 **PR:** https://github.com/saambaby/fathom/pull/67
 **Merge plan:** `gh pr merge 67 --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P3-T-05 — 2026-05-29 (feat/p3-T-05-pretrade)
+
+**What was done:**
+- Created `hermes_integration/pretrade_check.py` with:
+  - `PretradeVerdict` pydantic v2 model:
+    - `decision: Literal["proceed", "block"]`
+    - `reason: str`
+    - `model_config = {"extra": "forbid"}` — rejects unknown fields at validation time.
+  - `_safe_default()` — private factory returning the INV-02 safe default
+    `PretradeVerdict(decision="block", reason="unparseable response — defaulting to block (INV-02 safe abort)")`.
+  - `parse_pretrade_verdict(raw: str) -> PretradeVerdict` — INV-02 enforcement boundary:
+    empty-string guard → `json.loads` → `isinstance(dict)` check → `PretradeVerdict.model_validate`.
+    Any failure: `_log.warning(...)` + return `_safe_default()`. Never raises. Never returns `proceed` on failure.
+  - `_ClientAdapter` Protocol — injectable interface for the Anthropic SDK.
+  - `_LiveClient` — live adapter wrapping `anthropic.Anthropic()`. The `anthropic` import is
+    deferred inside the class so the whole module is importable without any API key set (offline-safe).
+    API key read from environment automatically (never logged — INV-08). Uses `anthropic.types.TextBlock`
+    for type-safe content block extraction.
+  - `_build_prompt(candidate)` — renders `prompts/pretrade.md` template with all 14 INV-13 Candidate fields.
+  - `pretrade_check(candidate, *, client=None) -> PretradeVerdict` — full safe gate:
+    (1) no client + no key → block immediately (offline safe); (2) build `_LiveClient` if needed;
+    (3) build prompt; (4) call `client.complete(prompt)` — any exception → block; (5) route through
+    `parse_pretrade_verdict`. All failure paths → `_safe_default()` + WARNING log.
+  - Module constant `MODEL = "claude-haiku-4-5"` (D-P3-E pinned small/fast model).
+- Created `hermes_integration/prompts/pretrade.md` — prompt template with all 14 Candidate field
+  placeholders (`{{instrument}}`, `{{timeframe}}`, `{{strategy_name}}`, `{{direction}}`,
+  `{{entry_ref}}`, `{{stop_distance}}`, `{{target_distance}}`, `{{oos_sharpe_mean}}`,
+  `{{quality_score}}`, `{{rank}}`, `{{spread_ok}}`, `{{session_ok}}`, `{{news_flag}}`,
+  `{{generated_at}}`). Instructs Claude to return ONLY `{"decision": "proceed"|"block", "reason": "..."}`.
+  Bias table: default to block on uncertainty. No secrets (INV-08).
+- Updated `hermes_integration/__init__.py` docstring to document the new module.
+- Created `tests/test_pretrade_check.py` — 61 tests, zero live Claude/Anthropic calls:
+  - `TestPretradeVerdictModel` (9 tests): valid proceed/block construction, rejects out-of-enum
+    decision values, missing fields, extra fields (via `model_validate`).
+  - `TestSafeDefault` (3 tests): factory returns PretradeVerdict, decision=block, reason substr.
+  - `TestParsePretradeVerdictWellFormed` (4 tests): proceed/block round-trips, type check.
+  - `TestParsePretradeVerdictMalformedInputs` (24 tests): invalid JSON, partial JSON, prose response,
+    markdown-fenced, empty string, whitespace, missing decision, missing reason, missing all fields,
+    bad decision enum (go/trade/allow/yes/approve), JSON array, null, bare string, number, boolean,
+    null decision, extra field. Plus `test_never_returns_proceed_on_failure` and
+    `test_never_raises_on_any_input` sweeps (INV-02).
+  - `TestParsePretradeVerdictLogging` (4 tests): warning logged on failures; INV-08 no-secret sweep.
+  - `TestPretradeCheckStubClient` (9 tests): proceed/block routing, malformed/empty/bad-enum/extra-field
+    → safe default, returns PretradeVerdict type, raising client → safe default, never raises.
+  - `TestPretradeCheckOfflinePath` (3 tests): no client + no key → block, never raises, logs warning.
+  - `TestModuleIsolation` (5 tests): no execution/orders/risk/sizing attrs; only expected public names.
+
+**INV-02 design decision:**
+- Three independent defence layers in `parse_pretrade_verdict`: (1) empty-string guard, (2) JSON parse
+  try/except, (3) pydantic validate try/except + bare `except Exception` catch-all.
+- `_ClientAdapter` Protocol + injectable `client` parameter: tests inject `_StubClient`/`_RaisingClient`
+  with no live key; the live path (`_LiveClient`) is only exercised at the acceptance gate.
+- `os.environ.get("ANTHROPIC_API_KEY")` offline check: no client + no key → immediate block with no
+  SDK import attempted. Safe for CI with no secrets.
+
+**Offline testability:** `_LiveClient.__init__` defers the `anthropic` import so the whole module is
+importable without a key. Tests use `_StubClient`/`_RaisingClient` injected via `client=` parameter.
+
+**anthropic SDK dep** already in pyproject.toml (added by C-A coordinator edit, commit 422c4f2).
+**pyproject.toml untouched** — no new dependencies.
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command — CLAUDE.md not edited.
+
+**AC verification results:**
+- `mypy .` → "Success: no issues found in 72 source files", exit 0
+- `pytest -q` → 860 passed (799 pre-existing + 61 new), exit 0
+
+**New dependency added to pyproject.toml?** NO (anthropic already present).
+**New CLI command?** NO.
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
