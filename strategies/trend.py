@@ -13,6 +13,8 @@ library_defaults (from poc-taskgraph.md):
 
 INV-03: Signal.generated_at is set to the bar's close timestamp (UTC-aware),
         never datetime.now().
+INV-11: ATR is computed via the shared strategies._indicators.atr() helper —
+        no per-file ATR copy.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from strategies._indicators import atr as _atr
 from strategies.base import Direction, Signal, Strategy
 
 
@@ -116,8 +119,8 @@ class MACrossover(Strategy):
         fast_ema: pd.Series[float] = close.ewm(span=self._fast_period, adjust=False).mean()
         slow_ema: pd.Series[float] = close.ewm(span=self._slow_period, adjust=False).mean()
 
-        # ATR(14) — standard True Range average.
-        atr = self._compute_atr(df, self._atr_period)
+        # ATR(14) — standard True Range average (shared helper, INV-11).
+        atr = _atr(df, self._atr_period)
 
         signals: list[Signal] = []
 
@@ -182,34 +185,3 @@ class MACrossover(Strategy):
 
         return signals
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _compute_atr(df: pd.DataFrame, period: int) -> pd.Series[float]:
-        """Compute Average True Range using Wilder's smoothing (ewm, adjust=False).
-
-        True Range = max(
-            high - low,
-            |high - prev_close|,
-            |low  - prev_close|
-        )
-        """
-        high = df["high_bid"].astype(float)
-        low = df["low_bid"].astype(float)
-        close = df["close_bid"].astype(float)
-
-        prev_close = close.shift(1)
-        tr = pd.concat(
-            [
-                high - low,
-                (high - prev_close).abs(),
-                (low - prev_close).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-
-        # Wilder's ATR: ewm with com = period - 1 (equiv. alpha = 1/period), adjust=False
-        atr: pd.Series[float] = tr.ewm(com=period - 1, adjust=False).mean()
-        return atr
