@@ -122,3 +122,13 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 **Reason:** SQLite without explicit WAL + retry is not safe for concurrent writers. A partially-failed concurrent write produces an incomplete approved-set that INV-10 cannot distinguish from a legitimately small one — silently undermining the gate (some combinations approved but missing, while the runner exits 0).
 
 **Enforcement:** `fathom backtest` collects all `ProcessPoolExecutor` futures into a list before any DB write, then writes the full batch in one `BEGIN…COMMIT`. Reviewed at the runner task.
+
+---
+
+## INV-13 · The `Candidate` Model Is the Frozen Hermes-Facing Wire Contract
+
+**Rule:** `signals/ranker.py`'s `Candidate` pydantic model is the stable output contract of the Phase 2 watchlist pipeline. Its field **names** (snake_case), **types**, and **flat (non-nested) shape** are frozen once the ranker ships. A `fathom watchlist` JSON response is always a JSON array of `Candidate` objects serialised by this model; the Hermes job, charts, narration, and portfolio layer all build against this exact shape. The pinned fields are: `instrument, timeframe, strategy_name, direction, entry_ref, stop_distance, target_distance, oos_sharpe_mean, quality_score, rank, spread_ok, session_ok, news_flag, generated_at` (UTC RFC-3339). Changes to field names/types/shape are **breaking changes to the Hermes integration** and must be treated as an amendment to this invariant.
+
+**Reason:** `Candidate` is consumed by `portfolio.py`, `charts.py`, `cli.py`, `narration.py`, and the Hermes daily job. Once shipped, a silent field rename ripples across all of them and breaks the Discord watchlist. Freezing the contract (as INV-11 freezes the `Signal` stop/target derivation) makes the dependency explicit and reviewable. Note: `timeframe` is the same dimension the approved-set/DB calls `granularity`; the INV-10 gate join is `signal.timeframe == approved_set.granularity`.
+
+**Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `chart-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. Reviewer checks any `Candidate` field change against this invariant.
