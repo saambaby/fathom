@@ -31,10 +31,14 @@ Four deviation rules
 
 Debounce
 --------
-Each (broker_trade_id, rule) key is debounced: once an event fires, it will
-not re-fire until ``debounce_seconds`` has elapsed.  ``event_id`` is
-``sha256(broker_trade_id + "|" + rule + "|" + debounce-window-start)[:32]``
-so re-persistence is idempotent within a window.
+Each (position, rule) key is debounced: once an event fires, it will not
+re-fire until ``debounce_seconds`` has elapsed.  ``event_id`` is a 32-char
+SHA-256 prefix over the combination of (broker_trade_id, rule, window-start)
+for position rules, or (instrument, rule, window-start) for feed_health events
+(which have no broker_trade_id).  Using the instrument in the feed_health key
+ensures that each instrument debounces its own feed-health stream
+independently — a stale feed on one instrument never suppresses the alert for
+another.  Re-persistence is idempotent within a window.
 
 Alerter protocol
 ----------------
@@ -295,9 +299,23 @@ class PositionSnapshot(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _event_id(broker_trade_id: str | None, deviation_type: str, window_ts: str) -> str:
-    """Compute a stable, idempotent event_id for a (position, rule, window)."""
-    key = f"{broker_trade_id or 'feed_health'}|{deviation_type}|{window_ts}"
+def _event_id(
+    broker_trade_id: str | None,
+    deviation_type: str,
+    window_ts: str,
+    instrument: str | None = None,
+) -> str:
+    """Compute a stable, idempotent event_id for a (position, rule, window).
+
+    For feed_health events (broker_trade_id is None) the ``instrument`` is
+    included so that each instrument produces an independent id and each
+    instrument's own debounce stream is isolated from other instruments.
+    """
+    if broker_trade_id is not None:
+        key = f"{broker_trade_id}|{deviation_type}|{window_ts}"
+    else:
+        # feed_health path: scope the key to the instrument
+        key = f"feed_health|{instrument or ''}|{deviation_type}|{window_ts}"
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
@@ -460,7 +478,7 @@ def check_feed_health(
     now = datetime.now(timezone.utc)
     window_ts = _debounce_window_ts(now, config.debounce_seconds)
     return DeviationEvent(
-        event_id=_event_id(None, "feed_health", window_ts),
+        event_id=_event_id(None, "feed_health", window_ts, instrument=instrument),
         instrument=instrument,
         deviation_type="feed_health",
         detail=f"no tick for {elapsed:.1f}s (timeout {config.heartbeat_timeout_seconds}s)",
@@ -521,7 +539,10 @@ class Watcher:
         self._responder: ExecutionResponder = execution_responder or NoOpExecutionResponder()
         self._instruments = instruments or ["EUR_USD"]
 
-        # Debounce state: maps (broker_trade_id|None, rule) → last event_id fired
+        # Debounce state: maps (broker_trade_id_or_instrument, rule) → last event_id fired
+        # For position rules: key is (broker_trade_id, deviation_type).
+        # For feed_health (broker_trade_id is None): key is (instrument, "feed_health")
+        # so each instrument maintains an independent debounce slot.
         self._debounce: dict[tuple[str | None, str], str] = {}
 
         # Per-instrument recent prices (for vol rule)
@@ -643,7 +664,7 @@ class Watcher:
         now = datetime.now(timezone.utc)
         window_ts = _debounce_window_ts(now, self._config.debounce_seconds)
         event = DeviationEvent(
-            event_id=_event_id(None, "feed_health", window_ts),
+            event_id=_event_id(None, "feed_health", window_ts, instrument=instrument),
             instrument=instrument,
             deviation_type="feed_health",
             detail="gap_detected: stream reconnected (data continuity broken)",
@@ -654,8 +675,18 @@ class Watcher:
         self._maybe_emit(event)
 
     def _maybe_emit(self, event: DeviationEvent) -> None:
-        """Debounce and emit an event; trigger auto-response if configured."""
-        key: tuple[str | None, str] = (event.broker_trade_id, event.deviation_type)
+        """Debounce and emit an event; trigger auto-response if configured.
+
+        For feed_health events (broker_trade_id is None) the debounce key
+        includes the instrument so that each instrument's feed-health stream
+        is debounced independently.  Position-based rules (adverse, slippage,
+        vol) continue to be keyed by broker_trade_id.
+        """
+        if event.broker_trade_id is None:
+            # feed_health: one independent debounce slot per instrument
+            key: tuple[str | None, str] = (event.instrument, event.deviation_type)
+        else:
+            key = (event.broker_trade_id, event.deviation_type)
         # Debounce: skip if the same event_id was already fired for this window
         if self._debounce.get(key) == event.event_id:
             logger.debug(

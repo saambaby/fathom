@@ -668,3 +668,61 @@ def test_position_snapshot_construction() -> None:
     assert pos.broker_trade_id == "T1"
     assert pos.instrument == "EUR_USD"
     assert pos.units == 10_000
+
+
+# ---------------------------------------------------------------------------
+# Feed-health debounce is per-instrument (regression: multi-instrument)
+# ---------------------------------------------------------------------------
+
+
+def test_feed_health_debounce_is_per_instrument() -> None:
+    """Two instruments losing their feed in the same debounce window must each
+    fire their own feed_health event — they must NOT suppress each other.
+
+    Regression test for the defect where the debounce key was
+    ``(None, "feed_health")`` for all instruments, meaning the second
+    instrument's event was silently dropped once the first had fired.
+    """
+    import queue as _queue
+
+    events: list[DeviationEvent] = []
+
+    class _Collector:
+        def send(self, event: DeviationEvent) -> None:
+            events.append(event)
+
+    cfg = _cfg(
+        heartbeat_timeout_seconds=0.01,  # very short so ticks in the past are stale
+        debounce_seconds=300.0,           # long window so both instruments land in it
+    )
+
+    # Build the watcher over two instruments; no ticks at all — so both will be
+    # stale when the final _check_all_feed_health() runs at iterable exhaustion.
+    watcher = Watcher(
+        tick_iterable=[],          # empty iterable; feed-health check happens at the end
+        store_loader=lambda: [],
+        alerter=_Collector(),
+        config=cfg,
+        instruments=["EUR_USD", "GBP_USD"],
+    )
+
+    # Back-date both instruments' last-tick times so both appear stale
+    import time as _time
+    watcher._last_tick_time["EUR_USD"] = _time.monotonic() - 1.0  # 1 s ago > 0.01 s timeout
+    watcher._last_tick_time["GBP_USD"] = _time.monotonic() - 1.0
+
+    watcher.run()
+
+    fh_events = [e for e in events if e.deviation_type == "feed_health"]
+    instruments_fired = {e.instrument for e in fh_events}
+
+    assert "EUR_USD" in instruments_fired, (
+        "EUR_USD feed_health event was not emitted"
+    )
+    assert "GBP_USD" in instruments_fired, (
+        "GBP_USD feed_health event was suppressed — per-instrument debounce broken"
+    )
+    assert len(fh_events) == 2, (
+        f"Expected 2 feed_health events (one per instrument), got {len(fh_events)}: "
+        f"{[e.instrument for e in fh_events]}"
+    )
