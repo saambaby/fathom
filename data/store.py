@@ -254,6 +254,21 @@ class Store:
         )
     """
 
+    #: ``account_state`` — the single audit-pinned row the kill switch reads
+    #: (DRIFT-02).  Owned by the reconciliation migration.  ``id`` is a fixed
+    #: singleton PK (always ``1``) so there is exactly one row; reconciliation
+    #: re-reads then updates it in place.  ``start_of_day_equity`` is snapshotted
+    #: once per UTC day; ``day_pl`` mirrors the broker account-summary figure;
+    #: ``as_of`` is the UTC RFC 3339 time of the last reconcile (INV-03).
+    _CREATE_ACCOUNT_STATE_SQL: str = """
+        CREATE TABLE IF NOT EXISTS account_state (
+            id                    INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+            start_of_day_equity   REAL    NOT NULL,
+            day_pl                REAL    NOT NULL,
+            as_of                 TEXT    NOT NULL
+        )
+    """
+
     #: Insert one order row.  ``INSERT OR REPLACE`` keeps a retry of the same
     #: ``client_order_id`` idempotent at the store layer.
     _INSERT_ORDER_SQL: str = """
@@ -344,6 +359,7 @@ class Store:
         self._conn.execute(self._CREATE_ORDERS_SQL)
         self._conn.execute(self._CREATE_FILLS_SQL)
         self._conn.execute(self._CREATE_POSITIONS_SQL)
+        self._conn.execute(self._CREATE_ACCOUNT_STATE_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -998,6 +1014,228 @@ class Store:
             status=FillStatus(row[5]),
             filled_at=pd.to_datetime(row[6], utc=True).to_pydatetime(),
         )
+
+    # ------------------------------------------------------------------
+    # Reconciliation reads/writes (Phase 3 — P3-T-07; broker-is-truth INV-16)
+    # ------------------------------------------------------------------
+
+    def load_open_positions(self) -> "list[Position]":
+        """Return every ``positions`` row the store believes is still open.
+
+        "Open" means ``closed_at IS NULL``.  These are the store's side of the
+        reconciliation diff; the broker's open trades are the truth they are
+        compared against (INV-16).  Reconstructs the frozen INV-14 ``Position``
+        shape so the pure diff function works on models, not raw rows.
+
+        Returns:
+            A list of open ``Position`` instances (empty when the store has no
+            open positions).
+        """
+        from execution.models import Position  # local: avoid import cycle
+
+        cursor = self._conn.execute(
+            """
+            SELECT broker_trade_id, instrument, units, entry_price,
+                   stop_loss_price, take_profit_price, candidate_ref,
+                   opened_at, unrealized_pl, closed_at, realized_pl
+            FROM   positions
+            WHERE  closed_at IS NULL
+            ORDER  BY broker_trade_id ASC
+            """
+        )
+        result: list[Position] = []
+        for row in cursor.fetchall():
+            result.append(
+                Position(
+                    broker_trade_id=row[0],
+                    instrument=row[1],
+                    units=int(row[2]),
+                    entry_price=float(row[3]),
+                    stop_loss_price=float(row[4]),
+                    take_profit_price=float(row[5]),
+                    candidate_ref=row[6],
+                    opened_at=pd.to_datetime(row[7], utc=True).to_pydatetime(),
+                    unrealized_pl=float(row[8]),
+                    closed_at=None,
+                    realized_pl=None,
+                )
+            )
+        return result
+
+    def has_position(self, broker_trade_id: str) -> bool:
+        """True if a ``positions`` row exists for ``broker_trade_id`` (any state)."""
+        cursor = self._conn.execute(
+            "SELECT 1 FROM positions WHERE broker_trade_id = ? LIMIT 1",
+            (broker_trade_id,),
+        )
+        return cursor.fetchone() is not None
+
+    def load_orphaned_fills(self) -> "list[Fill]":
+        """Return filled/partial ``fills`` rows with no matching ``positions`` row.
+
+        An orphaned fill is the fingerprint of a crash between the fill-write and
+        the position-write in ``submit_order`` (flagged by the T-06 review): the
+        broker opened a trade and we recorded the ``Fill``, but the process died
+        before ``write_position`` ran.  Reconciliation detects these and repairs
+        them from broker truth (INV-16) — adopting the position if the broker
+        still reports the trade open, or recording it closed otherwise.
+
+        Rejected rows (``status="rejected"``, written by
+        :meth:`write_rejection`) are excluded — they legitimately have no
+        position and are not orphans.
+
+        Returns:
+            A list of reconstructed ``Fill`` instances (empty when there are no
+            orphans).
+        """
+        from execution.models import Fill, FillStatus  # local: avoid import cycle
+
+        cursor = self._conn.execute(
+            """
+            SELECT f.client_order_id, f.broker_trade_id, f.fill_price,
+                   f.units_filled, f.slippage, f.status, f.filled_at
+            FROM   fills f
+            LEFT   JOIN positions p ON p.broker_trade_id = f.broker_trade_id
+            WHERE  f.status IN ('filled', 'partial')
+              AND  p.broker_trade_id IS NULL
+            ORDER  BY f.client_order_id ASC
+            """
+        )
+        result: list[Fill] = []
+        for row in cursor.fetchall():
+            result.append(
+                Fill(
+                    client_order_id=row[0],
+                    broker_trade_id=row[1],
+                    fill_price=float(row[2]),
+                    units_filled=int(row[3]),
+                    slippage=float(row[4]),
+                    status=FillStatus(row[5]),
+                    filled_at=pd.to_datetime(row[6], utc=True).to_pydatetime(),
+                )
+            )
+        return result
+
+    def adopt_position(self, position: "Position") -> None:
+        """Insert/replace a broker-truth ``Position`` (INV-16 adoption).
+
+        Idempotent on ``broker_trade_id`` (``INSERT OR REPLACE``): adopting the
+        same broker trade twice is a no-op rather than a duplicate.  This is a
+        thin alias over :meth:`write_position` so the reconciliation intent
+        ("adopt a position the store missed") reads clearly at the call site.
+        """
+        self.write_position(position)
+
+    def refresh_position(
+        self,
+        broker_trade_id: str,
+        *,
+        unrealized_pl: float,
+        stop_loss_price: float,
+        take_profit_price: float,
+        units: int,
+    ) -> None:
+        """Refresh a matched open position from broker truth (INV-16).
+
+        Updates only the mutable fields the broker is authoritative over
+        (``unrealized_pl``, the live bracket prices, and ``units``) on the row
+        keyed by ``broker_trade_id``.  The immutable open-time fields
+        (``entry_price``, ``opened_at``, ``candidate_ref``) are left untouched.
+        A no-broker-change re-run rewrites identical values — idempotent.
+        """
+        self._conn.execute(
+            """
+            UPDATE positions
+            SET    unrealized_pl     = ?,
+                   stop_loss_price   = ?,
+                   take_profit_price = ?,
+                   units             = ?
+            WHERE  broker_trade_id   = ?
+              AND  closed_at IS NULL
+            """,
+            (
+                float(unrealized_pl),
+                float(stop_loss_price),
+                float(take_profit_price),
+                int(units),
+                broker_trade_id,
+            ),
+        )
+        self._conn.commit()
+
+    def close_position(
+        self,
+        broker_trade_id: str,
+        *,
+        realized_pl: float,
+        closed_at: datetime,
+    ) -> None:
+        """Mark a store-open position closed with its realized P&L (INV-16).
+
+        Called when the broker no longer reports a trade the store thought open
+        (a stop/target hit, or a manual broker-side close).  Writes
+        ``realized_pl`` and ``closed_at`` (UTC RFC 3339, INV-03).  Guarded by
+        ``closed_at IS NULL`` so re-running after the close is a no-op
+        (idempotent): a second pass finds nothing open to close.
+        """
+        self._conn.execute(
+            """
+            UPDATE positions
+            SET    realized_pl = ?,
+                   closed_at   = ?,
+                   unrealized_pl = 0.0
+            WHERE  broker_trade_id = ?
+              AND  closed_at IS NULL
+            """,
+            (float(realized_pl), _to_rfc3339(closed_at), broker_trade_id),
+        )
+        self._conn.commit()
+
+    def load_account_state(self) -> "dict[str, object] | None":
+        """Return the singleton ``account_state`` row, or ``None`` if unset.
+
+        Returns:
+            A dict with keys ``start_of_day_equity`` (float), ``day_pl`` (float)
+            and ``as_of`` (RFC 3339 TEXT), or ``None`` when reconciliation has
+            never written it.  The kill switch reads ``start_of_day_equity`` /
+            ``day_pl`` from here (INV-05).
+        """
+        cursor = self._conn.execute(
+            "SELECT start_of_day_equity, day_pl, as_of FROM account_state WHERE id = 1"
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "start_of_day_equity": float(row[0]),
+            "day_pl": float(row[1]),
+            "as_of": row[2],
+        }
+
+    def write_account_state(
+        self,
+        *,
+        start_of_day_equity: float,
+        day_pl: float,
+        as_of: datetime,
+    ) -> None:
+        """Upsert the singleton ``account_state`` row (DRIFT-02).
+
+        ``INSERT OR REPLACE`` on the fixed PK ``id = 1`` keeps exactly one row.
+        The UTC-day snapshot policy for ``start_of_day_equity`` lives in
+        ``execution/reconcile.py`` (the caller decides whether to re-snapshot or
+        carry the prior value forward); this method just persists the decided
+        values.  ``as_of`` is UTC RFC 3339 (INV-03).
+        """
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO account_state
+                (id, start_of_day_equity, day_pl, as_of)
+            VALUES (1, ?, ?, ?)
+            """,
+            (float(start_of_day_equity), float(day_pl), _to_rfc3339(as_of)),
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Parquet archive
