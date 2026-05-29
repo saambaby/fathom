@@ -14,12 +14,21 @@ AC coverage (P1A-T-06):
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import TypedDict
 
 import pandas as pd
 import pytest
 
 from strategies.base import Direction, Signal
 from strategies.momentum import ROCMomentum
+
+
+class _ROCMomentumParams(TypedDict):
+    instrument: str
+    timeframe: str
+    roc_period: int
+    roc_threshold: float
+    atr_filter_period: int
 
 
 # ---------------------------------------------------------------------------
@@ -94,13 +103,13 @@ def _flat_then_surge(
     return _make_candles(closes, highs=highs, lows=lows)
 
 
-_DEFAULT_PARAMS = dict(
-    instrument="EUR_USD",
-    timeframe="H1",
-    roc_period=10,
-    roc_threshold=0.005,
-    atr_filter_period=20,
-)
+_DEFAULT_PARAMS: _ROCMomentumParams = {
+    "instrument": "EUR_USD",
+    "timeframe": "H1",
+    "roc_period": 10,
+    "roc_threshold": 0.005,
+    "atr_filter_period": 20,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -122,23 +131,23 @@ class TestROCMomentumConstruction:
 
     def test_invalid_roc_period_zero(self) -> None:
         with pytest.raises(ValueError, match="roc_period"):
-            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_period": 0})
+            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_period": 0})  # type: ignore[arg-type]
 
     def test_invalid_roc_threshold_zero(self) -> None:
         with pytest.raises(ValueError, match="roc_threshold"):
-            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_threshold": 0.0})
+            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_threshold": 0.0})  # type: ignore[arg-type]
 
     def test_invalid_roc_threshold_negative(self) -> None:
         with pytest.raises(ValueError, match="roc_threshold"):
-            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_threshold": -0.01})
+            ROCMomentum(**{**_DEFAULT_PARAMS, "roc_threshold": -0.01})  # type: ignore[arg-type]
 
     def test_invalid_atr_filter_period_zero(self) -> None:
         with pytest.raises(ValueError, match="atr_filter_period"):
-            ROCMomentum(**{**_DEFAULT_PARAMS, "atr_filter_period": 0})
+            ROCMomentum(**{**_DEFAULT_PARAMS, "atr_filter_period": 0})  # type: ignore[arg-type]
 
     def test_invalid_rr_ratio_zero(self) -> None:
         with pytest.raises(ValueError, match="rr_ratio"):
-            ROCMomentum(**{**_DEFAULT_PARAMS, "rr_ratio": 0.0})
+            ROCMomentum(**{**_DEFAULT_PARAMS, "rr_ratio": 0.0})  # type: ignore[arg-type]
 
     def test_default_rr_ratio_is_1_5(self) -> None:
         strat = ROCMomentum(**_DEFAULT_PARAMS)
