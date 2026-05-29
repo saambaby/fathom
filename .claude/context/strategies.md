@@ -128,6 +128,63 @@
 **No new runtime dependencies added** (pandas + stdlib only).
 **pyproject.toml:** untouched (no new dep required).
 
+## P1A-T-05 — 2026-05-29 (feat/p1a-t-05)
+
+**What was done:**
+- Created `strategies/mean_reversion.py` with two strategies:
+  - `BollingerReversion(Strategy)` — params `period: int`, `num_std: float = 2.0`,
+    `rr_ratio: float = 1.5`, `instrument`, `timeframe`.
+    - Band centre: SMA (classic Bollinger — explicit choice over EMA per spec lean).
+    - Std: sample std `rolling(period).std(ddof=1)`.
+    - z-score = `(close − SMA) / std`. LONG when z ≤ −num_std, SHORT when z ≥ +num_std.
+    - No signal within bands (z between thresholds).
+    - `quality_score` = `min((|z| − num_std) / num_std, 1.0)` — depth of breach, clamped [0,1].
+  - `RSIReversion(Strategy)` — params `period: int = 14`, `oversold: float = 30`,
+    `overbought: float = 70`, `rr_ratio: float = 1.5`, `instrument`, `timeframe`.
+    - RSI via Wilder's smoothing: `ewm(com=period-1, adjust=False)` on gains/losses —
+      same family as `_indicators.atr()`. Division by zero guarded: avg_loss=0 → RSI=100.
+    - Cross-out trigger: LONG when prev_rsi ≤ oversold < curr_rsi (exit oversold);
+      SHORT when prev_rsi ≥ overbought > curr_rsi (exit overbought). Not level-based.
+    - `quality_score` = depth of prev_rsi in the zone / zone width, clamped [0,1].
+  - Both strategies: `stop_distance = _indicators.atr(df, 14)` (INV-11);
+    `target_distance = stop × rr_ratio` (fixed RR, no midline target per INV-11);
+    `generated_at` = bar close UTC-aware (INV-03); `df.copy()` guard; ≤1 signal/bar.
+- Created `tests/test_mean_reversion.py` — 49 tests covering:
+  - Construction guards (period, num_std, oversold/overbought ordering, rr_ratio).
+  - LONG on lower-band breach / oversold cross-out; SHORT on upper-band / overbought cross-out.
+  - No signal within bands / mid-range (post-EWM-warmup assertion for RSI).
+  - stop_distance > 0; target = stop × rr_ratio; quality_score ∈ [0,1].
+  - INV-03 UTC-aware timestamps = bar close, not datetime.now().
+  - At-most-one-signal-per-bar (unique timestamps).
+  - No mutation of input DataFrame.
+  - Insufficient data returns [].
+  - Instrument, timeframe, strategy_name propagation.
+  - Missing column raises.
+  - Both param sets per spec: BollingerReversion (20,2.0), (20,2.5);
+    RSIReversion (14,30,70), (14,20,80).
+  - INV-11 fixed RR: custom rr_ratio applied correctly (not midline).
+
+**Key patterns / gotchas:**
+- `pandas.rolling(period, min_periods=period).std(ddof=1)` — sample std for Bollinger.
+  `min_periods=period` ensures NaN until the window is full (no partial-window signals).
+- RSI bar-0 NaN fix: `rsi.where(avg_gain.notna(), other=NaN)` replaces the old
+  `fillna(100.0)`. `close.diff()` yields NaN at index 0; the old path set RSI[0]=100,
+  which caused RSI[1]=0 and a spurious overbought SHORT on bar 1 of every DataFrame.
+  With the fix, `float(NaN) >= overbought` is False — no spurious signal.
+- Cross-out is strictly one signal per zone exit: RSI must cross the threshold, not
+  merely be pinned on the wrong side.
+- Band-midline target explicitly NOT used (INV-11 fixed-RR mandate). Both strategies:
+  target_distance = stop_distance × rr_ratio only.
+
+**AC verification results (post-fix):**
+- `pytest tests/test_mean_reversion.py -v` → **49 passed**, exit 0
+- `mypy strategies/` → **"Success: no issues found in 5 source files"**, exit 0
+
+**No new runtime dependencies added** (pandas and stdlib only).
+**pyproject.toml:** untouched.
+**CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
 ## P1A-T-06 — 2026-05-29 (feat/p1a-t-06)
 
 **What was done:**
@@ -179,5 +236,3 @@
 - `mypy strategies/` → **"Success: no issues found in 5 source files"**, exit 0
 
 **No new runtime dependencies added** (pandas + stdlib only).
-**CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
-**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
