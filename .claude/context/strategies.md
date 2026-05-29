@@ -127,5 +127,57 @@
 
 **No new runtime dependencies added** (pandas + stdlib only).
 **pyproject.toml:** untouched (no new dep required).
+
+## P1A-T-06 — 2026-05-29 (feat/p1a-t-06)
+
+**What was done:**
+- Created `strategies/momentum.py`:
+  - `ROCMomentum(Strategy)` parameterised by `roc_period`, `roc_threshold`,
+    `atr_filter_period`, `atr_stop_period` (default 14), `rr_ratio` (default 1.5),
+    `volatility_filter` (default True).
+  - ROC = `close.pct_change(roc_period)`.  LONG when ROC >= +roc_threshold AND
+    volatility confirms; SHORT when ROC <= -roc_threshold AND volatility confirms.
+  - **Volatility-confirmation gate:** `current ATR > rolling_mean(ATR, atr_filter_period)`.
+    Strictly greater — ATR == mean (constant spread) does NOT confirm.  Gate is
+    controllable via `volatility_filter` flag for testing and tuning.
+  - `stop_distance` = ATR(14) via `strategies._indicators.atr()` (INV-11).
+  - `target_distance` = `stop_distance * rr_ratio`.
+  - `quality_score` = `min(1.0, (|ROC| - threshold) / threshold)` ∈ [0,1].
+  - `generated_at` = bar close timestamp (UTC-aware, INV-03).
+  - At most one signal per bar.
+- Created `tests/test_momentum.py` — 40 tests covering:
+  - Construction guards (roc_period, roc_threshold, atr_filter_period, rr_ratio).
+  - Empty/insufficient data edge cases, flat data, no-mutation guarantee.
+  - LONG on positive ROC above threshold; SHORT on negative ROC below threshold;
+    no signal below threshold; boundary behaviour.
+  - INV-11: stop_distance > 0, target = stop × rr_ratio, custom rr_ratio.
+  - INV-03: generated_at UTC-aware, matches bar close timestamp.
+  - quality_score in [0,1], increases with ROC magnitude, capped at 1.
+  - Volatility gate: ON suppresses signals on constant-spread data (ATR == mean);
+    OFF allows same signals; ON allows signals when spread widens (ATR > mean).
+  - Key AC: filter provably changes signal count at both canonical param sets:
+    (roc_period=10, roc_threshold=0.005) and (roc_period=20, roc_threshold=0.01).
+
+**Key patterns / gotchas:**
+- Volatility gate condition is `ATR > rolling_mean(ATR, atr_filter_period)` —
+  strict inequality. When spread is constant, ATR converges to the constant and
+  rolling mean matches exactly → gate is closed (ATR > mean is False).
+- Test data for gate-closed scenario: flat warm-up bars + gradual per-bar drift
+  with fixed spread.  ROC exceeds threshold; ATR stays flat and equals mean → gate closed.
+- Test data for gate-open scenario: same drift but H-L spread widens 4× at drift
+  bars → ATR rises while rolling mean lags → ATR > mean holds → gate opens.
+- `close.pct_change(roc_period)` uses float division; `flat_close * (1 + threshold)`
+  gives ROC fractionally below threshold due to floating-point. Use
+  `threshold * 1.01` for clear above-threshold test data.
+- The ATR computed for the volatility gate uses `atr_stop_period` (14) not a
+  separate period — the same ATR series used for the stop also drives the gate,
+  keeping the logic consistent.
+
+**AC verification results:**
+- `pytest tests/test_momentum.py -v` → **40 passed**, exit 0
+- `pytest -v` (full suite) → **222 passed, 81 warnings**, exit 0
+- `mypy strategies/` → **"Success: no issues found in 5 source files"**, exit 0
+
+**No new runtime dependencies added** (pandas + stdlib only).
 **CLAUDE.md trigger-table:** not edited (no new CLI command or stack change).
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
