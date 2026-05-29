@@ -12,7 +12,8 @@ Single Python repo (not a monorepo) — "areas" are package directories.
 | `data` | `data/oanda_client.py`, `data/candles.py`, `data/store.py`, `data/stream.py`, `data/calendar.py` | OANDA access, candle fetch/cache, storage, live stream, calendar | partial (PoC: client+candles+store) |
 | `strategies` | `strategies/base.py`, `strategies/_indicators.py`, `strategies/trend.py`, `strategies/mean_reversion.py`, `strategies/momentum.py`, `strategies/breakout.py` | strategy interface + shared indicators (`atr()`) + implementations | partial (PoC: base + trend/MACrossover) |
 | `backtest` | `backtest/engine.py`, `backtest/costs.py`, `backtest/walkforward.py`, `backtest/metrics.py` | event-driven engine, cost model, walk-forward, metrics | shipped (PoC); `costs.py` extended in Phase 1 |
-| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/charts.py`, `signals/correlation.py` | ranker, portfolio caps, chart PNG; `correlation.py` = shared Pearson primitive **extracted from `portfolio.py` in Phase 3** | shipped (Phase 2); `correlation.py` new in Phase 3 |
+| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/charts.py`, `signals/correlation.py`, `signals/scan.py` | ranker, portfolio caps, chart PNG; `correlation.py` shared Pearson (Phase 3); `scan.py` = order-free `run_scan` **extracted from `cli.cmd_scan` in Phase 4** | shipped (Phase 2); `correlation.py` P3, `scan.py` P4 |
+| `panel` | `panel/app.py`, `panel/data.py` | read-only Streamlit dashboard + view models (charts/equity/blotter/watchlist/deviation log); INV-01 transitive boundary | Phase 4 |
 | `hermes_integration` | `hermes_integration/news_risk.py`, `narration.py`, `pretrade_check.py`, `prompts/`, `jobs/` | Claude response models+validators (INV-02); `pretrade_check.py` = in-process pre-trade veto (Phase 3) | shipped (Phase 2); `pretrade_check.py` new in Phase 3 |
 | `risk` | `risk/sizing.py`, `risk/limits.py` | stop-derived sizing (INV-05), exposure/correlation caps + daily-loss kill switch | Phase 3 |
 | `execution` | `execution/models.py`, `execution/orders.py`, `execution/reconcile.py` | frozen Order/Fill/Position (INV-14), bracket submit + idempotency (INV-04/15), broker reconciliation (INV-16) | Phase 3 |
@@ -80,3 +81,16 @@ Edits to these go through the **coordinator branch** or are **serialized** — n
 | monitor pair | `monitoring/watcher.py` (+ `scripts/run_monitor.py`) vs `monitoring/alerts.py` | distinct files → parallel-safe; `watcher` defines `DeviationEvent`, `alerts` consumes it (sequence watcher→alerts logically). |
 
 **Drafting/dispatch order for Phase 3:** coordinator pre-steps (`signals/correlation.py` extract, `anthropic` dep) → `order-model-and-brackets` (lock) → `{position-sizing, risk-limits-kill-switch, pretrade-check}` ∥ → `{order-placement, reconciliation}` (serialize `store.py`/`oanda_client.py` edits) → `{deviation-monitor, monitor-alerts}` ∥ → `execution-cli` (join). `data/store.py` and `data/oanda_client.py` are shipped files touched by multiple Phase 3 tasks → **serialize, don't parallelize** those edits.
+
+## Phase 4 dispatch implications (pre-resolved collisions)
+
+| Collision | Files | Resolution |
+|---|---|---|
+| **Coordinator pre-step: extract order-free scan** | `cli.py` (shipped) → new `signals/scan.py` | DRIFT-01 / INV-01. `cli.py` imports `execution.orders`/`risk` at module level, so the panel can't import `cmd_scan`. Extract `run_scan(...)` (order-free) into `signals/scan.py`; `cmd_scan` becomes a thin argparse adapter. **Coordinator-serialized** (shipped `cli.py`), before `admin-panel`. |
+| **Coordinator pre-step: extract book-risk sum** | `risk/limits.py` (shipped) | DRIFT-02. Extract `book_risk_sum(open_positions)` + `book_risk_budget(equity, cfg)`; `check_limits` calls them back (behaviour-preserving; re-run P3 limits tests). **Coordinator-serialized**, before `panel-data-layer`. |
+| **Coordinator pre-step: charts dep** | `pyproject.toml` + `CLAUDE.md` | `streamlit` + a Lightweight Charts Streamlit component → coordinator edit before `admin-panel`. |
+| `equity-snapshots` owns the snapshot migration | `data/store.py` + `execution/reconcile.py` (shipped) | additive: `equity_snapshots` table + 2 accessors; reconcile appends after `write_account_state`. **Lands first** on `store.py`. |
+| `panel-data-layer` adds `load_fills` | `data/store.py` (shipped) | **Serialized after** `equity-snapshots` (same file — never parallel). Owns `load_fills`; consumes `load_equity_snapshots`. |
+| `admin-panel` | `panel/app.py` | the join; depends on `panel-data-layer` + `equity-snapshots` + `run_scan` + the charts dep. Transitive INV-01 boundary test. |
+
+**Safe-parallel set for Phase 4:** minimal parallelism — the chain is mostly serial (`store.py` is touched by `equity-snapshots` then `panel-data-layer`; the two extractions are coordinator pre-steps). `panel/data.py` and `panel/app.py` are new isolated files. **Drafting/dispatch order:** coordinator pre-steps `{run_scan extract, book_risk_sum extract, streamlit+lightweight-charts dep}` → `equity-snapshots` (store + reconcile) → `panel-data-layer` (load_fills + view models) → `admin-panel` (join). `data/store.py` edits serialized across `equity-snapshots` → `panel-data-layer`.

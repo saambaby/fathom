@@ -109,10 +109,18 @@ endpoint (INV-07, impl-Phase 5).
 
 ## The Read-Only Boundary (critical — INV-01)
 
-- **The panel never gains order authority.** `panel/` must not import `execution/orders.py` or `risk/`, must not call `fathom execute`, and exposes no execute/approve action. A reviewer + a test assert this.
-- **The one action is scan-refresh** — `fathom scan` is a non-order operation (refresh candles → rank → persist watchlist). It places no trades and touches no order endpoint.
+- **The panel never gains order authority.** `panel/` must not import `execution.orders`, `execution.models.build_bracket`, `risk` sizing/placement, **or `cli`** — directly or transitively (a **transitive-import boundary test** enforces it; promoted into INV-01's enforcement clause this phase).
+- **The one action is scan-refresh** — via an **order-free** `signals/scan.py::run_scan(...)`, **not** `cli.cmd_scan` (which imports the order path at module level). Scan refreshes candles → ranks → persists the watchlist; it places no trades and touches no order endpoint.
 - **Execution stays the operator CLI.** Approving and placing a trade remains `fathom execute` at the terminal — deliberately not a UI button.
 - **Read-only over the broker.** The panel reads the store; the only OANDA contact is via the scan-refresh's existing read path.
+
+## Coordinator pre-steps (before fan-out — surfaced by the cross-spec audit)
+
+Two behaviour-preserving extractions from shipped files (each coordinator-serialized,
+mirroring Phase 3's T-02 correlation extraction), plus the charts dep:
+- **`signals/scan.py::run_scan(...)`** — extract an order-free, kwargs-callable scan entrypoint from `cli.cmd_scan` so the panel can refresh without importing the order path (`cli.cmd_scan` becomes a thin argparse adapter). Touches shipped `cli.py`.
+- **`risk/limits.py::book_risk_sum(open_positions)` + `book_risk_budget(equity, cfg)`** — extract the inlined book-risk sum so the blotter's risk-in-use reuses it (matches the kill switch). `check_limits` calls them back. Touches shipped `risk/limits.py`.
+- **`streamlit` + a Lightweight Charts component** — coordinator dep edit (`pyproject.toml` + `CLAUDE.md`) before `admin-panel`.
 
 ---
 
