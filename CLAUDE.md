@@ -39,19 +39,26 @@ Python 3.11+ · oandapyV20>=0.6 · pydantic>=2 · pydantic-settings>=2 · python
 ## Common Commands
 
 ```bash
-# Phase 1A (current)
+# Phase 1A
 fathom backtest               # full-universe walk-forward → persist approved_set table (P1A-T-08)
 #   fathom backtest [--instruments ALL|EUR_USD,...] [--timeframes H1,H4,D]
 #                   [--strategies all|macrossover,donchian,bollinger,rsi,roc,session]
 #                   [--workers N] [--db-path PATH] [--history-years N] [--dry-run]
 
+# Phase 2 (current) — P2-T-07
+fathom scan                   # refresh candles, rank approved strategies → PortfolioLimiter,
+                              # persist watchlist table, print Candidate[] JSON
+#   fathom scan [--instruments ALL|EUR_USD,...] [--timeframes H1,H4,D]
+#               [--db-path PATH] [--history-years N] [--dry-run]
+
+fathom watchlist              # output latest persisted watchlist as Candidate[] JSON (INV-13)
+#   fathom watchlist [--db-path PATH]
+
+fathom chart <instrument>     # render candidate chart PNG, print path (Hermes tool)
+#   fathom chart EUR_USD [--timeframe H1] [--db-path PATH] [--out-dir DIR] [--history-years N]
+
 # PoC (superseded by `fathom backtest`)
 python scripts/poc_run.py     # end-to-end PoC: fetch candles → backtest → approved-set table
-
-# Phase 2+ (not yet built)
-fathom scan                   # refresh data, run approved strategies, rank candidates
-fathom watchlist              # output ranked watchlist (called by Hermes)
-fathom chart <pair>           # render candle chart with overlays
 
 pytest                        # run test suite
 ```

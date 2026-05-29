@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     # (store → walkforward → engine → store).  ``write_approved_set`` uses
     # only attribute access on the entries, so a TYPE_CHECKING import is safe.
     from backtest.walkforward import ApprovedSetEntry
+    from signals.ranker import Candidate
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +163,41 @@ class Store:
             (?, ?, ?, ?, ?, ?, ?)
     """
 
+    #: SQL to create the watchlist table — run-timestamped, mirrors the
+    #: ``approved_set`` pattern.  Each row stores one ``Candidate`` from a
+    #: ``fathom scan`` run, identified by ``run_timestamp``.  The INV-13
+    #: Candidate fields are stored as columns; the Candidate model is unchanged.
+    _CREATE_WATCHLIST_SQL: str = """
+        CREATE TABLE IF NOT EXISTS watchlist (
+            run_timestamp    TEXT    NOT NULL,
+            instrument       TEXT    NOT NULL,
+            timeframe        TEXT    NOT NULL,
+            strategy_name    TEXT    NOT NULL,
+            direction        TEXT    NOT NULL,
+            entry_ref        REAL    NOT NULL,
+            stop_distance    REAL    NOT NULL,
+            target_distance  REAL    NOT NULL,
+            oos_sharpe_mean  REAL    NOT NULL,
+            quality_score    REAL    NOT NULL,
+            rank             INTEGER NOT NULL,
+            spread_ok        INTEGER NOT NULL,
+            session_ok       INTEGER NOT NULL,
+            news_flag        INTEGER NOT NULL,
+            generated_at     TEXT    NOT NULL,
+            PRIMARY KEY (run_timestamp, instrument, timeframe, strategy_name)
+        )
+    """
+
+    #: SQL to insert one watchlist row (INSERT OR REPLACE for idempotent re-runs).
+    _INSERT_WATCHLIST_SQL: str = """
+        INSERT OR REPLACE INTO watchlist
+            (run_timestamp, instrument, timeframe, strategy_name, direction,
+             entry_ref, stop_distance, target_distance, oos_sharpe_mean,
+             quality_score, rank, spread_ok, session_ok, news_flag, generated_at)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -214,10 +250,12 @@ class Store:
     # ------------------------------------------------------------------
 
     def _create_tables(self) -> None:
-        """Create the ``candles`` and ``instruments`` tables if needed."""
+        """Create the ``candles``, ``instruments``, ``approved_set``, and
+        ``watchlist`` tables if they do not already exist."""
         self._conn.execute(self._CREATE_CANDLES_SQL)
         self._conn.execute(self._CREATE_INSTRUMENTS_SQL)
         self._conn.execute(self._CREATE_APPROVED_SET_SQL)
+        self._conn.execute(self._CREATE_WATCHLIST_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -579,6 +617,132 @@ class Store:
                     "oos_sharpe_mean": row[4],
                     "oos_trade_count_total": row[5],
                     "swap_modelled": bool(row[6]),
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # Watchlist table (Phase 2 — fathom scan persists here; fathom watchlist reads)
+    # ------------------------------------------------------------------
+
+    def write_watchlist(
+        self,
+        candidates: "list[Candidate]",
+        run_timestamp: datetime,
+    ) -> int:
+        """Persist a ranked ``Candidate`` list from ``fathom scan`` (single tx).
+
+        Mirrors the ``write_approved_set`` pattern: all rows for one scan run
+        are inserted in ONE ``executemany`` + ``commit``.  ``INSERT OR REPLACE``
+        keeps a re-run with the same ``run_timestamp`` idempotent.
+
+        The INV-13 ``Candidate`` model is NOT modified; the mapping from model
+        fields → table columns lives here at the persistence layer.
+
+        Args:
+            candidates: The ranked ``Candidate`` list from
+                ``PortfolioLimiter.apply(Ranker.rank(now))``.  May be empty
+                (INV-10: an empty scan is a valid result).
+            run_timestamp: UTC-aware datetime for this scan run, stamped on
+                every row (INV-03).
+
+        Returns:
+            The number of rows written (== ``len(candidates)``).
+        """
+        ts_str = _to_rfc3339(run_timestamp)
+        params = [
+            (
+                ts_str,
+                c.instrument,
+                c.timeframe,
+                c.strategy_name,
+                c.direction,
+                c.entry_ref,
+                c.stop_distance,
+                c.target_distance,
+                c.oos_sharpe_mean,
+                c.quality_score,
+                c.rank,
+                1 if c.spread_ok else 0,
+                1 if c.session_ok else 0,
+                1 if c.news_flag else 0,
+                c.generated_at,
+            )
+            for c in candidates
+        ]
+        self._conn.executemany(self._INSERT_WATCHLIST_SQL, params)
+        self._conn.commit()
+        return len(params)
+
+    def load_watchlist(
+        self,
+        run_timestamp: datetime | None = None,
+    ) -> "list[dict[str, object]]":
+        """Load watchlist rows as plain dicts (each maps to one ``Candidate``).
+
+        Args:
+            run_timestamp: If given, return only rows for that run; otherwise
+                return rows for the **latest** run (highest ``run_timestamp``
+                lexicographically — works because RFC 3339 strings sort
+                correctly).
+
+        Returns:
+            A list of dicts keyed by the INV-13 ``Candidate`` field names
+            (minus ``run_timestamp``, which is DB-internal).  Rows are
+            ordered by ``rank`` ascending.  Empty list when the table has no
+            matching rows.
+        """
+        if run_timestamp is not None:
+            ts_str = _to_rfc3339(run_timestamp)
+            cursor = self._conn.execute(
+                """
+                SELECT instrument, timeframe, strategy_name, direction,
+                       entry_ref, stop_distance, target_distance,
+                       oos_sharpe_mean, quality_score, rank,
+                       spread_ok, session_ok, news_flag, generated_at
+                FROM   watchlist
+                WHERE  run_timestamp = ?
+                ORDER  BY rank ASC
+                """,
+                (ts_str,),
+            )
+        else:
+            # Latest run: MAX(run_timestamp) as a scalar, then fetch its rows.
+            cursor = self._conn.execute(
+                """
+                SELECT instrument, timeframe, strategy_name, direction,
+                       entry_ref, stop_distance, target_distance,
+                       oos_sharpe_mean, quality_score, rank,
+                       spread_ok, session_ok, news_flag, generated_at
+                FROM   watchlist
+                WHERE  run_timestamp = (SELECT MAX(run_timestamp) FROM watchlist)
+                ORDER  BY rank ASC
+                """
+            )
+        result: list[dict[str, object]] = []
+        for row in cursor.fetchall():
+            (
+                instrument, timeframe, strategy_name, direction,
+                entry_ref, stop_distance, target_distance,
+                oos_sharpe_mean, quality_score, rank,
+                spread_ok_int, session_ok_int, news_flag_int, generated_at,
+            ) = row
+            result.append(
+                {
+                    "instrument": instrument,
+                    "timeframe": timeframe,
+                    "strategy_name": strategy_name,
+                    "direction": direction,
+                    "entry_ref": float(entry_ref),
+                    "stop_distance": float(stop_distance),
+                    "target_distance": float(target_distance),
+                    "oos_sharpe_mean": float(oos_sharpe_mean),
+                    "quality_score": float(quality_score),
+                    "rank": int(rank),
+                    "spread_ok": bool(spread_ok_int),
+                    "session_ok": bool(session_ok_int),
+                    "news_flag": bool(news_flag_int),
+                    "generated_at": generated_at,
                 }
             )
         return result
