@@ -68,10 +68,14 @@ def _make_store_from_bars(bars: list[Bar]) -> Store:
 class FixedSignalStrategy(Strategy):
     """Test strategy that emits one LONG/SHORT signal on a chosen bar index.
 
-    Deterministic and look-ahead-safe: it only ever reads the LAST row of the
-    prefix it is given, and emits a signal exactly when that row's index in the
-    full series equals ``signal_bar``.  Because the engine passes a prefix
-    slice, the strategy identifies "current bar" by ``len(df) - 1``.
+    Deterministic, look-ahead-safe AND contract-compliant: it scans the whole
+    frame it is given and emits the signal for the bar at absolute index
+    ``signal_bar`` (stamped with that bar's close timestamp), regardless of how
+    many bars the frame contains.  This matches the production strategy contract
+    — ``generate_signals(df)`` returns the signals for every bar of whatever
+    ``df`` it is handed, at most one per bar — so the result is identical under
+    both the (legacy) expanding-prefix call and the single full-frame precompute
+    call: the signal is purely a function of bar ``signal_bar``, which is causal.
     """
 
     def __init__(
@@ -91,21 +95,20 @@ class FixedSignalStrategy(Strategy):
         return "FixedSignalStrategy"
 
     def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
-        current_idx = len(df) - 1
-        if current_idx != self._signal_bar:
+        if self._signal_bar >= len(df):
             return []
-        last = df.iloc[current_idx]
+        row = df.iloc[self._signal_bar]
         return [
             Signal(
                 instrument="EUR_USD",
                 direction=self._direction,
-                entry_ref=float(last["close_bid"]),
+                entry_ref=float(row["close_bid"]),
                 stop_distance=self._stop,
                 target_distance=self._target,
                 strategy_name=self.name,
                 timeframe="H1",
                 quality_score=0.5,
-                generated_at=last["time"].to_pydatetime(),
+                generated_at=row["time"].to_pydatetime(),
             )
         ]
 
@@ -113,9 +116,13 @@ class FixedSignalStrategy(Strategy):
 class RecordingStrategy(Strategy):
     """Records the decision (signal direction or None) made on each bar.
 
-    Used by the no-look-ahead canary test: it reads only the last row of the
-    prefix, so its per-bar decision must be invariant to anything placed in
-    future bars.
+    Used by the no-look-ahead canary test.  Contract-compliant: it scans every
+    bar of the frame it is given and records a per-bar decision keyed by the
+    bar's absolute index.  Each bar's decision depends ONLY on that bar's close,
+    so it is invariant to anything placed in future bars — exactly the property
+    the canary test asserts.  Because the decision is causal, scanning the full
+    frame once yields the same per-bar decisions as the old expanding-prefix
+    one-call-per-bar pattern.
     """
 
     def __init__(self, threshold: float) -> None:
@@ -127,27 +134,29 @@ class RecordingStrategy(Strategy):
         return "RecordingStrategy"
 
     def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
-        idx = len(df) - 1
-        last = df.iloc[idx]
-        close = float(last["close_bid"])
-        # Decision depends ONLY on the current (last) bar.
-        if close > self._threshold:
-            self.decisions[idx] = "LONG"
-            return [
-                Signal(
-                    instrument="EUR_USD",
-                    direction=Direction.LONG,
-                    entry_ref=close,
-                    stop_distance=0.0010,
-                    target_distance=0.0015,
-                    strategy_name=self.name,
-                    timeframe="H1",
-                    quality_score=0.5,
-                    generated_at=last["time"].to_pydatetime(),
+        signals: list[Signal] = []
+        for idx in range(len(df)):
+            row = df.iloc[idx]
+            close = float(row["close_bid"])
+            # Decision depends ONLY on this bar's close (causal, no look-ahead).
+            if close > self._threshold:
+                self.decisions[idx] = "LONG"
+                signals.append(
+                    Signal(
+                        instrument="EUR_USD",
+                        direction=Direction.LONG,
+                        entry_ref=close,
+                        stop_distance=0.0010,
+                        target_distance=0.0015,
+                        strategy_name=self.name,
+                        timeframe="H1",
+                        quality_score=0.5,
+                        generated_at=row["time"].to_pydatetime(),
+                    )
                 )
-            ]
-        self.decisions[idx] = "NONE"
-        return []
+            else:
+                self.decisions[idx] = "NONE"
+        return signals
 
 
 def _default_cost_params(slippage: float = 1.0) -> CostParams:

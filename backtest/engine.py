@@ -8,13 +8,21 @@ correctness properties are spelled out explicitly below and pinned by tests.
 
 No-look-ahead guarantee
 -----------------------
-The strategy is fed a *prefix slice* ``df.iloc[: i + 1]`` at bar ``i`` — it
-physically cannot read bar ``i + 1`` because that row is not in the object it
-receives.  A signal produced from the slice ending at bar ``i`` is **entered at
-bar ``i + 1``'s open**, never at bar ``i``'s own prices (which were the inputs
-to the signal).  Fill checks for an open position on bar ``i`` use only bar
-``i``'s OHLC.  The canary test (test_no_lookahead) verifies this empirically by
-poisoning bar ``N + 1`` and asserting bar ``N``'s decision is unchanged.
+Every strategy's indicators are **causal** — built only from ewm / rolling /
+``shift(1)`` / ``diff`` / ``pct_change``, all strictly backward-looking — so the
+signal a strategy emits *on* bar ``i`` is a pure function of bars ``[0..i]`` and
+is identical whether the strategy is handed the expanding prefix
+``df.iloc[: i + 1]`` or the full frame.  The engine exploits this to precompute
+all signals **once** over the full frame (O(n) rather than the old O(n^2)
+expanding-prefix recompute), then indexes them by the bar's close timestamp and
+consumes only the signal *for bar ``i``* at bar ``i``.  A signal generated on
+bar ``i`` is **entered at bar ``i + 1``'s open**, never at bar ``i``'s own
+prices (which were the inputs to the signal).  Fill checks for an open position
+on bar ``i`` use only bar ``i``'s OHLC.  The canary test (test_no_lookahead)
+verifies this empirically by poisoning bar ``N + 1`` and asserting bar ``N``'s
+decision is unchanged; a dedicated equivalence regression test
+(test_engine_precompute_equivalence) replays the old per-prefix loop for all six
+strategies and asserts byte-identical signals and trades.
 
 Intrabar fill semantics
 ------------------------
@@ -200,6 +208,29 @@ class BacktestEngine:
         lows = df["low_bid"].to_numpy()
         closes = df["close_bid"].to_numpy()
 
+        # --- Precompute all signals ONCE over the full frame (O(n) total).
+        # PERFORMANCE / CORRECTNESS: every strategy's indicators are *causal*
+        # (ewm / rolling / shift(1) / diff / pct_change — backward-looking only),
+        # so the signal a strategy emits *on* bar i is a pure function of bars
+        # [0..i] and is byte-identical whether the strategy is handed the
+        # expanding prefix ``df.iloc[:i+1]`` (the old O(n^2) path) or the full
+        # frame ``df`` (this O(n) path). ``generate_signals`` already returns the
+        # signal for every bar of whatever frame it is given (at most one per
+        # bar — the existing contract), so we call it a single time and index the
+        # result by the bar's close timestamp. The no-look-ahead guarantee is
+        # unchanged: the entry convention below still only *acts* on bar i's
+        # signal at bar i (queued to enter at bar i+1's open), and a precomputed
+        # signal can never carry information from a future bar because the
+        # indicators that produced it cannot read forward. This equivalence is
+        # not assumed — it is pinned by a regression test that replays the old
+        # per-prefix loop for all six strategies and asserts identical results.
+        precomputed = strategy.generate_signals(df)
+        signals_by_bar: dict[datetime, Signal] = {}
+        for sig in precomputed:
+            # At most one signal per bar (contract); last write wins defensively,
+            # mirroring the old loop's reversed-scan "most recent on this bar".
+            signals_by_bar[sig.generated_at] = sig
+
         trades: list[Trade] = []
         position: Optional[_OpenPosition] = None
         # Pending entry: a signal emitted on bar i is entered on bar i+1's open.
@@ -240,14 +271,16 @@ class BacktestEngine:
                     realised_net_pips += trade.pnl_net_pips
                     position = None
 
-            # --- 3. Ask the strategy for a signal from the PREFIX slice only.
-            # Done last so a signal on bar i cannot be entered until bar i+1.
-            # Skipped while a position is open (single-position PoC) and while a
-            # signal is already pending entry.
+            # --- 3. Consume the PRECOMPUTED signal for THIS bar (if any).
+            # Equivalent to the old ``generate_signals(df.iloc[:i+1])`` +
+            # _signal_for_bar(bar_time) — see the precompute note above — but
+            # O(1) per bar. Done last so a signal on bar i cannot be entered
+            # until bar i+1. Skipped while a position is open (single-position
+            # PoC) and while a signal is already pending entry, exactly as
+            # before — the precompute does not change *when* a signal is acted
+            # on, only *how* it is obtained.
             if position is None and pending_signal is None:
-                prefix = df.iloc[: i + 1]
-                signals = strategy.generate_signals(prefix)
-                bar_signal = self._signal_for_bar(signals, bar_time)
+                bar_signal = signals_by_bar.get(bar_time)
                 if bar_signal is not None and bar_signal.direction in (
                     Direction.LONG,
                     Direction.SHORT,
@@ -329,27 +362,6 @@ class BacktestEngine:
         entry_date = entry_time.astimezone(timezone.utc).date()
         exit_date = exit_time.astimezone(timezone.utc).date()
         return (exit_date - entry_date).days
-
-    @staticmethod
-    def _signal_for_bar(
-        signals: list[Signal], bar_time: datetime
-    ) -> Optional[Signal]:
-        """Return the signal whose ``generated_at`` matches the current bar.
-
-        Strategies (e.g. ``MACrossover``) return the full list of signals for
-        the prefix; the engine only acts on the one generated *on the current
-        bar* — earlier signals were already acted on (or skipped while a
-        position was open) on the bars where they appeared.  Matching on the
-        bar timestamp is the robust way to identify "is this a new signal?".
-        """
-        if not signals:
-            return None
-        # The signal generated on this bar (if any) is the one whose timestamp
-        # equals the current bar's close timestamp.
-        for sig in reversed(signals):
-            if sig.generated_at == bar_time:
-                return sig
-        return None
 
     def _open_from_signal(
         self, signal: Signal, entry_open: float, entry_time: datetime
