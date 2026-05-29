@@ -1,8 +1,8 @@
 # Fathom — PoC
 
-**Status:** Not started
+**Status:** ✅ COMPLETE (2026-05-29) — pipeline shipped & validated; approved-set empty (honest negative for MA-crossover-alone). See [poc-results.md](poc-results.md).
 **Depends on:** nothing — this is the foundation
-**Unlocks:** [Phase 1](phase-1.md)
+**Unlocks:** [Phase 1](phase-1.md) — proceeding (decision: accept negative, seek edge across broader strategy set)
 **Spec layer:** [product-spec.md](../product-spec.md) · [architecture-overview.md](../architecture-overview.md) · [invariants.md](../invariants.md)
 
 ---
