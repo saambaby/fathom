@@ -171,3 +171,53 @@ reviewer pass). Expect rebase if T-03/T-05 land first (distinct files —
 no conflict risk on `signals/portfolio.py`).
 
 **CLAUDE.md trigger-table check:** NOT edited (no new dep, no new CLI command).
+
+## P2-T-03 — 2026-05-29 (feat/p2-t-03)
+
+**What was done:**
+- Created `signals/charts.py` — `render_candidate_chart(candidate: Candidate,
+  candles: pd.DataFrame, out_dir: str) -> str`.
+- `matplotlib.use("Agg")` forced at module import (before pyplot) — headless,
+  safe under cron/Hermes with no display server (AC-6).
+- OHLC candlesticks drawn with matplotlib primitives (`vlines` for body,
+  `plot` for wick) — no extra deps (no mplfinance).
+- Three `axhline` overlays: entry (blue dashed), stop (red dotted), target
+  (green dotted). Sign per `candidate.direction`:
+  - LONG: stop = `entry_ref - stop_distance`, target = `entry_ref + target_distance`
+  - SHORT: stop = `entry_ref + stop_distance`, target = `entry_ref - target_distance`
+- Signal marker (`^`/`v`) at the `generated_at` bar — exact match first, then
+  nearest within ±2 bar spacings; returns `None` (no marker) if outside window.
+- UTC x-axis: `mdates.DateFormatter` with `tz=timezone.utc` (INV-03).
+- Deterministic path: `{out_dir}/{instrument}_{timeframe}_{generated_at_safe}.png`
+  (colons stripped for filesystem safety). Re-render overwrites.
+- `plt.close(fig)` in `finally` block — no figure leak across a batch.
+- Reads flat `Candidate` fields only — no `.signal.*` nesting (INV-13).
+- `tests/test_charts.py` — 23 tests covering all 7 AC + extras (out_dir
+  creation, large-candle trimming, different paths for different timestamps).
+
+**Key patterns / gotchas:**
+- `matplotlib.use("Agg")` must precede `import matplotlib.pyplot` — order
+  enforced by module-level placement with `# noqa: E402` on the subsequent imports.
+- `mdates.DateFormatter` is untyped in matplotlib stubs → `# type: ignore[no-untyped-call]`.
+- Candlestick body drawn with `vlines` (not `Rectangle`) — avoids needing to
+  compute axis-unit bar width; works at any zoom level.
+- `_find_signal_bar_index`: nearest-bar fallback uses the first-bar-spacing
+  heuristic (works for uniform timeframes like H1/H4; may annotate a slightly
+  off bar for irregular data — cosmetic only).
+- `DEFAULT_CANDLE_WINDOW = 100` bars; `MIN_CANDLES = 1` (single-bar renders
+  cleanly, as tested in AC-7 boundary test).
+
+**AC verification results:**
+- `python -m pytest tests/test_charts.py -v` → **23 passed**, exit 0
+- `python -m pytest -q` (full suite) → **519 passed, 85 warnings**, exit 0
+  (warnings pre-existing, from backtest/metrics tests — not new)
+- `python -m mypy signals/` → **"Success: no issues found in 3 source files"**, exit 0
+
+**No new runtime dependencies** (`matplotlib>=3.7` already added by coordinator
+in the P2 coordinator branch; `pyproject.toml` NOT modified here).
+
+**Packaging note (inherited from T-01):** `signals/` + `signals*` are now in
+`pyproject.toml` include list (coordinator branch, commit e2a0803) — resolved.
+
+**Merge plan:** `gh pr merge 63 --squash --delete-branch` (lead action after
+reviewer pass).
