@@ -81,3 +81,65 @@
 **CLAUDE.md trigger-table check:** no new dep, no new CLI command — CLAUDE.md not edited.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P1A-T-01 — 2026-05-29 (feat/p1a-t-01)
+
+**What was done:**
+- Added `InstrumentMeta` pydantic v2 model to `data/oanda_client.py`:
+  - Fields: `name`, `pip_location (int)`, `min_trade_size`, `margin_rate`,
+    `display_precision`, `long_rate`, `short_rate`, `financing_days_of_week`.
+  - Canonical financing field names (`long_rate`/`short_rate`; swap-cost model
+    maps these to `CostParams.swap_long_rate/swap_short_rate` at engine boundary).
+  - `field_validator` coerces OANDA string rates to float at the boundary.
+  - `_instrument_from_raw()` helper maps OANDA camelCase wire format; parses
+    `financingDaysOfWeek` dicts to int weekday numbers (0=Mon, 6=Sun); ignores
+    unknown day strings silently.
+- Added `OandaClient.list_instruments() -> list[InstrumentMeta]`:
+  - Uses `oandapyV20.endpoints.accounts.AccountInstruments`.
+  - Mirrors existing `get_candles` error pattern: `V20Error` → `OandaAPIError`.
+  - Filters to `type == "CURRENCY"` only (INV-09: account-scoped).
+- Extended `data/store.py` with:
+  - `instruments` SQLite table (PK: `name`); created in `_create_tables`.
+  - `upsert_instruments(instruments, fetched_at=None)` — idempotent; stores
+    `financing_days_of_week` as JSON string; timestamps UTC RFC 3339 (INV-03).
+  - `load_instruments() -> list[InstrumentMeta]` — reconstructs from SQLite.
+  - `write_parquet(instrument, granularity, df)` — pyarrow; archive layout
+    `{archive_dir}/{instrument}/{granularity}/{YYYY-MM-DD}.parquet`. Granularity
+    encoded in path (not in file) to prevent collisions between H1/H4 on same date.
+  - `load_parquet(instrument, granularity, start, end)` — enumerates daily files
+    in date range, reads and concatenates, filters to [start, end], coerces dtypes.
+  - Backward-compat alias `_UPSERT_SQL = _UPSERT_CANDLE_SQL` for existing test helpers.
+  - `_archive_dir: Path | None` type annotation to satisfy mypy strict mode.
+- Updated `data/candles.py` `fetch_and_cache`:
+  - Added `write_parquet: bool = True` parameter.
+  - When `True` and new rows fetched: calls `store.write_parquet()` after SQLite upsert.
+  - When `False`: Parquet write skipped (for in-memory-store tests without archive_dir).
+  - Return contract (DataFrame shape) unchanged.
+- Added `pyarrow>=14` to `pyproject.toml` dependencies.
+- Updated `CLAUDE.md` Stack line to include `pyarrow>=14`.
+
+**Key patterns and gotchas (pyarrow/INV-03):**
+- pyarrow Parquet round-trip DOES preserve UTC timezone: stores tz in column
+  metadata; reads back as `datetime64[us, UTC]` which is coerced to
+  `datetime64[ns, UTC]` via `.astype()` in `load_parquet`. Confirmed by test.
+- Granularity encoded in file path, not as a column in the Parquet file.
+  H1 and H4 for same instrument+date → separate subdirectories, no collision.
+- `pq.write_table` and `pq.read_table` are untyped in pyarrow stubs; suppressed
+  with `# type: ignore[no-untyped-call]`.
+- `Store(":memory:")` with no `archive_dir` sets `_archive_dir = None`; any
+  `write_parquet`/`load_parquet` call raises `RuntimeError` immediately.
+  Tests that don't need Parquet pass `write_parquet=False` to `fetch_and_cache`.
+- `financing_days_of_week` stored as JSON string in SQLite; reconstructed via
+  `json.loads` on load. `daysCharged` multiplier not stored (cost model handles it).
+
+**AC verification results:**
+- `pytest tests/test_data_layer_expansion.py -v` → 26 passed, exit 0
+- `pytest -v` (full suite) → 171 passed, exit 0
+- `mypy data/` → "Success: no issues found in 4 source files", exit 0
+
+**New dependency:** `pyarrow>=14` added to `pyproject.toml`.
+**CLAUDE.md trigger-table:** pyproject.toml dep added → CLAUDE.md Stack updated (YES).
+
+**Merge plan:** `gh pr merge 31 --squash --delete-branch` (lead action after reviewer pass)
