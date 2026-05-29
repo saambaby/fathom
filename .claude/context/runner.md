@@ -200,3 +200,90 @@ The integration tests masked the bug because they pre-populated the DB with fixt
 **No new dependencies.** No changes to pyproject.toml.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## P2-T-07 — 2026-05-29 (feat/p2-t-07) — cli scan|watchlist|chart (join)
+
+**What was done:**
+- Extended `cli.py` with three Phase 2 subcommands (`scan`, `watchlist`, `chart`).
+  **This is the ONLY Phase 2 task that edits `cli.py`** (join point per task graph).
+- Extended `data/store.py` with a `watchlist` SQLite table + `write_watchlist` /
+  `load_watchlist` methods (mirrors the `approved_set` pattern — run-timestamped,
+  single-writer).  The `Candidate`↔table mapping lives entirely in the persistence
+  layer; the `Candidate` pydantic model is NOT modified (INV-13 frozen).
+
+**`fathom scan`** (`cmd_scan`):
+- `--dry-run` (cache-only, mirrors `backtest`): skips live fetch; runs Ranker →
+  PortfolioLimiter against whatever is in the store.
+- LIVE mode: calls `_fetch_candles_for_universe` (reused Phase 1 helper) then
+  instantiates `FairEconomyCalendar(db_path=db_path)`, `Ranker`, `PortfolioLimiter`.
+- Persists candidates to `watchlist` table via `store.write_watchlist(candidates,
+  run_timestamp=run_dt)` in one transaction.
+- Prints `Candidate[]` JSON to stdout (INV-13 wire shape).
+- Empty approved-set → empty watchlist, clear stdout message, **exit 0** (INV-10).
+
+**`fathom watchlist`** (`cmd_watchlist`):
+- Pure DB read via `store.load_watchlist()` (latest run — `MAX(run_timestamp)`).
+- Reconstructs `Candidate` objects from raw dicts (validates shape); serialises via
+  `model_dump()` → ensures JSON matches INV-13 exactly.
+- Empty table → prints `[]`, exits 0.
+
+**`fathom chart <instrument>`** (`cmd_chart`):
+- Reads latest watchlist entry for `<instrument>/<timeframe>`.
+- Loads candles from store; calls `render_candidate_chart`.
+- Prints PNG path to stdout.
+- No live HTTP — pure store read + matplotlib.
+
+**`watchlist` table schema:**
+```sql
+CREATE TABLE IF NOT EXISTS watchlist (
+    run_timestamp    TEXT    NOT NULL,
+    instrument       TEXT    NOT NULL,
+    timeframe        TEXT    NOT NULL,
+    strategy_name    TEXT    NOT NULL,
+    direction        TEXT    NOT NULL,
+    entry_ref        REAL    NOT NULL,
+    stop_distance    REAL    NOT NULL,
+    target_distance  REAL    NOT NULL,
+    oos_sharpe_mean  REAL    NOT NULL,
+    quality_score    REAL    NOT NULL,
+    rank             INTEGER NOT NULL,
+    spread_ok        INTEGER NOT NULL,
+    session_ok       INTEGER NOT NULL,
+    news_flag        INTEGER NOT NULL,
+    generated_at     TEXT    NOT NULL,
+    PRIMARY KEY (run_timestamp, instrument, timeframe, strategy_name)
+)
+```
+
+**Key patterns / gotchas:**
+- `FairEconomyCalendar.upcoming_events` returns `list[CalendarEvent]`; Ranker's
+  `_CalendarLike` Protocol declares `list[object]` — structurally compatible but
+  mypy rejects on return covariance. Suppressed with `# type: ignore[arg-type]`
+  on the `Ranker(store=..., calendar=FairEconomyCalendar(...))` line only.
+- Lazy imports (`from data.calendar import FairEconomyCalendar` etc inside
+  `cmd_scan`) mean tests must patch at the **source module** path
+  (`data.calendar.FairEconomyCalendar`, `signals.ranker.Ranker`, etc.),
+  NOT `cli.FairEconomyCalendar`. Documented in test file.
+- `write_watchlist` and `load_watchlist` added to `data/store.py`.
+  `Store._create_tables` now also calls `CREATE TABLE IF NOT EXISTS watchlist`.
+  Idempotent — existing DBs from prior phases get the new table on first open.
+
+**AC verification results (raw, captured exit codes):**
+- `python -m pytest tests/test_cli_commands.py -v` → **16 passed**, exit 0
+- `python -m pytest -q` (full suite) → **624 passed, 85 warnings**, exit 0
+  (85 warnings pre-existing; not introduced by T-07)
+- `python -m mypy cli.py data/store.py` → **"Success: no issues found in 2 source files"**, exit 0
+- `fathom scan --dry-run --db-path /tmp/x.db --instruments EUR_USD --timeframes H1`
+  → "Scan complete: approved-set is empty … Watchlist is empty (a valid result — INV-10)."
+  **exit 0**; INV-10 clear message; no token logged (INV-08); UTC timestamps (INV-03).
+
+**No new dependencies.** No changes to pyproject.toml.
+
+**CLAUDE.md trigger-table check:**
+- New CLI commands → CLAUDE.md Commands updated (YES): `fathom scan`, `fathom watchlist`,
+  `fathom chart` moved from "Phase 2+ (not yet built)" to "Phase 2 (current)" with full
+  arg list.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).

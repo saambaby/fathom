@@ -63,6 +63,7 @@ signals", not "all signals").
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -665,6 +666,93 @@ def _build_parser() -> argparse.ArgumentParser:
             "run walk-forward against whatever candles are already cached."
         ),
     )
+
+    # ---- scan ---------------------------------------------------------------
+    sc = sub.add_parser(
+        "scan",
+        help=(
+            "Refresh candles, rank approved strategies → PortfolioLimiter, "
+            "persist watchlist, print Candidate[] JSON."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    sc.add_argument(
+        "--instruments",
+        default="ALL",
+        help="ALL to discover from cache, or a comma-separated list.",
+    )
+    sc.add_argument(
+        "--timeframes",
+        default="H1,H4,D",
+        help="Comma-separated timeframes for the candle refresh.",
+    )
+    sc.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store (candles + approved_set + watchlist).",
+    )
+    sc.add_argument(
+        "--history-years",
+        type=int,
+        default=_DEFAULT_HISTORY_YEARS,
+        metavar="N",
+        help="Years of history to fetch/cache (passed to fetch_and_cache).",
+    )
+    sc.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Cache-only: skip live candle fetch (mirror backtest --dry-run). "
+            "Run ranker against whatever is already cached."
+        ),
+    )
+
+    # ---- watchlist ----------------------------------------------------------
+    wl = sub.add_parser(
+        "watchlist",
+        help="Print the latest persisted watchlist as Candidate[] JSON (INV-13).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    wl.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+
+    # ---- chart --------------------------------------------------------------
+    ch = sub.add_parser(
+        "chart",
+        help="Render a candidate's chart PNG and print its path.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ch.add_argument(
+        "instrument",
+        help="OANDA instrument identifier, e.g. EUR_USD.",
+    )
+    ch.add_argument(
+        "--timeframe",
+        default="H1",
+        help="Granularity of the candle data to plot.",
+    )
+    ch.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store (candles + watchlist).",
+    )
+    ch.add_argument(
+        "--out-dir",
+        default="charts",
+        help="Directory in which to save the PNG.",
+    )
+    ch.add_argument(
+        "--history-years",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Years of candle history to load for the chart window.",
+    )
+
     return parser
 
 
@@ -813,6 +901,268 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# scan command
+# ---------------------------------------------------------------------------
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    """Execute the ``fathom scan`` command.
+
+    Refreshes candles (unless ``--dry-run``), runs ``Ranker`` →
+    ``PortfolioLimiter``, persists the ranked ``Candidate`` list to the
+    ``watchlist`` SQLite table, and prints the list as ``Candidate[]`` JSON to
+    stdout.
+
+    Empty approved-set → empty watchlist, clear message, **exit 0** (INV-10).
+
+    INV-01: no order placement — candidates only.
+    INV-03: all timestamps UTC.
+    INV-08: token/account never logged.
+    """
+    run_dt = datetime.now(tz=timezone.utc)
+    _log.info("fathom scan started at %s", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    db_path: str = args.db_path
+    dry_run: bool = args.dry_run
+    timeframes = [s.strip() for s in args.timeframes.split(",") if s.strip()]
+
+    # ---- Optional candle refresh (LIVE mode only; mirrors backtest). --------
+    if not dry_run:
+        instruments_to_fetch: list[str]
+        if args.instruments.strip().upper() == "ALL":
+            # In LIVE mode for ALL, discover via the OANDA API and cache.
+            try:
+                instruments_to_fetch = _discover_universe(
+                    args.instruments, db_path, dry_run=False
+                )
+            except Exception as exc:  # noqa: BLE001
+                _log.error("Universe discovery failed: %s", exc)
+                return 1
+        else:
+            instruments_to_fetch = [
+                s.strip() for s in args.instruments.split(",") if s.strip()
+            ]
+        if instruments_to_fetch:
+            start_fetch, end_fetch = _build_date_range(args.history_years)
+            try:
+                _fetch_candles_for_universe(
+                    instruments=instruments_to_fetch,
+                    timeframes=timeframes,
+                    db_path=db_path,
+                    start=start_fetch,
+                    end=end_fetch,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _log.error("Candle fetch failed: %s", exc)
+                return 1
+
+    # ---- Build Ranker + PortfolioLimiter (lazy imports — no HTTP in tests). -
+    from data.calendar import FairEconomyCalendar
+    from signals.portfolio import PortfolioLimiter
+    from signals.ranker import Ranker
+
+    store = Store(db_path)
+    try:
+        try:
+            # FairEconomyCalendar.upcoming_events returns list[CalendarEvent] while
+            # Ranker's _CalendarLike Protocol declares list[object].  Structurally
+            # compatible (CalendarEvent IS an object) but mypy's strict return-type
+            # covariance check rejects it — suppress with ignore on this line only.
+            ranker = Ranker(store=store, calendar=FairEconomyCalendar(db_path=db_path))  # type: ignore[arg-type]
+            limiter = PortfolioLimiter(store=store)
+
+            _log.info(
+                "Running Ranker at %s …", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
+            ranked = ranker.rank(now=run_dt)
+            candidates = limiter.apply(ranked)
+
+            _log.info(
+                "Ranker produced %d candidate(s); %d after portfolio limits.",
+                len(ranked),
+                len(candidates),
+            )
+
+            # Persist to watchlist table (single transaction, mirrors approved_set).
+            written = store.write_watchlist(candidates, run_timestamp=run_dt)
+            _log.info(
+                "Persisted %d watchlist row(s) (run_timestamp=%s).",
+                written,
+                run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.error("Ranker/portfolio step failed: %s", exc)
+            return 1
+    finally:
+        store.close()
+
+    if not candidates:
+        print(
+            "Scan complete: approved-set is empty or no strategies produced "
+            "signals. Watchlist is empty (a valid result — INV-10)."
+        )
+        _log.info("fathom scan finished at %s. Watchlist is empty.", _utc_now_rfc3339())
+        return 0
+
+    # Print Candidate[] JSON to stdout (the Hermes-facing wire contract, INV-13).
+    output = json.dumps(
+        [c.model_dump() for c in candidates],
+        indent=2,
+        default=str,
+    )
+    print(output)
+
+    _log.info(
+        "fathom scan finished at %s. Candidates: %d.",
+        _utc_now_rfc3339(),
+        len(candidates),
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# watchlist command
+# ---------------------------------------------------------------------------
+
+
+def cmd_watchlist(args: argparse.Namespace) -> int:
+    """Execute the ``fathom watchlist`` command.
+
+    Reads the **latest** persisted watchlist from the ``watchlist`` SQLite
+    table and emits it as ``Candidate[]`` JSON (INV-13 wire shape).
+
+    No live HTTP — pure DB read.  Empty watchlist → prints empty JSON array
+    and exits 0 (INV-10).
+    """
+    _log.info("fathom watchlist started at %s", _utc_now_rfc3339())
+
+    db_path: str = args.db_path
+    store = Store(db_path)
+    try:
+        rows = store.load_watchlist()
+    finally:
+        store.close()
+
+    if not rows:
+        _log.info("No watchlist rows found; emitting empty JSON array.")
+        print("[]")
+        return 0
+
+    # Reconstruct Candidate objects from raw dicts for full validation, then
+    # serialise — this ensures the JSON output matches the INV-13 shape exactly.
+    from signals.ranker import Candidate
+
+    candidates = [Candidate(**row) for row in rows]
+    output = json.dumps(
+        [c.model_dump() for c in candidates],
+        indent=2,
+        default=str,
+    )
+    print(output)
+
+    _log.info(
+        "fathom watchlist finished at %s. Emitted %d candidate(s).",
+        _utc_now_rfc3339(),
+        len(candidates),
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# chart command
+# ---------------------------------------------------------------------------
+
+
+def cmd_chart(args: argparse.Namespace) -> int:
+    """Execute the ``fathom chart <instrument>`` command.
+
+    Reads the latest watchlist entry for ``<instrument>`` (optionally filtered
+    by ``--timeframe``), loads its candles, renders a PNG via
+    ``render_candidate_chart``, and prints the PNG path to stdout.
+
+    No live HTTP — reads from the SQLite store (candles + watchlist).
+    """
+    _log.info("fathom chart started at %s", _utc_now_rfc3339())
+
+    instrument: str = args.instrument
+    timeframe: str = args.timeframe
+    db_path: str = args.db_path
+    out_dir: str = args.out_dir
+
+    from signals.charts import render_candidate_chart
+    from signals.ranker import Candidate
+
+    store = Store(db_path)
+    try:
+        rows = store.load_watchlist()
+    finally:
+        store.close()
+
+    # Find the matching candidate from the latest watchlist run.
+    matching = [
+        r for r in rows
+        if r["instrument"] == instrument and r["timeframe"] == timeframe
+    ]
+    if not matching:
+        _log.error(
+            "No watchlist entry found for instrument=%r timeframe=%r "
+            "(run 'fathom scan' first, or check --timeframe).",
+            instrument,
+            timeframe,
+        )
+        print(
+            f"No watchlist entry for {instrument}/{timeframe}. "
+            "Run 'fathom scan' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Use the first (highest-ranked) matching candidate.
+    candidate = Candidate(**matching[0])
+
+    # Load candles for the chart window.
+    start_chart, end_chart = _build_date_range(args.history_years)
+    store2 = Store(db_path)
+    try:
+        candles = store2.load_candles(
+            instrument=instrument,
+            granularity=timeframe,
+            start=start_chart,
+            end=end_chart,
+        )
+    finally:
+        store2.close()
+
+    if candles.empty:
+        _log.error(
+            "No candles in store for %s/%s. "
+            "Run 'fathom scan' (without --dry-run) first.",
+            instrument,
+            timeframe,
+        )
+        print(
+            f"No candles in store for {instrument}/{timeframe}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    out_path = render_candidate_chart(
+        candidate=candidate,
+        candles=candles,
+        out_dir=out_dir,
+    )
+    # Print the PNG path to stdout — the caller/Hermes reads it.
+    print(out_path)
+
+    _log.info(
+        "fathom chart finished at %s. PNG: %s",
+        _utc_now_rfc3339(),
+        out_path,
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -823,6 +1173,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "backtest":
         return cmd_backtest(args)
+    if args.command == "scan":
+        return cmd_scan(args)
+    if args.command == "watchlist":
+        return cmd_watchlist(args)
+    if args.command == "chart":
+        return cmd_chart(args)
     parser.error(f"Unknown command: {args.command}")
     return 2  # unreachable — parser.error exits
 
