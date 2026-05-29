@@ -270,6 +270,69 @@ modified. `CLAUDE.md` trigger-table check: NOT edited (no new dep, no new CLI).
 **Merge plan:** `gh pr merge 91 --squash --delete-branch` (lead action after
 reviewer pass).
 
+## P4-T-01 — 2026-05-29 (feat/p4-T-01-runscan)
+
+**What was done:**
+- Created `signals/scan.py` — `run_scan(*, db_path, instruments, timeframes,
+  history_years, dry_run) -> list[Candidate]`. This is the **order-free** scan
+  entrypoint that the admin panel (and any always-on surface) must use instead
+  of `cli.cmd_scan`.
+  - Imports ONLY `signals.ranker`, `signals.portfolio`, `data.*`, `config.settings`
+    (lazily, live-path only). NEVER imports `execution.orders`, `execution.models`,
+    `risk.sizing`, `risk.limits`, or `cli`.
+  - `Candidate` is imported at module top-level from `signals.ranker` (order-free;
+    no circular import). The function return type is `list[Candidate]`.
+  - `_build_date_range`, `_discover_instruments`, `_fetch_candles_for_instruments`
+    are private helpers (duplicated from cli.py's scan-specific subset — cannot
+    import from cli.py because that module carries the execution imports at module
+    level). `_discover_instruments` is cache-only (reads SQLite, never OANDA API)
+    — the live API path is in `cli._discover_universe` only.
+  - `run_scan` propagates exceptions to the caller (unlike the CLI which returns
+    exit codes). `cli.cmd_scan` catches them and returns 1.
+- Refactored `cli.cmd_scan` to a **thin argparse adapter**: maps `args.*` →
+  `run_scan(**kwargs)`, then does the stdout JSON printing + exit-code
+  conversion. The scan logic (candle refresh → Ranker → PortfolioLimiter →
+  persist) now lives entirely in `signals/scan.py`.
+- Created `tests/test_scan.py` — 7 tests:
+  - `TestRunScan` (5): returns candidates + persists watchlist; empty approved-set
+    → []; multiple candidates in order; ranker exception propagates; INV-13 fields
+    present in return value.
+  - `TestTransitiveImportBoundary` (2):
+    - **Subprocess test** (load-bearing INV-01 AC): imports `signals.scan` in a
+      clean subprocess, walks `sys.modules`, asserts `execution.orders`,
+      `execution.models`, `risk.sizing`, `risk.limits`, `cli` are all absent.
+    - **In-process importability test**: confirms no top-level import errors.
+
+**Key patterns / gotchas:**
+- The subprocess boundary test is the critical one — an in-process patch is not
+  sufficient since other tests may have already loaded execution modules. The
+  subprocess starts with a clean `sys.modules`.
+- `_discover_instruments` is intentionally cache-only. The live OANDA API call for
+  universe discovery (when `instruments="ALL"` in non-dry-run mode) is still in
+  `cli._discover_universe` and is invoked via the `_fetch_candles_for_instruments`
+  path; for `run_scan`, live discovery uses the cached instruments table. This is
+  correct for the panel's use case (same instruments that were previously fetched).
+- Existing `test_cli_commands.py` scan tests still patch at canonical source paths
+  (`signals.ranker.Ranker`, `signals.portfolio.PortfolioLimiter`,
+  `data.calendar.FairEconomyCalendar`) — these patches work correctly because
+  `run_scan` imports those modules lazily with the same canonical paths.
+
+**AC verification results:**
+- `python -m pytest tests/test_scan.py -v` → **7 passed**, exit 0
+- `python -m pytest tests/test_cli_commands.py -v` → **17 passed** (unchanged), exit 0
+- `python -m pytest -q` (full suite) → **962 passed, 87 warnings**, exit 0
+- `python -m mypy .` (whole repo) → **0 errors, 81 source files**, exit 0
+- `fathom scan --dry-run --db-path data/fathom.db` → exits 0, prints `Candidate[]`
+  JSON with INV-13 shape (same output as before the refactor)
+
+**No new runtime dependencies** (`signals.ranker.Candidate` already in scope).
+`pyproject.toml` NOT modified. `CLAUDE.md` trigger-table check: NOT edited (no new
+dep, no new CLI command — `fathom scan` is unchanged).
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after
+reviewer pass). T-05 (admin-panel) depends on this — it must be on main before T-05
+dispatches.
+
 ## P3-T-04 — 2026-05-29 (feat/p3-T-04-limits)
 
 **What was done:**
