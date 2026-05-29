@@ -269,3 +269,61 @@ modified. `CLAUDE.md` trigger-table check: NOT edited (no new dep, no new CLI).
 
 **Merge plan:** `gh pr merge 91 --squash --delete-branch` (lead action after
 reviewer pass).
+
+## P3-T-04 — 2026-05-29 (feat/p3-T-04-limits)
+
+**What was done:**
+- Created `risk/limits.py` — the pure, deterministic **book-level admission gate +
+  daily-loss kill switch** (INV-05 backstop, safety-critical). Like `risk/sizing.py`
+  it can only reject, never green-light. Builds the *bucket-grouping* shape on the
+  shared `signals/correlation.py` primitive (DRIFT-09), distinct from portfolio's
+  per-currency cap.
+- `check_limits(order, *, open_positions, day_pl, equity, start_of_day_equity,
+  config, now, order_risk, returns=None) -> LimitDecision`. Four checks,
+  most-global-first (first breach wins, short-circuits the rest):
+  1. **Kill switch** — `day_pl <= -(daily_loss_cap × start_of_day_equity)` →
+     `kill_switch_active=True`, reject all until next 00:00 UTC (computed from
+     injected `now`, INV-03). `day_pl`/`start_of_day_equity` come from the
+     `account_state` row (DRIFT-02). Non-positive/non-finite SOD-equity is treated
+     as *tripped* (fail-safe — never green-light against an untrustworthy baseline).
+  2. **Max concurrent** — `len(open_positions) >= max_concurrent`.
+  3. **Book risk** — `current_book_risk + order_risk > max_book_risk × equity`.
+     `current_book_risk = Σ position_risk(p)` where
+     `position_risk = |units| × |entry_price − stop_loss_price|` (stop-distance, NOT
+     notional). `order_risk` is the injected `SizingResult.risk_amount` — limits does
+     NOT re-derive it (avoids drift from sizing's own maths).
+  4. **Correlation bucket** — connected-component grouping over
+     `|pearson_corr(ra, rb)| > correlation_threshold`; bucket size >
+     `max_per_correlation_group` rejects. `pearson_corr` returning `None`
+     (insufficient/empty data) creates NO edge (conservative — missing data never
+     forces a grouping, mirrors PortfolioLimiter).
+- `LimitsConfig` (pydantic v2) with APPROVED defaults (D-P3-A/B): `daily_loss_cap=0.01`,
+  `max_concurrent=5`, `max_book_risk=0.01`, `max_per_correlation_group=2`,
+  `correlation_threshold=0.7`. `LimitDecision(allowed, reason, kill_switch_active)`.
+  Read-only `kill_switch_status(...) -> KillSwitchStatus(active, day_pl, cap_amount,
+  reset_at)` — side-effect-free, shares no state with `check_limits`.
+- Exported the new names via `risk/__init__.py` (alongside `sizing`).
+
+**Key patterns / gotchas:**
+- **Purity by injection.** Limits is pure: no store/network/clock. The correlation
+  source is injected as `returns: Mapping[str, pd.Series]` (the shape
+  `signals.correlation.mid_returns` produces) — the CLI/orchestrator loads candles
+  and passes the return map in. This is the bridge between the store-bound
+  `PortfolioLimiter` and the pure book gate. `order_risk` is likewise injected.
+- **Bucketing uses the absolute |ρ|** — a strongly *anti*-correlated pair shares
+  exposure too (a hedge is still one concentrated bet for this cap).
+- Touched ONLY `risk/limits.py`, `risk/__init__.py`, `tests/test_limits.py`. Did NOT
+  edit `sizing.py`, `execution/`, `signals/`, `data/`, `cli.py`.
+
+**AC verification results:**
+- `./.venv/bin/python -m pytest tests/test_limits.py -q` → **27 passed**, exit 0
+- `./.venv/bin/python -m pytest -q` (full suite) → **799 passed, 87 warnings**, exit 0
+  (was 772 before + the new 27)
+- `./.venv/bin/python -m mypy .` (whole repo) → **0 errors, 70 source files**, exit 0
+
+**No new runtime dependencies** (pandas + pydantic + stdlib only). `pyproject.toml`
+NOT modified. `CLAUDE.md` trigger-table check: NOT edited (no new dep, no new CLI,
+no new doc/invariant).
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after
+reviewer pass).
