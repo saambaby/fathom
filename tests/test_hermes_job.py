@@ -211,11 +211,11 @@ class TestForbiddenTools:
             job_text,
             re.IGNORECASE | re.DOTALL,
         )
-        if m:
-            section = m.group(0)
-            assert "execute" not in section.lower(), (
-                "INV-01 violation: 'execute' listed in allowed-tools section"
-            )
+        assert m is not None, "allowed-tools section not found in daily.md"
+        section = m.group(0)
+        assert "execute" not in section.lower(), (
+            "INV-01 violation: 'execute' listed in allowed-tools section"
+        )
 
     def test_no_order_in_allowed_tools_table(self, job_text: str) -> None:
         """The allowed-tools table must not list 'order' as an allowed entry."""
@@ -224,13 +224,13 @@ class TestForbiddenTools:
             job_text,
             re.IGNORECASE | re.DOTALL,
         )
-        if m:
-            section = m.group(0)
-            # 'order' in a tool-listing context — not in an exclusion note
-            # We look for 'fathom_order' or '| order' table cell patterns
-            assert not re.search(r"fathom_order|\|\s*order\b", section, re.IGNORECASE), (
-                "INV-01 violation: order tool listed in allowed-tools section"
-            )
+        assert m is not None, "allowed-tools section not found in daily.md"
+        section = m.group(0)
+        # 'order' in a tool-listing context — not in an exclusion note
+        # We look for 'fathom_order' or '| order' table cell patterns
+        assert not re.search(r"fathom_order|\|\s*order\b", section, re.IGNORECASE), (
+            "INV-01 violation: order tool listed in allowed-tools section"
+        )
 
     def test_hermes_never_places_orders_stated(self, job_text: str) -> None:
         """The doc must explicitly state Hermes never places orders (INV-01)."""
