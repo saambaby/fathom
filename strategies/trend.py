@@ -115,10 +115,6 @@ class MACrossover(Strategy):
             raise ValueError(f"DataFrame missing required columns: {missing}")
 
         n = len(df)
-        # Need at least slow_period rows to produce a meaningful EMA, plus 1
-        # for the previous-bar comparison.
-        if n < self._slow_period + 1:
-            return []
 
         close = df["close_bid"].astype(float)
 
@@ -132,6 +128,11 @@ class MACrossover(Strategy):
         signals: list[Signal] = []
 
         for i in range(1, n):
+            # Per-bar warm-up guard: no signal until slow EMA has had at least
+            # slow_period bars to converge — matches the old per-prefix path
+            # where a prefix of length < slow_period + 1 returned [] entirely.
+            if i < self._slow_period:
+                continue
             prev_fast = fast_ema.iloc[i - 1]
             prev_slow = slow_ema.iloc[i - 1]
             curr_fast = fast_ema.iloc[i]

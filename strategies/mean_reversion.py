@@ -295,9 +295,6 @@ class RSIReversion(Strategy):
             raise ValueError(f"DataFrame missing required columns: {missing}")
 
         n = len(df)
-        # Need at least period + 1 rows: period for the first RSI value, +1 for a crossover.
-        if n < self._period + 1:
-            return []
 
         close = df["close_bid"].astype(float)
         delta = close.diff()
@@ -325,6 +322,12 @@ class RSIReversion(Strategy):
         signals: list[Signal] = []
 
         for i in range(1, n):
+            # Per-bar warm-up guard: no signal until RSI has had at least
+            # period bars to converge — matches the old per-prefix path where
+            # a prefix of length < period + 1 returned [] entirely.
+            if i < self._period:
+                continue
+
             prev_rsi = float(rsi.iloc[i - 1])
             curr_rsi = float(rsi.iloc[i])
 
