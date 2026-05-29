@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     # only attribute access on the entries, so a TYPE_CHECKING import is safe.
     from backtest.walkforward import ApprovedSetEntry
     from signals.ranker import Candidate
+    from execution.models import Fill, Order, Position
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +199,90 @@ class Store:
             (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
+    # ------------------------------------------------------------------
+    # Execution tables (Phase 3 — order-placement owns this migration).
+    # Column lists are pinned by docs/features/order-placement.md
+    # (DRIFT-01/02).  All timestamps are UTC RFC 3339 TEXT (INV-03).
+    # ------------------------------------------------------------------
+
+    #: ``orders`` — the intent to open a bracketed position.  ``client_order_id``
+    #: is the PK; the deterministic INV-15 idempotency key.
+    _CREATE_ORDERS_SQL: str = """
+        CREATE TABLE IF NOT EXISTS orders (
+            client_order_id    TEXT    NOT NULL PRIMARY KEY,
+            instrument         TEXT    NOT NULL,
+            direction          TEXT    NOT NULL,
+            units              INTEGER NOT NULL,
+            stop_loss_price    REAL    NOT NULL,
+            take_profit_price  REAL    NOT NULL,
+            candidate_ref      TEXT    NOT NULL,
+            created_at         TEXT    NOT NULL,
+            status             TEXT    NOT NULL
+        )
+    """
+
+    #: ``fills`` — the broker's confirmation, keyed by ``client_order_id`` so the
+    #: pre-submit idempotency read is a single PK lookup (INV-15).  A rejected
+    #: order still records a row (status="rejected") with no position.
+    _CREATE_FILLS_SQL: str = """
+        CREATE TABLE IF NOT EXISTS fills (
+            client_order_id    TEXT    NOT NULL PRIMARY KEY,
+            broker_trade_id    TEXT    NOT NULL,
+            fill_price         REAL    NOT NULL,
+            units_filled       INTEGER NOT NULL,
+            slippage           REAL    NOT NULL,
+            status             TEXT    NOT NULL,
+            filled_at          TEXT    NOT NULL
+        )
+    """
+
+    #: ``positions`` — open/closed bracketed position.  PK ``broker_trade_id``.
+    #: ``realized_pl`` is nullable until close (written by reconciliation).
+    _CREATE_POSITIONS_SQL: str = """
+        CREATE TABLE IF NOT EXISTS positions (
+            broker_trade_id    TEXT    NOT NULL PRIMARY KEY,
+            instrument         TEXT    NOT NULL,
+            units              INTEGER NOT NULL,
+            entry_price        REAL    NOT NULL,
+            stop_loss_price    REAL    NOT NULL,
+            take_profit_price  REAL    NOT NULL,
+            candidate_ref      TEXT    NOT NULL,
+            opened_at          TEXT    NOT NULL,
+            unrealized_pl      REAL    NOT NULL,
+            closed_at          TEXT,
+            realized_pl        REAL
+        )
+    """
+
+    #: Insert one order row.  ``INSERT OR REPLACE`` keeps a retry of the same
+    #: ``client_order_id`` idempotent at the store layer.
+    _INSERT_ORDER_SQL: str = """
+        INSERT OR REPLACE INTO orders
+            (client_order_id, instrument, direction, units, stop_loss_price,
+             take_profit_price, candidate_ref, created_at, status)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    #: Insert one fill row (idempotent on ``client_order_id``).
+    _INSERT_FILL_SQL: str = """
+        INSERT OR REPLACE INTO fills
+            (client_order_id, broker_trade_id, fill_price, units_filled,
+             slippage, status, filled_at)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?)
+    """
+
+    #: Insert one position row (idempotent on ``broker_trade_id``).
+    _INSERT_POSITION_SQL: str = """
+        INSERT OR REPLACE INTO positions
+            (broker_trade_id, instrument, units, entry_price, stop_loss_price,
+             take_profit_price, candidate_ref, opened_at, unrealized_pl,
+             closed_at, realized_pl)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -256,6 +341,9 @@ class Store:
         self._conn.execute(self._CREATE_INSTRUMENTS_SQL)
         self._conn.execute(self._CREATE_APPROVED_SET_SQL)
         self._conn.execute(self._CREATE_WATCHLIST_SQL)
+        self._conn.execute(self._CREATE_ORDERS_SQL)
+        self._conn.execute(self._CREATE_FILLS_SQL)
+        self._conn.execute(self._CREATE_POSITIONS_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -746,6 +834,170 @@ class Store:
                 }
             )
         return result
+
+    # ------------------------------------------------------------------
+    # Execution tables (Phase 3 — order-placement persists; reconciliation
+    # later updates positions.realized_pl/closed_at).
+    # ------------------------------------------------------------------
+
+    def write_order(self, order: "Order", status: str) -> None:
+        """Persist one ``Order`` row with its current ``status``.
+
+        Idempotent on ``client_order_id`` (``INSERT OR REPLACE``): re-submitting
+        the same order updates the stored status rather than duplicating it
+        (INV-15).  Timestamps are written as UTC RFC 3339 TEXT (INV-03).
+
+        Args:
+            order: the ``Order`` being submitted/recorded.
+            status: lifecycle status, e.g. ``"submitted"`` | ``"filled"`` |
+                ``"partial"`` | ``"rejected"``.
+        """
+        self._conn.execute(
+            self._INSERT_ORDER_SQL,
+            (
+                order.client_order_id,
+                order.instrument,
+                str(order.direction.value),
+                int(order.units),
+                float(order.stop_loss_price),
+                float(order.take_profit_price),
+                order.candidate_ref,
+                _to_rfc3339(order.created_at),
+                status,
+            ),
+        )
+        self._conn.commit()
+
+    def write_fill(self, fill: "Fill") -> None:
+        """Persist one filled/partial ``Fill`` row (idempotent on
+        ``client_order_id``).
+
+        ``filled_at`` is stored as UTC RFC 3339 (INV-03).  A *rejected* order is
+        not a valid ``Fill`` (the INV-14 model forbids an empty broker-trade-id
+        and zero units) — use :meth:`write_rejection` for that so the broker's
+        verdict is recorded faithfully without synthesising a fill.
+        """
+        self._conn.execute(
+            self._INSERT_FILL_SQL,
+            (
+                fill.client_order_id,
+                fill.broker_trade_id,
+                float(fill.fill_price),
+                int(fill.units_filled),
+                float(fill.slippage),
+                str(fill.status.value),
+                _to_rfc3339(fill.filled_at),
+            ),
+        )
+        self._conn.commit()
+
+    def write_rejection(
+        self,
+        client_order_id: str,
+        rejected_at: datetime,
+        reason: str = "",
+    ) -> None:
+        """Record a broker rejection in ``fills`` without inventing a fill.
+
+        A rejection is terminal: no ``Position`` is created and the
+        ``Fill`` model cannot represent it (it requires a non-empty
+        broker-trade-id and non-zero units).  We persist a row with
+        ``status="rejected"``, ``broker_trade_id`` holding the (possibly empty)
+        reason for audit, ``fill_price`` 0 and ``units_filled`` 0 — these are
+        store-layer sentinels, never reconstructed into a ``Fill``
+        (:meth:`get_fill_by_client_order_id` returns ``None`` for them).
+        ``rejected_at`` is sourced from the caller's UTC clock (INV-03).
+        """
+        self._conn.execute(
+            self._INSERT_FILL_SQL,
+            (
+                client_order_id,
+                reason,
+                0.0,
+                0,
+                0.0,
+                "rejected",
+                _to_rfc3339(rejected_at),
+            ),
+        )
+        self._conn.commit()
+
+    def write_position(self, position: "Position") -> None:
+        """Persist one ``Position`` row (idempotent on ``broker_trade_id``).
+
+        ``realized_pl`` / ``closed_at`` are nullable and remain ``NULL`` while
+        the position is open — reconciliation writes them on close (INV-16).
+        Timestamps are UTC RFC 3339 (INV-03).
+        """
+        self._conn.execute(
+            self._INSERT_POSITION_SQL,
+            (
+                position.broker_trade_id,
+                position.instrument,
+                int(position.units),
+                float(position.entry_price),
+                float(position.stop_loss_price),
+                float(position.take_profit_price),
+                position.candidate_ref,
+                _to_rfc3339(position.opened_at),
+                float(position.unrealized_pl),
+                _to_rfc3339(position.closed_at)
+                if position.closed_at is not None
+                else None,
+                float(position.realized_pl)
+                if position.realized_pl is not None
+                else None,
+            ),
+        )
+        self._conn.commit()
+
+    def get_fill_by_client_order_id(self, client_order_id: str) -> "Fill | None":
+        """Return the persisted *filled/partial* ``Fill`` for a
+        ``client_order_id``, or ``None``.
+
+        This is the pre-submit idempotency read (INV-15): ``submit_order`` calls
+        it before any broker write; a hit short-circuits and returns the
+        existing fill, so a retry or an operator re-run never opens a second
+        position.  Reconstructs a validated ``Fill`` (the same frozen INV-14
+        shape that was written).
+
+        A *rejected* row (written by :meth:`write_rejection`) is **not** a valid
+        ``Fill`` and is treated as absent here — it returns ``None`` so the
+        idempotency check never resurrects a non-fill as a fill.  (A rejection
+        is terminal; whether a re-run re-attempts is the caller's policy, and
+        the duplicate ``clientExtensions.id`` guards the broker either way.)
+
+        Args:
+            client_order_id: the deterministic idempotency key.
+
+        Returns:
+            The reconstructed ``Fill`` if a filled/partial row exists, else
+            ``None``.
+        """
+        from execution.models import Fill, FillStatus  # local: avoid import cycle
+
+        cursor = self._conn.execute(
+            """
+            SELECT client_order_id, broker_trade_id, fill_price, units_filled,
+                   slippage, status, filled_at
+            FROM   fills
+            WHERE  client_order_id = ?
+              AND  status IN ('filled', 'partial')
+            """,
+            (client_order_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return Fill(
+            client_order_id=row[0],
+            broker_trade_id=row[1],
+            fill_price=float(row[2]),
+            units_filled=int(row[3]),
+            slippage=float(row[4]),
+            status=FillStatus(row[5]),
+            filled_at=pd.to_datetime(row[6], utc=True).to_pydatetime(),
+        )
 
     # ------------------------------------------------------------------
     # Parquet archive

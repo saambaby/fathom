@@ -18,6 +18,7 @@ from typing import Any, List
 import oandapyV20
 import oandapyV20.endpoints.accounts as oanda_accounts
 import oandapyV20.endpoints.instruments as oanda_instruments
+import oandapyV20.endpoints.orders as oanda_orders
 from oandapyV20.exceptions import V20Error
 from pydantic import AwareDatetime, BaseModel, field_validator
 
@@ -334,6 +335,74 @@ class OandaClient:
             for r in raw_instruments
             if r.get("type") == "CURRENCY"
         ]
+
+    # ------------------------------------------------------------------
+    # Order placement + account summary (Phase 3 — execution path)
+    # ------------------------------------------------------------------
+
+    def create_order(self, order_body: dict[str, Any]) -> dict[str, Any]:
+        """Submit one v20 order-create request and return the raw response.
+
+        This is the single broker-write entry point used by
+        ``execution/orders.py``.  The ``order_body`` is the fully-formed v20
+        ``OrderCreate`` payload — a market order **with** its
+        ``stopLossOnFill`` and ``takeProfitOnFill`` brackets and a
+        ``clientExtensions.id`` idempotency key, assembled by the caller in a
+        single dict so the bracket is atomic (INV-04): there is no separate
+        bracket call this client could skip.
+
+        INV-07/INV-09: the practice-vs-live endpoint is selected once, here,
+        from ``settings.env`` in ``__init__``; ``orders.py`` never reads ``env``
+        or the token.
+
+        Transient/network failures (``requests.RequestException``) are **not**
+        swallowed — they propagate so the caller's retry-with-backoff layer can
+        reuse the same ``clientExtensions.id`` (a retry of a landed order
+        de-dupes; INV-15).  HTTP 4xx/5xx surface as ``OandaAPIError`` exactly
+        like the candle path, carrying the broker status code so the caller can
+        distinguish a retryable 5xx from a terminal 4xx rejection.
+
+        Args:
+            order_body: the v20 ``OrderCreate`` request body
+                (``{"order": {...}}``), already carrying brackets + the
+                ``clientExtensions`` idempotency id.
+
+        Returns:
+            The raw OANDA response dict (``orderFillTransaction`` /
+            ``orderCancelTransaction`` / ``orderRejectTransaction`` etc.).
+
+        Raises:
+            OandaAPIError: on any HTTP 4xx/5xx from OANDA.
+            requests.RequestException: on a network-level transport failure
+                (propagated for the retry layer).
+        """
+        account_id = self._settings.oanda_account_id
+        try:
+            req = oanda_orders.OrderCreate(accountID=account_id, data=order_body)
+            return self._api.request(req)  # type: ignore[no-any-return]
+        except V20Error as exc:
+            raise OandaAPIError(exc.code, exc.msg) from exc
+
+    def account_summary(self) -> dict[str, Any]:
+        """Fetch the OANDA account summary (equity, balance, open P&L).
+
+        Calls ``GET /v3/accounts/{accountID}/summary``.  Used by the execution
+        path / kill switch (INV-16: the broker is the source of truth for
+        equity and realised day P&L).  Practice/live is selected once from
+        ``settings.env`` (INV-09).
+
+        Returns:
+            The raw OANDA account-summary response dict.
+
+        Raises:
+            OandaAPIError: on any HTTP 4xx/5xx from OANDA.
+        """
+        account_id = self._settings.oanda_account_id
+        try:
+            req = oanda_accounts.AccountSummary(accountID=account_id)
+            return self._api.request(req)  # type: ignore[no-any-return]
+        except V20Error as exc:
+            raise OandaAPIError(exc.code, exc.msg) from exc
 
     def get_candles(
         self,
