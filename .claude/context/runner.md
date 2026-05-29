@@ -76,3 +76,78 @@ EXIT: 0
 ("python scripts/poc_run.py — end-to-end PoC..."). Confirmed match; no update needed.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## P1A-T-08 — 2026-05-29 (feat/p1a-t-08) — full-universe runner, the capstone/join
+
+**What was done:**
+- New top-level `cli.py` with a `backtest` argparse subcommand (no new dep). Registered as a
+  console entry point `fathom = "cli:main"` in `pyproject.toml` (`[project.scripts]` +
+  `[tool.setuptools] py-modules = ["cli"]` so the single-file module installs). `fathom backtest`
+  is now a real command (CLAUDE.md Commands moved it from "Phase 2+ not built" to "Phase 1A current").
+- Args: `--instruments ALL|EUR_USD,...`, `--timeframes H1,H4,D`, `--strategies all|<keys>`,
+  `--workers N`, `--db-path`, `--history-years`, `--dry-run`.
+- **Universe discovery:** `ALL` → live `OandaClient.list_instruments()` (cached via
+  `Store.upsert_instruments`); `--dry-run ALL` → cached `Store.load_instruments()` only (NO HTTP,
+  Settings/OandaClient never constructed). Explicit `--instruments` list used verbatim.
+- **Six strategies** instantiated from a registry (`macrossover, donchian, bollinger, rsi, roc,
+  session`) with a documented default param grid (`_default_param_grid()`). ROCMomentum takes
+  `instrument`/`timeframe` positionally — handled in `_build_strategy`.
+- **Per-tf window config (D-P1-2 ruling):** `WINDOW_CONFIG` dict — H1=12/3, H4=18/6, D=24/6.
+  Each combo carries its tf's train/test months; passed straight into `WalkForwardValidator.run`.
+  Strict per-window gate unchanged (it lives in WalkForwardValidator).
+- **InstrumentMeta→CostParams mapping (the T-03-deferred boundary, owned here):**
+  `_instrument_costs(store)` maps `long_rate→swap_long_rate`, `short_rate→swap_short_rate`, and
+  `pip_value = 10**pip_location` (−4→0.0001, −2→0.01 JPY). `spread_pips=1.5`, `slippage_pips=0.5`,
+  `commission_pips=0.0` are documented defaults. Fallback for uncached instruments: JPY-aware
+  pip_value, financing 0.0 (→ swap_modelled=False, honest about absent data).
+- **INV-12 single-writer:** module-level worker `_run_combo(spec)` opens its OWN `Store`, runs the
+  validator, returns `Optional[ApprovedSetEntry]`, and NEVER writes. Parent fans out via
+  `ProcessPoolExecutor.map` (or serial when `--workers 1`), collects EVERY result first, sorts by
+  (strategy_name, instrument, granularity), then writes the full batch in ONE
+  `Store.write_approved_set(...)` (single `executemany` + one `commit`).
+- **approved_set table (INV-10 gate):** added to `data/store.py` — `_CREATE_APPROVED_SET_SQL`
+  mirrors `ApprovedSetEntry` (strategy_name, instrument, **granularity**, oos_sharpe_mean,
+  oos_trade_count_total, swap_modelled) + a DB-only `run_timestamp` (UTC RFC 3339). PK is
+  (run_timestamp, strategy_name, instrument, granularity). `ApprovedSetEntry` pydantic model is
+  UNCHANGED — run_timestamp is supplied at `write_approved_set` (DRIFT-03). New `write_approved_set`
+  (single-tx batch) + `load_approved_set` (Phase 2 reads this) methods.
+- **Engine docstring fix:** `backtest/engine.py:181` no longer says "including swap_modelled=False"
+  (financing flips it True since T-03).
+- **Empty approved set → exit 0** with a clear stdout message (INV-10: empty = no signals).
+
+**Key patterns / gotchas:**
+- **ProcessPoolExecutor + monkeypatch don't mix across the process boundary:** a child re-imports
+  `cli` fresh and won't see a parent-side `monkeypatch.setattr(cli, "_run_combo", ...)`. So the
+  INV-12 spy test runs `--workers 1` (serial path, in-process — patch applies); the determinism
+  `--workers 1 vs 4` test uses the REAL worker on real cached daily candles.
+- **store→walkforward circular import avoided:** `Store.write_approved_set` types its param via a
+  `TYPE_CHECKING`-only import of `ApprovedSetEntry` (store→walkforward→engine→store would cycle at
+  runtime); it uses only attribute access, so no runtime import is needed.
+- **Determinism** is guaranteed by: fixed sorted combo order + `map` preserving order + an explicit
+  parent-side sort before write. `--workers 1` and `--workers 4` persist identical tables.
+- Worker silences the expected `compute_metrics` low-trade-count UserWarning (a full-universe scan
+  runs many short windows; it's per-combo noise, not actionable — does NOT change approvals).
+- `--dry-run` over an empty store creates the (empty) approved_set table and exits 0.
+
+**AC verification results (raw, captured exit codes):**
+- `python -m pytest tests/integration/test_backtest_runner.py -q` → 11 passed, exit 0
+- `python -m pytest -q` (full suite) → 360 passed, 85 warnings (pre-existing low-trade UserWarnings),
+  exit 0
+- `python -m mypy cli.py data/store.py backtest/engine.py tests/integration/test_backtest_runner.py`
+  → "Success: no issues found in 4 source files", exit 0
+- `python -m mypy .` (whole tree) → 53 errors, ALL in `tests/test_momentum.py` +
+  `tests/test_breakout.py` — **pre-existing on origin/main** (confirmed by running mypy on a pristine
+  origin/main worktree: identical 53). Surfaced by env mypy 2.1.0 (merged context was on 1.8;
+  `pyproject.toml` pins only `mypy>=1.8`). NOT introduced by T-08; out of this task's scope.
+- `fathom backtest --dry-run --db-path /tmp/x.db --instruments EUR_USD,GBP_USD,USD_JPY --timeframes H1,H4,D`
+  → "...Approved set is empty (a valid result)." exit 0.
+
+**No new dependencies** (argparse, concurrent.futures stdlib). `pyproject.toml`: added
+`[project.scripts] fathom` + `py-modules=["cli"]` (packaging only, not a dependency).
+
+**CLAUDE.md:** Commands section updated — `fathom backtest` is now a current Phase 1A command with
+its full arg list; PoC runner marked superseded.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
