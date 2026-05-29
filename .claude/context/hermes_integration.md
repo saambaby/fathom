@@ -109,3 +109,71 @@ does not need updating for offline unit tests.
 
 **New dependency added to pyproject.toml?** NO (no new deps; pydantic already present).
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P2-T-06 — 2026-05-29 (feat/p2-t-06)
+
+**What was done:**
+- Created `hermes_integration/jobs/daily.md` — the plain-English Hermes daily job
+  definition with:
+  - Trigger: weekday, post-NY-close (22:00 UTC default), cron `0 22 * * 1-5`.
+  - 5 ordered step headings:
+    1. `fathom scan` (stdout JSON directly — NOT `fathom watchlist`)
+    2. Per-candidate Claude news-risk via `parse_news_risk` (INV-02):
+       skip→veto / reduce_size→flag / proceed→keep
+    3. `fathom chart <instrument>` per surviving candidate
+    4. Claude narration via `should_use_fallback` + `fallback_narration` (cosmetic, NOT INV-02)
+    5. Deliver ranked watchlist + charts to Discord via Hermes gateway
+  - Failure modes table: empty watchlist → "no candidates today" (INV-10); malformed Claude
+    → skip (INV-02); narration failure → fallback (candidate kept, not vetoed); chart failure
+    → skip chart, candidate kept; Discord failure → retry per Hermes gateway.
+  - Operator runbook: register job in Hermes, wire CLI as tool (scan/watchlist/chart ONLY —
+    INV-01), connect Discord gateway + Anthropic key via .env (never committed — INV-08),
+    dry-run verification steps, T-08 acceptance gate note.
+  - Allowed tools table: `fathom scan`, `fathom watchlist`, `fathom chart`. No execute/orders/risk.
+- Created `tests/test_hermes_job.py` — 42 lint assertions:
+  - File existence.
+  - Ordered step headings (anchored to `^### Step N` — avoids inline "go to Step 5" false matches).
+  - Each step contains its expected content (scan/news-risk/chart/narration/deliver).
+  - Allowed tools referenced (scan/watchlist/chart).
+  - Forbidden tools absent: `fathom execute`, `fathom orders`, `fathom risk` (INV-01).
+  - Hermes-never-places-orders statement present (INV-01).
+  - INV-01 boundary in operator runbook section.
+  - skip→veto / reduce_size→flag / proceed→keep mapping.
+  - Empty-watchlist path + "no candidates today" message + exit 0 (INV-10).
+  - Malformed-Claude → skip (INV-02); fallback_narration present; narration keeps candidate.
+  - Operator runbook: registration, CLI-as-tool, Discord, Anthropic key, .env-never-committed.
+  - No hardcoded secrets in file (INV-08).
+  - scan stdout primary / watchlist as persisted-read accessor.
+
+**INV-01 design decision:**
+- `daily.md` allowed-tools table and operator runbook both explicitly name `scan`, `watchlist`,
+  `chart` as the only permitted tools. The runbook states: "Never register any order, execute,
+  or risk tool". `fathom execute`, `fathom orders`, `fathom risk` do not appear in the file.
+- The lint test has 5 dedicated INV-01 assertions + an ordered-step content check.
+
+**AMBIGUOUS-03 resolution confirmed:**
+- Step 1 explicitly states: "Use `fathom scan`'s stdout directly — do NOT call `fathom watchlist`
+  as the primary source." (`fathom watchlist` is the persisted-read accessor for re-reads / Phase 5.)
+
+**AMBIGUOUS-01 resolution confirmed:**
+- Step 2 notes that `fathom scan` has already applied the deterministic news gate (high-impact →
+  dropped, medium → `news_flag: true`); the Claude news-risk step is the finer qualitative veto
+  on survivors. Two layers explicitly described as non-contradictory.
+
+**No anthropic SDK dep** (D-P2-3 enforced — Hermes calls Claude; Fathom owns parsers).
+**pyproject.toml untouched** — configuration artefact only; no new dependencies.
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command — CLAUDE.md not edited.
+
+**AC verification results:**
+- `pytest tests/test_hermes_job.py -v` → 42 passed, exit 0
+- `pytest -q` (full suite) → 667 passed, exit 0
+- `mypy tests/test_hermes_job.py` → "Success: no issues found in 1 source file", exit 0
+- `mypy hermes_integration/` → "Success: no issues found in 3 source files", exit 0
+- Pre-existing mypy errors (87, in test_news_risk/test_ranker/test_charts from prior tasks) — not introduced by T-06.
+
+**New dependency added to pyproject.toml?** NO.
+**New CLI command?** NO.
+**PR:** https://github.com/saambaby/fathom/pull/67
+**Merge plan:** `gh pr merge 67 --squash --delete-branch` (lead action after reviewer pass)
