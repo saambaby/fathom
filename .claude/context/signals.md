@@ -93,3 +93,81 @@ packaging note above).
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after
 reviewer pass). Hold the Phase 2 fan-out (T-02/03/05/07) until this PR's INV-13
 round-trip test is green on main.
+
+## P2-T-02 — 2026-05-29 (feat/p2-t-02)
+
+**What was done:**
+- Created `signals/portfolio.py`:
+  - **`PortfolioLimiterConfig`** — pydantic v2 model with `correlation_threshold`
+    (default 0.7), `max_per_currency` (default 2), `max_concurrent` (default 5),
+    `lookback_days` (default 90).
+  - **`PortfolioLimiter(store, config)`** with `apply(candidates: list[Candidate])
+    -> list[Candidate]`: greedy highest-score-first admission enforcing three caps.
+  - Admission sort key is identical to the ranker: `oos_sharpe_mean` desc →
+    `quality_score` desc → `(instrument, strategy_name)` asc (stable tie-break).
+    Re-sorts defensively regardless of input order.
+  - **Correlation gate:** for each candidate vs every already-admitted instrument,
+    loads daily ("D") candles via `store.load_candles`, computes mid returns
+    `(close_bid + close_ask)/2`, then Pearson ρ on the shared timestamp index.
+    If `|ρ| > correlation_threshold` → drop (lower-scored always loses, because
+    greedy processes highest first). If `< MIN_CORRELATION_OBS=20` observations
+    available → skip check (conservative: not dropped on insufficient data).
+  - **Per-currency cap:** splits instrument on `_` (e.g. `EUR_USD` → `EUR`,
+    `USD`); tracks a `currency_counts` dict; drops if any leg currency has already
+    reached `max_per_currency`.
+  - **Max-concurrent cap:** drops if `len(admitted) >= max_concurrent` (checked
+    before currency/correlation so the message is accurate).
+  - **Each drop logged** at INFO with `DROP <instrument> (...): <limit> reason`.
+  - **INV-01:** no `execution`/`risk` import — filtering only.
+  - **INV-03:** candles returned by `load_candles` are `datetime64[ns, UTC]`;
+    the method signature requires UTC-aware `start`/`end` (passed in from
+    `datetime.now(timezone.utc) - timedelta(days=lookback_days)`).
+  - `_StoreLike` Protocol (structural) — `data.store.Store` satisfies without
+    modification; anything with `load_candles` works.
+  - `_pearson_corr(a, b)` returns `float | None` — `None` = skip drop.
+  - `_split_currencies(instrument)` splits on `_`; defensive against malformed.
+- `tests/test_portfolio.py` — 30 tests, all mocked (NO live HTTP):
+  - `TestSplitCurrencies` (4): standard pair, triple, malformed, empty.
+  - `TestPearsonCorr` (5): empty, insufficient obs, high-positive, no overlap,
+    float in range.
+  - `TestEmptyInput` (1): empty→empty.
+  - `TestMaxConcurrent` (3): bounds output, max=1 keeps highest, exact=N admitted.
+  - `TestMaxPerCurrency` (3): enforced, 1 drops second, non-shared all pass.
+  - `TestCorrelation` (5): correlated pair → higher admitted; greedy re-sort
+    means submitted order doesn't matter; uncorrelated → both; missing candles →
+    both; below threshold → both.
+  - `TestGreedyOrder` (3): highest-score first deterministic; stable tie-break
+    same regardless of input order; output preserves score order.
+  - `TestCombinedLimits` (2): all three limits active simultaneously;
+    INV-01 module attribute check.
+  - `TestLogging` (2): DROP logged for currency cap; DROP logged for concurrent.
+  - `TestConfigDefaults` (2): defaults match constants; custom config round-trips.
+
+**Key patterns / gotchas:**
+- The correlation check is **skipped** (not failing-safe-drop) when candle data
+  is unavailable or insufficient. Conservative: you cannot prove correlation =
+  you cannot drop on correlation grounds.
+- `_pearson_corr` aligns on shared timestamps (`pd.concat(..., sort=True).dropna()`)
+  — time-index alignment is critical for cross-instrument returns.
+- Correlation is computed from **daily** candles (`granularity="D"`) regardless
+  of the candidate's trading timeframe. This gives a stable estimate; sub-daily
+  alignment would require the instruments' bars to be exactly co-timed.
+- The `_StoreLike` Protocol does NOT include `load_approved_set` — only
+  `load_candles` is needed, keeping the mock surface minimal.
+- `PortfolioLimiter` does not re-rank output (returns admitted candidates in
+  the greedy admission order, which is also score order).
+
+**AC verification results:**
+- `python -m pytest tests/test_portfolio.py -q` → **30 passed**, exit 0
+- `python -m pytest -q` (full suite) → **526 passed, 85 warnings**, exit 0
+  (warnings all pre-existing — not new)
+- `python -m mypy signals/` → **"Success: no issues found in 3 source files"**, exit 0
+
+**No new runtime dependencies** (pydantic + pandas + numpy already in pyproject;
+`numpy` used in test helpers only). `pyproject.toml` NOT modified.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after
+reviewer pass). Expect rebase if T-03/T-05 land first (distinct files —
+no conflict risk on `signals/portfolio.py`).
+
+**CLAUDE.md trigger-table check:** NOT edited (no new dep, no new CLI command).
