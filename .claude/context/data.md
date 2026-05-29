@@ -146,6 +146,74 @@
 
 ---
 
+## 1B-T-01 — 2026-05-29 (feat/p1b-t-01)
+
+**What was done:**
+- Created `data/stream.py` with:
+  - `OandaStreamError(status_code, message)` — typed exception for stream failures,
+    subclass of `OandaAPIError` for consistent error handling.
+  - `PriceTick` pydantic v2 model: `instrument`, `time: AwareDatetime` (INV-03),
+    `bid`, `ask`, `status`, `gap_detected: bool`.
+  - `_parse_utc(iso_string)` — strips nanoseconds and trailing "Z", attaches
+    `timezone.utc` explicitly. Mirrors pattern from `oanda_client.py`.
+  - `_backoff_delay(attempt)` — capped exponential backoff with ±50% multiplicative
+    jitter. Base 1s, multiplier ×2, pre-jitter cap 30s (actual max ≈ 45s with jitter).
+  - `_make_tick(msg, gap_detected)` — converts raw PRICE dict to `PriceTick`; returns
+    `None` on malformed input.
+  - `PriceStream(settings, instruments, heartbeat_timeout=10.0, queue_maxsize=0)`:
+    - `start()` / `stop()` — launches/joins a background daemon thread.
+    - `get_tick(timeout)` — pulls from the internal `queue.Queue`; returns `None`
+      on sentinel (stream stopped); re-raises `OandaStreamError` on error.
+    - `__iter__` — iterator interface over ticks until stream stops.
+    - `_run()` — main loop: connects, reconnects with backoff, sets `gap_on_next`
+      after any disconnect. Never logs the token (INV-08).
+    - `_stream_once()` — single long-lived reader thread per connection iterates the
+      blocking oandapyV20 generator; run/liveness loop reads from message queue with
+      timeout for heartbeat detection. Reader is joined on exit — at most ONE reader
+      thread alive at any time, no per-poll thread spawning.
+- Created `tests/test_stream.py` with 32 tests (no live HTTP):
+  - `TestParseUtc` — nanosecond/microsecond/second precision, UTC-aware output.
+  - `TestBackoffDelay` — range check, cap check, median monotonicity, non-negative.
+  - `TestMakeTick` — basic tick, gap_detected, non-tradeable status, missing
+    bids/asks, invalid price (all return None), UTC-aware timestamp.
+  - `TestPriceStreamTickParsing` — single tick, multiple instruments.
+  - `TestPriceStreamHeartbeat` — heartbeats not surfaced, liveness timer reset.
+  - `TestPriceStreamReconnect` — gap_detected on reconnect, reconnect on timeout,
+    backoff called with correct attempt index.
+  - `TestPriceStreamShutdown` — thread joins, stop before start, sentinel drains,
+    iterator terminates, double-start raises RuntimeError.
+  - `TestPriceStreamNoThreadAccumulation` — simulates sustained heartbeat-only
+    operation; asserts fathom-stream-reader thread count ≤ 1 at all sample points.
+  - `TestPriceStreamTypedErrors` — 4xx → OandaStreamError, inheritance check,
+    error delivered via queue (uses real _SENTINEL; asserts second get_tick is None).
+  - `TestPriceStreamNoTokenInLogs` — caplog asserts token not in any log record.
+
+**Key oandapyV20 streaming notes:**
+- `PricingStream.STREAM = True` → `api.request()` returns a generator (not a dict).
+- Generator yields dicts with `type: "PRICE"` or `type: "HEARTBEAT"`.
+- `req.terminate(message)` stops the generator; library raises `StreamTerminated`.
+- `StreamTerminated` is a subclass of `Exception`, not `GeneratorExit`.
+- Generator is a blocking synchronous iterator; single long-lived reader thread
+  per connection avoids per-poll thread accumulation.
+- 4xx errors (401/403/404) are unrecoverable; 5xx are transient and retry.
+
+**Design decisions (from spec):**
+- Background thread + `queue.Queue` — spec lean; simplest fit for sync codebase.
+- Tick persistence deferred (spec: Phase 2+); stream exposes live iterator only.
+- `_ENV_MAP` mirrors `oanda_client.py`; single-source env→oandapyV20 translation (INV-09).
+
+**AC verification results (post-review fixes):**
+- `pytest tests/test_stream.py -v` → 32 passed, exit 0
+- `pytest -q` (full suite) → 397 passed, exit 0
+- `mypy data/` → "Success: no issues found in 5 source files", exit 0
+
+**No new dependencies added** (`oandapyV20` was already present; no `pyproject.toml` changes).
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command — CLAUDE.md not edited.
+
+**Merge plan:** `gh pr merge 47 --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
 ## 1B-T-02 — 2026-05-29 (feat/p1b-t-02)
 
 **What was done:**
