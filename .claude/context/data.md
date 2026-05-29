@@ -143,3 +143,53 @@
 **CLAUDE.md trigger-table:** pyproject.toml dep added → CLAUDE.md Stack updated (YES).
 
 **Merge plan:** `gh pr merge 31 --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## 1B-T-02 — 2026-05-29 (feat/p1b-t-02)
+
+**What was done:**
+- Created `data/calendar.py` with:
+  - `Impact(str, Enum)` — high / medium / low values.
+  - `CalendarEvent` (plain class with `__slots__`) — fields: `currency`, `event_name`,
+    `time` (UTC-aware, INV-03 enforced in `__init__`), `impact`, optional `actual/forecast/previous`.
+    Raises `ValueError` for naive datetimes.
+  - `EconomicCalendar` ABC — `refresh() -> int` and `upcoming_events(currencies, window) -> list[CalendarEvent]`.
+  - `FairEconomyCalendar(EconomicCalendar)` — fetches the free FairEconomy/ForexFactory weekly XML
+    (`ff_calendar_thisweek.xml` and optionally `ff_calendar_nextweek.xml`) via `httpx` with an explicit
+    10 s timeout (httpx default is None — never use the default). Parses with `xml.etree.ElementTree`.
+    Persists to a `calendar_events` SQLite table (its own connection; `CREATE TABLE IF NOT EXISTS`).
+    Upsert is `INSERT OR REPLACE` keyed on `(currency, event_name, time)`.
+- Created `tests/test_calendar.py` — 25 tests, all fixture-based (no live HTTP).
+  `httpx.Client.get` never called in tests; `_fetch` is patched via `MagicMock`.
+
+**INV-03 (the sharp edge) — feed TZ → UTC conversion:**
+- `FEED_TZ = "America/New_York"` is the single documented assumption. The FF feed publishes
+  times in US Eastern (EDT in summer, EST in winter — DST-aware via `zoneinfo.ZoneInfo`).
+- Each `<date>` + `<time>` pair is parsed as a naive datetime, given the feed TZ, then
+  converted to UTC via `.astimezone(timezone.utc)` before `CalendarEvent.time` is set.
+- `All Day` / `Tentative` / empty times fall back to midnight in the feed TZ (then → UTC).
+- Fixture test asserts the UTC instant: NFP `8:30am EDT on 2025-06-06` → `2025-06-06T12:30:00Z`.
+- BOJ `11:50pm EDT on June 5` → `2025-06-06T03:50:00Z` (crosses UTC midnight — verified).
+
+**Impact mapping (documented in module docstring):**
+- `High → Impact.high`, `Medium → Impact.medium`, `Low → Impact.low`, `Holiday → Impact.low`
+  (Holiday not skipped; consumers can filter). Unknown strings default to `Impact.low` defensively.
+
+**Patterns established:**
+- `_to_rfc3339()` imported from `data.store` (shared RFC 3339 formatter — no duplication).
+- `FairEconomyCalendar` carries its own SQLite connection (separate from `Store`) because
+  the calendar module is self-contained; callers may use a shared DB path for co-location.
+- `httpx.Client` used as a context manager with `timeout=HTTP_TIMEOUT_SECONDS` (10 s).
+  `resp.raise_for_status()` called explicitly; `httpx.HTTPStatusError` / `httpx.TimeoutException`
+  propagate to callers.
+
+**AC verification results:**
+- `pytest tests/test_calendar.py -v` → 25 passed, exit 0
+- `pytest -v` (full suite) → 390 passed, exit 0
+- `mypy data/` → "Success: no issues found in 5 source files", exit 0
+
+**New dependency:** `httpx>=0.27` added to `pyproject.toml`.
+**CLAUDE.md trigger-table:** pyproject.toml dep added → CLAUDE.md Stack updated (YES).
+
+**Merge plan:** `gh pr merge 46 --squash --delete-branch` (lead action after reviewer pass)
