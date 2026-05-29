@@ -28,10 +28,12 @@ Approval criteria
 An empty approved set is a valid, non-error result — the caller must handle it
 gracefully (INV-10: no strategy runs live without a passed validation).
 
-INV-06 / D-03 label propagation
+INV-06 swap label propagation
 ---------------------------------
-``ApprovedSetEntry.swap_modelled`` is always ``False`` for the PoC — sourced
-from the underlying ``BacktestResult.metadata`` of the most recent OOS window.
+``ApprovedSetEntry.swap_modelled`` is sourced unchanged from the underlying
+``BacktestResult.metadata`` of the most recent OOS window — ``True`` when
+financing rates were supplied (the normal Phase-1 path, P1A-T-03), ``False``
+only on a spread-only run.
 """
 
 from __future__ import annotations
@@ -83,8 +85,9 @@ class ApprovedSetEntry(BaseModel):
     oos_trade_count_total:
         Sum of OOS trade counts across all test windows.
     swap_modelled:
-        Propagated from the underlying backtest metadata (INV-06).
-        Always ``False`` in the PoC (D-03).
+        Propagated unchanged from the underlying backtest metadata (INV-06).
+        ``True`` when financing was modelled (the normal Phase-1 path,
+        P1A-T-03); ``False`` only on a spread-only run.
     """
 
     instrument: str
@@ -253,7 +256,7 @@ class WalkForwardValidator:
         total_trades = sum(m.trade_count for m in oos_metrics)
 
         # swap_modelled propagated from the last OOS window's backtest metadata
-        # (INV-06, D-03).  Always False in the PoC.
+        # (INV-06).  True when financing was modelled (P1A-T-03).
         swap_modelled = oos_metrics[-1].swap_modelled
 
         return ApprovedSetEntry(

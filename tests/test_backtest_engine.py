@@ -309,13 +309,17 @@ def test_apply_costs_invariants(
         spread_pips=spread,
         slippage_pips=slippage,
         pip_value=PIP,
+        swap_long_rate=0.0,
+        swap_short_rate=0.0,
+        holding_days=0,
     )
     assert isinstance(res, CostResult)
+    # No financing rate supplied → swap not modelled (backward-compat path).
     assert res.swap_modelled is False
     if spread > 0 or slippage > 0:
         assert res.total_cost_pips > 0.0
 
-    # Net PnL <= gross PnL (costs never help).
+    # Net PnL <= gross PnL (costs never help when there is no positive carry).
     if direction is Direction.LONG:
         gross = exit_price - entry
         net = res.net_exit - res.net_entry
@@ -325,18 +329,208 @@ def test_apply_costs_invariants(
     assert net <= gross + 1e-12
 
 
-def test_apply_costs_rejects_swap() -> None:
-    """D-03: any non-zero swap_pips is rejected loudly."""
-    with pytest.raises(ValueError, match="swap"):
-        apply_costs(1.10, 1.11, Direction.LONG, 2.0, 1.0, PIP, swap_pips=0.5)
+@settings(max_examples=120)
+@given(
+    spread=st.floats(min_value=0.1, max_value=5.0),
+    slippage=st.floats(min_value=0.0, max_value=3.0),
+    entry=st.floats(min_value=1.05, max_value=1.15),
+    move=st.floats(min_value=-0.005, max_value=0.005),
+    direction=st.sampled_from([Direction.LONG, Direction.SHORT]),
+    long_rate=st.floats(min_value=-0.5, max_value=0.5),
+    short_rate=st.floats(min_value=-0.5, max_value=0.5),
+    holding_days=st.integers(min_value=0, max_value=30),
+)
+def test_apply_costs_inv06_floor_with_financing(
+    spread: float,
+    slippage: float,
+    entry: float,
+    move: float,
+    direction: Direction,
+    long_rate: float,
+    short_rate: float,
+    holding_days: int,
+) -> None:
+    """INV-06 across the financing domain: the spread+slippage+commission floor
+    is strictly > 0 for any non-zero spread/slippage even when positive carry
+    (negative rate) makes the *net* cheaper. Financing never makes the spread
+    path cost-free."""
+    exit_price = entry + move
+    res = apply_costs(
+        entry_price=entry,
+        exit_price=exit_price,
+        direction=direction,
+        spread_pips=spread,
+        slippage_pips=slippage,
+        pip_value=PIP,
+        swap_long_rate=long_rate,
+        swap_short_rate=short_rate,
+        holding_days=holding_days,
+    )
+    # The strictly-positive cost floor is independent of the (possibly negative)
+    # financing term — INV-06's spread+slippage guarantee is never weakened.
+    floor = spread + slippage
+    assert floor > 0.0
+    rate = long_rate if direction is Direction.LONG else short_rate
+    expected_swap = rate * holding_days
+    assert res.total_cost_pips == pytest.approx(floor + expected_swap)
+    # swap_modelled flips True only when a financing rate was supplied.
+    assert res.swap_modelled is (long_rate != 0.0 or short_rate != 0.0)
 
 
-def test_cost_params_rejects_zero_spread_and_swap() -> None:
-    """CostParams enforces spread > 0 and swap == 0 (INV-06 + D-03)."""
+def test_apply_costs_financing_no_longer_raises() -> None:
+    """Both D-03 guard sites are gone: passing financing rates and a non-zero
+    holding period no longer raises (the inline guard and the validator are
+    removed)."""
+    res = apply_costs(
+        1.10,
+        1.11,
+        Direction.LONG,
+        2.0,
+        1.0,
+        PIP,
+        swap_long_rate=0.5,
+        swap_short_rate=-0.3,
+        holding_days=3,
+    )
+    # Long financing = 0.5 × 3 = 1.5 pips on top of spread(2) + slippage(1).
+    assert res.total_cost_pips == pytest.approx(2.0 + 1.0 + 1.5)
+    assert res.swap_modelled is True
+    # And CostParams construction with financing rates is accepted (the
+    # pydantic _swap_must_be_zero validator is gone).
+    CostParams(
+        spread_pips=2.0,
+        slippage_pips=1.0,
+        pip_value=PIP,
+        swap_long_rate=0.5,
+        swap_short_rate=-0.3,
+        commission_pips=0.2,
+    )
+
+
+def test_apply_costs_same_bar_zero_swap() -> None:
+    """holding_days == 0 (same-bar / intraday close) → zero financing, even
+    with non-zero rates supplied."""
+    for direction in (Direction.LONG, Direction.SHORT):
+        res = apply_costs(
+            entry_price=1.10,
+            exit_price=1.105,
+            direction=direction,
+            spread_pips=2.0,
+            slippage_pips=1.0,
+            pip_value=PIP,
+            swap_long_rate=0.9,
+            swap_short_rate=0.7,
+            holding_days=0,
+        )
+        # Floor only — no swap accrued.
+        assert res.total_cost_pips == pytest.approx(3.0)
+        # Rates were supplied, so the model *is* honestly labelled as modelled.
+        assert res.swap_modelled is True
+
+
+def test_apply_costs_financing_direction_aware() -> None:
+    """Financing uses long_rate for longs and short_rate for shorts; charge =
+    rate × holding_days; the engine net PnL is reduced by exactly that charge."""
+    long_res = apply_costs(
+        entry_price=1.10,
+        exit_price=1.10,
+        direction=Direction.LONG,
+        spread_pips=0.0001,  # negligible floor so we isolate the swap term
+        slippage_pips=0.0,
+        pip_value=PIP,
+        swap_long_rate=0.4,
+        swap_short_rate=9.9,  # must be ignored for a long
+        holding_days=5,
+    )
+    short_res = apply_costs(
+        entry_price=1.10,
+        exit_price=1.10,
+        direction=Direction.SHORT,
+        spread_pips=0.0001,
+        slippage_pips=0.0,
+        pip_value=PIP,
+        swap_long_rate=9.9,  # must be ignored for a short
+        swap_short_rate=0.6,
+        holding_days=5,
+    )
+    # Long uses long_rate (0.4 × 5 = 2.0); short uses short_rate (0.6 × 5 = 3.0).
+    assert long_res.total_cost_pips - 0.0001 == pytest.approx(2.0)
+    assert short_res.total_cost_pips - 0.0001 == pytest.approx(3.0)
+    # Net PnL impact: charge folded onto the exit leg, so net PnL drops by the
+    # full charge (in pips) versus a zero-rate baseline.
+    long_pnl = (long_res.net_exit - long_res.net_entry) / PIP
+    base_long = apply_costs(
+        1.10, 1.10, Direction.LONG, 0.0001, 0.0, PIP,
+        swap_long_rate=0.0, swap_short_rate=0.0, holding_days=5,
+    )
+    base_long_pnl = (base_long.net_exit - base_long.net_entry) / PIP
+    assert base_long_pnl - long_pnl == pytest.approx(2.0)
+
+
+def test_apply_costs_positive_carry_improves_net() -> None:
+    """A positive-carry side (negative rate) reduces net cost / improves net PnL
+    but the spread+slippage floor stays strictly positive (INV-06)."""
+    res = apply_costs(
+        entry_price=1.10,
+        exit_price=1.10,
+        direction=Direction.LONG,
+        spread_pips=2.0,
+        slippage_pips=1.0,
+        pip_value=PIP,
+        swap_long_rate=-0.5,  # positive carry
+        swap_short_rate=0.0,
+        holding_days=4,
+    )
+    # total cost = floor(3.0) + (-0.5 × 4 = -2.0) = 1.0 — reduced, still the
+    # spread path itself is not free (floor was 3.0 > 0).
+    assert res.total_cost_pips == pytest.approx(1.0)
+    assert (2.0 + 1.0) > 0.0  # the floor
+
+
+def test_apply_costs_commission_per_round_trip() -> None:
+    """Commission (when > 0) is charged once per round trip, additively."""
+    res = apply_costs(
+        entry_price=1.10,
+        exit_price=1.10,
+        direction=Direction.SHORT,
+        spread_pips=2.0,
+        slippage_pips=0.0,
+        pip_value=PIP,
+        swap_long_rate=0.0,
+        swap_short_rate=0.0,
+        holding_days=0,
+        commission_pips=0.7,
+    )
+    assert res.total_cost_pips == pytest.approx(2.0 + 0.7)
+
+
+def test_apply_costs_rejects_negative_holding_days() -> None:
+    """Negative holding_days is a bug, not a valid input."""
+    with pytest.raises(ValueError, match="holding_days"):
+        apply_costs(
+            1.10, 1.11, Direction.LONG, 2.0, 1.0, PIP,
+            swap_long_rate=0.5, swap_short_rate=0.0, holding_days=-1,
+        )
+
+
+def test_cost_params_rejects_zero_spread() -> None:
+    """CostParams still enforces spread > 0 (INV-06 floor). The D-03
+    swap-must-be-zero validator is gone — financing rates are now accepted."""
     with pytest.raises(ValueError):
         CostParams(spread_pips=0.0, slippage_pips=1.0, pip_value=PIP)
+    # Financing rates of any sign are accepted (no validator rejection).
+    params = CostParams(
+        spread_pips=2.0,
+        slippage_pips=1.0,
+        pip_value=PIP,
+        swap_long_rate=1.0,
+        swap_short_rate=-1.0,
+    )
+    assert params.swap_long_rate == 1.0
+    assert params.swap_short_rate == -1.0
+    # Commission must be non-negative.
     with pytest.raises(ValueError):
-        CostParams(spread_pips=2.0, slippage_pips=1.0, pip_value=PIP, swap_pips=1.0)
+        CostParams(spread_pips=2.0, pip_value=PIP, commission_pips=-0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +594,85 @@ def test_known_trade_exact_pnl() -> None:
     # Entry time is bar 1's timestamp (next-bar entry, no look-ahead).
     assert t.entry_time == bars[1]["time"]
     assert t.exit_time == bars[2]["time"]
+    # Backward-compat: no financing supplied → swap not modelled.
+    assert result.metadata["swap_modelled"] is False
+
+
+def _known_trade_bars() -> list[Bar]:
+    """The hand-crafted long-target bars from test_known_trade_exact_pnl,
+    reused as the regression baseline and the financing fixture."""
+    return [
+        {"time": EPOCH, "open": 1.09990, "high": 1.10010,
+         "low": 1.09980, "close": 1.10000},
+        {"time": EPOCH + timedelta(hours=1), "open": 1.10000,
+         "high": 1.10090, "low": 1.09990, "close": 1.10050},
+        {"time": EPOCH + timedelta(hours=2), "open": 1.10050,
+         "high": 1.10200, "low": 1.10040, "close": 1.10180},
+    ]
+
+
+def test_known_trade_regression_zero_financing_matches_poc() -> None:
+    """Regression: with swap_long_rate = swap_short_rate = 0 and commission = 0,
+    the engine reproduces the PoC spread+slippage numbers byte-for-byte (the
+    backward-compatibility AC). Same fixture as test_known_trade_exact_pnl."""
+    bars = _known_trade_bars()
+    store = _make_store_from_bars(bars)
+    strat = FixedSignalStrategy(
+        signal_bar=0, direction=Direction.LONG,
+        stop_distance=0.0010, target_distance=0.0015,
+    )
+    result = BacktestEngine(
+        store,
+        CostParams(
+            spread_pips=2.0, slippage_pips=1.0, pip_value=PIP,
+            swap_long_rate=0.0, swap_short_rate=0.0, commission_pips=0.0,
+        ),
+    ).run(strat, "EUR_USD", "H1", EPOCH, bars[-1]["time"])
+    t = result.trades[0]
+    # Identical to the PoC baseline.
+    assert round(t.pnl_net_pips, 5) == 12.00000
+    assert round(t.pnl_pips, 5) == 15.00000
+    assert round(t.cost_pips, 5) == 3.00000
+    assert result.metadata["swap_modelled"] is False
+
+
+def test_engine_holding_days_from_utc_dates_charges_swap() -> None:
+    """INV-03: the engine derives holding_days from entry/exit bar UTC dates and
+    charges rate × days. Same intra-day trade as the baseline but the exit bar
+    is on a later UTC date, so financing is charged and swap_modelled is True.
+
+    The trade is opened on bar 1 (Jan-1) and the target-breaching exit bar is
+    placed two calendar days later → holding_days == 2 → long swap = 0.5×2 = 1.0
+    pip on top of the 3.0-pip floor → net PnL drops from 12.0 to 11.0."""
+    bars: list[Bar] = [
+        {"time": EPOCH, "open": 1.09990, "high": 1.10010,
+         "low": 1.09980, "close": 1.10000},
+        # entry bar — Jan 1
+        {"time": EPOCH + timedelta(hours=1), "open": 1.10000,
+         "high": 1.10090, "low": 1.09990, "close": 1.10050},
+        # exit bar — Jan 3 (2 UTC date boundaries crossed from the entry bar)
+        {"time": EPOCH + timedelta(days=2, hours=1), "open": 1.10050,
+         "high": 1.10200, "low": 1.10040, "close": 1.10180},
+    ]
+    store = _make_store_from_bars(bars)
+    strat = FixedSignalStrategy(
+        signal_bar=0, direction=Direction.LONG,
+        stop_distance=0.0010, target_distance=0.0015,
+    )
+    result = BacktestEngine(
+        store,
+        CostParams(
+            spread_pips=2.0, slippage_pips=1.0, pip_value=PIP,
+            swap_long_rate=0.5, swap_short_rate=0.0,
+        ),
+    ).run(strat, "EUR_USD", "H1", EPOCH, bars[-1]["time"])
+    t = result.trades[0]
+    # entry bar Jan 1, exit bar Jan 3 → 2 financing days; long rate 0.5/day.
+    assert round(t.cost_pips, 5) == 4.00000  # 2 + 1 + (0.5 × 2)
+    assert round(t.pnl_net_pips, 5) == 11.00000  # 12.0 baseline − 1.0 swap
+    assert round(t.pnl_pips, 5) == 15.00000  # gross unchanged
+    assert t.pnl_pips >= t.pnl_net_pips  # INV-06 gross ≥ net
+    assert result.metadata["swap_modelled"] is True
 
 
 def test_known_short_trade_stop_wins_tie() -> None:

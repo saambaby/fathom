@@ -62,8 +62,9 @@ class Metrics(BaseModel):
     trade_count:
         Total number of completed trades in this result.
     swap_modelled:
-        Carried through from ``BacktestResult.metadata["swap_modelled"]``
-        (INV-06).  ``False`` in the PoC — swap costs are deferred (D-03).
+        Carried through unchanged from ``BacktestResult.metadata["swap_modelled"]``
+        (INV-06).  ``True`` when the run supplied financing rates (the normal
+        Phase-1 path, P1A-T-03); ``False`` only on a spread-only run.
     """
 
     sharpe_ratio: float

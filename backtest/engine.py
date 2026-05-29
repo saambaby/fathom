@@ -36,7 +36,7 @@ caller's frame.  All timestamps in the output are sourced from the bar data
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
@@ -83,8 +83,9 @@ class BacktestResult(BaseModel):
         Cumulative **net** PnL in pips, indexed by bar close time (UTC).  One
         point per bar; flat across bars with no realised PnL.
     metadata:
-        Run metadata including ``swap_modelled=False`` (D-03), instrument,
-        granularity, bar count, and the cost parameters used.
+        Run metadata including ``swap_modelled`` (``True`` when financing
+        rates were supplied — P1A-T-03), instrument, granularity, bar count,
+        and the cost parameters used (spread, slippage, financing, commission).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -132,9 +133,12 @@ class BacktestEngine:
         The candle store (T-03).  ``run`` loads candles via
         ``store.load_candles`` and operates on a defensive copy.
     cost_params:
-        Spread + slippage configuration.  Required, not optional — a backtest
-        without costs is invalid (INV-06).  ``CostParams`` enforces
-        ``spread_pips > 0``, so the engine can never run cost-free.
+        Spread + slippage + commission + financing configuration.  The engine
+        maps ``InstrumentMeta.long_rate``/``short_rate`` into
+        ``CostParams.swap_long_rate``/``swap_short_rate`` at construction (done
+        by the caller / runner).  Required, not optional — a backtest without
+        costs is invalid (INV-06).  ``CostParams`` enforces ``spread_pips > 0``,
+        so the engine can never run cost-free.
 
     Notes
     -----
@@ -223,9 +227,12 @@ class BacktestEngine:
                 exit_info = self._resolve_fill(position, bar_high, bar_low)
                 if exit_info is not None:
                     gross_exit_level, exit_reason = exit_info
+                    holding_days = self._holding_days(
+                        position.entry_time, bar_time
+                    )
                     trade = self._close_trade(
                         position, bar_time, gross_exit_level, exit_reason,
-                        pip_value,
+                        pip_value, holding_days,
                     )
                     trades.append(trade)
                     realised_net_pips += trade.pnl_net_pips
@@ -252,8 +259,10 @@ class BacktestEngine:
         if position is not None and n > 0:
             final_time = self._bar_time(times, n - 1)
             final_close = float(closes[n - 1])
+            holding_days = self._holding_days(position.entry_time, final_time)
             trade = self._close_trade(
-                position, final_time, final_close, "end_of_data", pip_value
+                position, final_time, final_close, "end_of_data", pip_value,
+                holding_days,
             )
             trades.append(trade)
             realised_net_pips += trade.pnl_net_pips
@@ -263,16 +272,27 @@ class BacktestEngine:
 
         equity_curve = self._build_equity_curve(times, equity_values)
 
+        # swap_modelled is True whenever financing data was supplied (either
+        # rate non-zero) — the honest INV-06 label. It is False only when the
+        # engine is run with both rates at 0.0 (the backward-compatible
+        # spread-only path), regardless of how many trades held overnight.
+        swap_modelled = (
+            self._cost_params.swap_long_rate != 0.0
+            or self._cost_params.swap_short_rate != 0.0
+        )
         metadata = {
             "instrument": instrument,
             "granularity": granularity,
             "bar_count": n,
             "trade_count": len(trades),
             "strategy_name": strategy.name,
-            "swap_modelled": False,  # D-03 — honest label on every result.
+            "swap_modelled": swap_modelled,
             "spread_pips": self._cost_params.spread_pips,
             "slippage_pips": self._cost_params.slippage_pips,
             "pip_value": pip_value,
+            "swap_long_rate": self._cost_params.swap_long_rate,
+            "swap_short_rate": self._cost_params.swap_short_rate,
+            "commission_pips": self._cost_params.commission_pips,
         }
 
         return BacktestResult(
@@ -290,6 +310,23 @@ class BacktestEngine:
         # pandas Timestamp → python datetime, preserving tz (UTC).
         result: datetime = ts.to_pydatetime()
         return result
+
+    @staticmethod
+    def _holding_days(entry_time: datetime, exit_time: datetime) -> int:
+        """Calendar overnight count between entry and exit bar UTC dates.
+
+        INV-03: both timestamps are UTC-aware datetimes sourced from bar data
+        (never wall-clock). The financing-day count is the number of UTC date
+        boundaries crossed — ``(exit_date - entry_date).days`` — so a position
+        opened and closed within the same UTC date (an intraday / same-bar
+        close) returns ``0`` and accrues no swap, while one held overnight
+        returns the number of overnight rollovers. Normalising to UTC dates (not
+        a wall-clock 24h delta) means an H1 trade from 23:00 to 01:00 the next
+        day correctly counts as one overnight hold.
+        """
+        entry_date = entry_time.astimezone(timezone.utc).date()
+        exit_date = exit_time.astimezone(timezone.utc).date()
+        return (exit_date - entry_date).days
 
     @staticmethod
     def _signal_for_bar(
@@ -381,8 +418,14 @@ class BacktestEngine:
         gross_exit_level: float,
         exit_reason: str,
         pip_value: float,
+        holding_days: int,
     ) -> Trade:
-        """Apply costs and build the completed ``Trade`` record."""
+        """Apply costs and build the completed ``Trade`` record.
+
+        ``holding_days`` is the calendar-day count between the entry and exit
+        bar UTC dates (see :meth:`_holding_days`); it drives the overnight
+        financing charge (``rate × holding_days`` on the direction's side).
+        """
         # Slippage applies only on stop/target (market) fills, NOT on an
         # end-of-data close at the bar's close price.
         slippage = (
@@ -398,7 +441,10 @@ class BacktestEngine:
             spread_pips=self._cost_params.spread_pips,
             slippage_pips=slippage,
             pip_value=pip_value,
-            swap_pips=0.0,  # D-03
+            swap_long_rate=self._cost_params.swap_long_rate,
+            swap_short_rate=self._cost_params.swap_short_rate,
+            holding_days=holding_days,
+            commission_pips=self._cost_params.commission_pips,
         )
 
         gross_pips = self._pnl_pips(
