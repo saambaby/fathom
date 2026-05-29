@@ -102,3 +102,23 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 **Reason:** Running unvalidated strategies on even a demo account produces noise, dilutes the signal quality of approved entries, and builds false confidence.
 
 **Enforcement:** `signals/ranker.py` loads the approved-set table at startup and filters all candidates against it. An empty approved set means no signals (not all signals).
+
+---
+
+## INV-11 · Every Strategy Signal Carries an ATR(14)-Derived Stop and an RR-Multiple Target
+
+**Rule:** Every `Signal` a strategy produces must set `stop_distance` to the 14-bar ATR at the signal bar (Wilder's smoothing — `ewm(com=period-1, adjust=False)`, the shipped `trend.py` formula, exposed once via `strategies/_indicators.py::atr()`), and `target_distance` to `stop_distance × rr_ratio` where `rr_ratio` is a documented fixed parameter (default 1.5). Both must be strictly positive (already enforced by the `Signal` validators). Alternative derivations (range-width stop, band-midline target, etc.) must be proposed as an amendment to this invariant — never implemented unilaterally in one strategy.
+
+**Reason:** Comparable stop distances are the prerequisite for comparable Sharpe ratios and position sizing across strategies. The Phase 2 ranker and the Phase 3 sizing layer treat all strategies symmetrically; a strategy with a structurally different stop/target derivation carries different effective leverage and cannot be ranked or sized against the others fairly. INV-04 requires brackets to exist; INV-11 fixes how they are sized so the approved-set is apples-to-apples.
+
+**Enforcement:** `Signal` validators enforce positivity. All strategies import the single `strategies/_indicators.py::atr()` — no per-file ATR copies. Code review enforces the RR-multiple target. A shared test fixture verifies each shipped `Strategy.generate_signals` produces ATR-consistent stops.
+
+---
+
+## INV-12 · Approved-Set Table Writes Are Single-Writer, Parent-Serialized
+
+**Rule:** The `approved_set` table must be written by exactly one process/thread at a time. In the multi-process backtest runner, worker processes return `ApprovedSetEntry` objects to the parent; the parent performs all inserts in a single transaction. No worker writes directly to the approved-set table.
+
+**Reason:** SQLite without explicit WAL + retry is not safe for concurrent writers. A partially-failed concurrent write produces an incomplete approved-set that INV-10 cannot distinguish from a legitimately small one — silently undermining the gate (some combinations approved but missing, while the runner exits 0).
+
+**Enforcement:** `fathom backtest` collects all `ProcessPoolExecutor` futures into a list before any DB write, then writes the full batch in one `BEGIN…COMMIT`. Reviewed at the runner task.

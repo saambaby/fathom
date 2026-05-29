@@ -17,7 +17,7 @@ At the end of Phase 1, the system knows which strategies have demonstrated edge,
 
 ## Done When
 
-- [ ] All four baseline strategies implemented: MA crossover, Donchian breakout, Bollinger/z-score mean-reversion, RSI mean-reversion, ROC momentum, session breakout
+- [ ] The full baseline strategy set implemented (six strategies across four families): MA crossover + Donchian breakout (trend), Bollinger/z-score + RSI (mean-reversion), ROC momentum, session/range breakout
 - [ ] Live HTTP streaming connection to OANDA (`data/stream.py`) running with reconnect + backoff + gap detection
 - [ ] Economic calendar and news headline pull (`data/calendar.py`) with currency tagging and impact level
 - [ ] Parquet storage for candle archive; SQLite for operational state
