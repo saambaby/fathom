@@ -38,16 +38,17 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | live-streaming | OANDA pricing stream, reconnect/backoff/gap | [live-streaming.md](live-streaming.md) | ready |
 | economic-calendar | calendar/news pull, currency+impact tags | [economic-calendar.md](economic-calendar.md) | draft — blocked on provider choice |
 
-## Phase 2 — watchlist → Discord (not yet specced)
+## Phase 2 — watchlist → Discord (specs ready; cross-spec audit passed 2026-05-29)
 
-| Feature | Summary | Status |
-|---|---|---|
-| signal-ranker | score, filter (spread/liquidity/news), dedupe, conflict policy, portfolio correlation | planned |
-| cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools) | planned |
-| chart-generation | candle chart + signal/entry/stop/target overlays for Discord | planned |
-| hermes-job-definitions | plain-English Hermes cron jobs (daily + intraday) | planned |
-| news-risk-assessment | Claude structured event-risk scoring (INV-02) | planned |
-| watchlist-narration | Claude one-line rationale per candidate | planned |
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| signal-ranker | gate (INV-10) → filter → news → conflict → rank (by oos_sharpe_mean); emits the pinned `Candidate` (INV-13) | [signal-ranker.md](signal-ranker.md) | ready |
+| portfolio-limits | correlation-aware exposure, per-currency + max-concurrent caps | [portfolio-limits.md](portfolio-limits.md) | ready |
+| chart-generation | candle chart + entry/stop/target overlays → PNG (matplotlib) | [chart-generation.md](chart-generation.md) | ready |
+| news-risk-assessment | Claude `{event_risk,reason,suggest_action}` model + validator (INV-02, malformed→skip) | [news-risk-assessment.md](news-risk-assessment.md) | ready |
+| watchlist-narration | Claude one-line rationale + deterministic fallback (cosmetic, NOT INV-02) | [watchlist-narration.md](watchlist-narration.md) | ready |
+| cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools; the Hermes boundary) | [cli-commands.md](cli-commands.md) | ready |
+| hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | ready |
 
 ## Later — execution, monitoring, panel (Phase 3+)
 
