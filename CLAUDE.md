@@ -8,21 +8,23 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 
 | Doc | What's in it |
 |---|---|
+| [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | **Start here.** Phase status (what's done / what's next) + the reproducible build method: kickoff prompt, half-cycle layers, runbook flow, orchestration pattern, copy-paste prompts |
 | [`docs/product-spec.md`](docs/product-spec.md) | Scope, confirmed decisions, build phases, honest caveats |
 | [`docs/architecture-overview.md`](docs/architecture-overview.md) | Container diagram, key boundaries, data flows, repo layout, stack |
-| [`docs/invariants.md`](docs/invariants.md) | 10 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, …) |
+| [`docs/invariants.md`](docs/invariants.md) | 13 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, approved-set gate, frozen `Candidate` contract, …) |
 | [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area with phase and status |
 | [`docs/forex-algo-trading-plan.md`](docs/forex-algo-trading-plan.md) | Original design narrative (full rationale and deep-dives) |
 
-**Phase docs (current scope):**
+**Phase docs (current scope):** — full status table in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)
 
 | Phase | Doc | Status |
 |---|---|---|
-| PoC | [`docs/phases/poc.md`](docs/phases/poc.md) | Not started — **start here** |
-| Phase 1 | [`docs/phases/phase-1.md`](docs/phases/phase-1.md) | Stub |
-| Phase 2 | [`docs/phases/phase-2.md`](docs/phases/phase-2.md) | Stub |
+| PoC | [`docs/phases/poc.md`](docs/phases/poc.md) | ✅ Done — 0/36 approved (honest negative) |
+| Phase 1 | [`docs/phases/phase-1.md`](docs/phases/phase-1.md) | ✅ Done — 1A 10/72 approved + 1B live stream/calendar |
+| Phase 2 | [`docs/phases/phase-2.md`](docs/phases/phase-2.md) | ✅ Code merged · ⏳ T-08 live-Discord acceptance is an operator gate |
+| Phase 3 | _not yet carved_ | ◻ Not started — sizing/orders (crosses INV-01) |
 
-**Read before starting any session:** `docs/architecture-overview.md` (boundaries) + `docs/invariants.md` (rules) + the active phase doc.
+**Read before starting any session:** `docs/PLAYBOOK.md` (status + method) + `docs/architecture-overview.md` (boundaries) + `docs/invariants.md` (rules) + the active phase doc.
 
 ---
 
