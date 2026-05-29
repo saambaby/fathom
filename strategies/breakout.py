@@ -62,8 +62,13 @@ class SessionRangeBreakout(Strategy):
         OANDA instrument identifier (e.g. ``"EUR_USD"``).
     timeframe:
         Granularity string (e.g. ``"H1"`` or ``"D"``).
-    atr_period:
-        Look-back period for ATR.  Default 14 (INV-11).
+
+    Notes
+    -----
+    ATR period is unconditionally **14** (INV-11 mandates this so stops are
+    comparable across strategies for ranking and position-sizing).  The period
+    is not a constructor parameter to prevent callers from producing a
+    non-conforming stop.
     """
 
     def __init__(
@@ -74,7 +79,6 @@ class SessionRangeBreakout(Strategy):
         rr_ratio: float = 1.5,
         instrument: str = "",
         timeframe: str = "",
-        atr_period: int = 14,
     ) -> None:
         if range_lookback < 1:
             raise ValueError(f"range_lookback must be >= 1, got {range_lookback}")
@@ -88,7 +92,6 @@ class SessionRangeBreakout(Strategy):
         self._rr_ratio = rr_ratio
         self._instrument = instrument
         self._timeframe = timeframe
-        self._atr_period = atr_period
 
     # ------------------------------------------------------------------
     # Strategy interface
@@ -145,8 +148,8 @@ class SessionRangeBreakout(Strategy):
             .min()
         )
 
-        # ATR(14) for stop/target (INV-11).
-        atr_series = _atr(df, self._atr_period)
+        # ATR(14) for stop/target (INV-11 — period unconditionally 14).
+        atr_series = _atr(df, 14)
 
         # Per-UTC-day latches: track which directions have already fired today.
         # Key = UTC date string; Value = set of Direction strings already fired.
