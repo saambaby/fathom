@@ -31,11 +31,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from data.oanda_client import CandleRow, InstrumentMeta
+
+if TYPE_CHECKING:
+    # Import for typing only — importing at runtime would create a cycle
+    # (store → walkforward → engine → store).  ``write_approved_set`` uses
+    # only attribute access on the entries, so a TYPE_CHECKING import is safe.
+    from backtest.walkforward import ApprovedSetEntry
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +133,35 @@ class Store:
         )
     """
 
+    #: SQL to create the approved_set table if it does not already exist.
+    #: Mirrors the shipped ``ApprovedSetEntry`` model (strategy_name,
+    #: instrument, granularity, oos_sharpe_mean, oos_trade_count_total,
+    #: swap_modelled) plus a DB-table-only ``run_timestamp`` (UTC RFC 3339).
+    #: This is the INV-10 gate Phase 2's ranker reads.  The column is named
+    #: ``granularity`` (the shipped field name — not "timeframe").
+    _CREATE_APPROVED_SET_SQL: str = """
+        CREATE TABLE IF NOT EXISTS approved_set (
+            run_timestamp          TEXT    NOT NULL,
+            strategy_name          TEXT    NOT NULL,
+            instrument             TEXT    NOT NULL,
+            granularity            TEXT    NOT NULL,
+            oos_sharpe_mean        REAL    NOT NULL,
+            oos_trade_count_total  INTEGER NOT NULL,
+            swap_modelled          INTEGER NOT NULL,
+            PRIMARY KEY (run_timestamp, strategy_name, instrument, granularity)
+        )
+    """
+
+    #: SQL to insert one approved_set row.  ``INSERT OR REPLACE`` keeps a re-run
+    #: with the same ``run_timestamp`` idempotent.
+    _INSERT_APPROVED_SET_SQL: str = """
+        INSERT OR REPLACE INTO approved_set
+            (run_timestamp, strategy_name, instrument, granularity,
+             oos_sharpe_mean, oos_trade_count_total, swap_modelled)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -180,6 +217,7 @@ class Store:
         """Create the ``candles`` and ``instruments`` tables if needed."""
         self._conn.execute(self._CREATE_CANDLES_SQL)
         self._conn.execute(self._CREATE_INSTRUMENTS_SQL)
+        self._conn.execute(self._CREATE_APPROVED_SET_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -436,6 +474,112 @@ class Store:
                     short_rate=short_rate,
                     financing_days_of_week=json.loads(financing_days_json),
                 )
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # Approved-set table (INV-10 gate; INV-12 single-writer)
+    # ------------------------------------------------------------------
+
+    def write_approved_set(
+        self,
+        entries: Iterable["ApprovedSetEntry"],
+        run_timestamp: datetime,
+    ) -> int:
+        """Persist a batch of approved-set entries in ONE transaction (INV-12).
+
+        This is the single-writer commit point for the ``approved_set`` table.
+        The full-universe backtest runner collects every ``ApprovedSetEntry``
+        from its worker processes into a list (no worker touches the DB) and
+        hands the complete batch here; this method performs all inserts inside
+        one ``executemany`` + ``commit`` so the table is written atomically —
+        either every approved combination lands or none does.  A partial write
+        (which INV-10 could not distinguish from a legitimately small set) is
+        therefore impossible.
+
+        The DB-only ``run_timestamp`` column is supplied here at the
+        persistence layer; the ``ApprovedSetEntry`` pydantic model is unchanged
+        (audit DRIFT-03).  The same ``run_timestamp`` is stamped on every row of
+        the batch.
+
+        Args:
+            entries: The complete batch of ``ApprovedSetEntry`` objects to
+                persist.  May be empty (an empty approved set is a valid result
+                — INV-10: empty means "no signals", not "all signals").
+            run_timestamp: UTC-aware timestamp for this run, stored as RFC 3339
+                TEXT on every row (INV-03).
+
+        Returns:
+            The number of rows written.
+        """
+        ts_str = _to_rfc3339(run_timestamp)
+        params = [
+            (
+                ts_str,
+                e.strategy_name,
+                e.instrument,
+                e.granularity,
+                float(e.oos_sharpe_mean),
+                int(e.oos_trade_count_total),
+                1 if e.swap_modelled else 0,
+            )
+            for e in entries
+        ]
+        # Single transaction: executemany + one commit. Even an empty batch is
+        # committed (a no-op) so the call site has uniform semantics.
+        self._conn.executemany(self._INSERT_APPROVED_SET_SQL, params)
+        self._conn.commit()
+        return len(params)
+
+    def load_approved_set(
+        self,
+        run_timestamp: datetime | None = None,
+    ) -> list[dict[str, object]]:
+        """Load approved-set rows (the INV-10 gate Phase 2 reads).
+
+        Args:
+            run_timestamp: If given, return only rows for that run (matched on
+                the RFC 3339 string); otherwise return all rows.
+
+        Returns:
+            A list of dicts, one per row, with keys ``run_timestamp``,
+            ``strategy_name``, ``instrument``, ``granularity``,
+            ``oos_sharpe_mean``, ``oos_trade_count_total``, ``swap_modelled``
+            (``swap_modelled`` coerced back to ``bool``).  Empty list when the
+            table has no matching rows.
+        """
+        if run_timestamp is not None:
+            cursor = self._conn.execute(
+                """
+                SELECT run_timestamp, strategy_name, instrument, granularity,
+                       oos_sharpe_mean, oos_trade_count_total, swap_modelled
+                FROM   approved_set
+                WHERE  run_timestamp = ?
+                ORDER  BY strategy_name, instrument, granularity
+                """,
+                (_to_rfc3339(run_timestamp),),
+            )
+        else:
+            cursor = self._conn.execute(
+                """
+                SELECT run_timestamp, strategy_name, instrument, granularity,
+                       oos_sharpe_mean, oos_trade_count_total, swap_modelled
+                FROM   approved_set
+                ORDER  BY run_timestamp, strategy_name, instrument, granularity
+                """
+            )
+        result: list[dict[str, object]] = []
+        for row in cursor.fetchall():
+            result.append(
+                {
+                    "run_timestamp": row[0],
+                    "strategy_name": row[1],
+                    "instrument": row[2],
+                    "granularity": row[3],
+                    "oos_sharpe_mean": row[4],
+                    "oos_trade_count_total": row[5],
+                    "swap_modelled": bool(row[6]),
+                }
             )
         return result
 

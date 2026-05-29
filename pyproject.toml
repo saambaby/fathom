@@ -25,6 +25,13 @@ dev = [
     "hypothesis>=6.0",
 ]
 
+[project.scripts]
+fathom = "cli:main"
+
+[tool.setuptools]
+# Top-level single-file modules (not packages) that must be installed.
+py-modules = ["cli"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["config*", "data*", "strategies*", "backtest*", "scripts*"]

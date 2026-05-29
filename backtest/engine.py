@@ -178,7 +178,9 @@ class BacktestEngine:
         -------
         BacktestResult
             Trades, equity curve (cumulative net pips), and metadata
-            (including ``swap_modelled=False``).
+            (including ``swap_modelled`` — ``True`` when financing rates were
+            supplied via ``CostParams``, ``False`` only on a spread-only run;
+            P1A-T-03 lifted the D-03 swap deferral).
         """
         raw = self._store.load_candles(instrument, granularity, start, end)
         # Defensive copy — never mutate the caller's / store's frame.
