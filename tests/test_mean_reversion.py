@@ -418,21 +418,23 @@ class TestRSIReversionSignals:
         assert len(short_signals) >= 1, f"Expected SHORT on RSI cross-out of overbought, got {signals}"
 
     def test_midrange_rsi_no_signal(self) -> None:
-        """RSI stays mid-range → no extreme cross-out → no signals after warmup.
+        """All-flat price series → ZERO signals across the entire DataFrame, including bars 0 and 1.
 
-        The alternating fixture keeps RSI near 50 once Wilder's EWM has
-        warmed up.  Signals generated after bar 30 (2× the RSI period) are
-        considered post-warmup; none should appear there.
+        A constant price has delta=0 at every bar: avg_gain==avg_loss==0 always.
+        RSI[0] is NaN (bar-0 NaN fix — not 100.0), so the cross-out condition
+        ``float(NaN) >= overbought`` evaluates False → no spurious SHORT fires on bar 1.
+        RSI stays at 0.0 for all subsequent bars (gains=losses=0); 0 < oversold(30) so
+        the oversold cross-out condition (prev≤30, curr>30) never fires.
+        No warmup filter is applied — zero signals must hold for the WHOLE DataFrame.
         """
         strategy = RSIReversion(14, 30.0, 70.0, instrument="EUR_USD", timeframe="H1")
-        df = _rsi_midrange_df(n=300)
+        # Perfectly flat price: delta=0 throughout → no RSI cross-outs possible.
+        df = _make_candles([1.2000] * 100)
         signals = strategy.generate_signals(df)
-        # Filter to signals strictly after the EWM warmup window (bar 30 = 30 hours in)
-        warmup_cutoff = df["time"].iloc[29].to_pydatetime()
-        post_warmup = [s for s in signals if s.generated_at > warmup_cutoff]
-        assert len(post_warmup) == 0, (
-            f"Expected no signals on mid-range RSI after warmup, got {len(post_warmup)}: "
-            f"{[s.generated_at for s in post_warmup]}"
+        assert len(signals) == 0, (
+            f"Expected ZERO signals on all-flat price series across entire DataFrame "
+            f"(including bars 0–1), got {len(signals)}: "
+            f"{[s.generated_at for s in signals]}"
         )
 
     def test_stop_distance_is_atr_not_zero(self) -> None:
@@ -523,17 +525,43 @@ class TestRSIReversionSignals:
             strategy.generate_signals(df)
 
     def test_cross_out_not_level_based(self) -> None:
-        """Signal on the crossing bar, not on every bar pinned below threshold."""
+        """Exactly ONE LONG signal fires on the cross-out bar, not one per pinned bar.
+
+        Data construction:
+        - Warmup: 50 stable bars (RSI converges near 50).
+        - Decline: 20 consecutive down bars, each -0.005 — pushes RSI well below 30.
+        - RSI stays pinned in oversold for the entire 20-bar stretch (≥ 15 bars below 30).
+        - Recovery: 1 single bounce bar (+0.030) that crosses RSI from below-30 back above 30.
+        - Tail: 5 stable bars (RSI idles, no further cross-out).
+
+        A level-based strategy would emit a LONG on each of the 20 pinned-below-30 bars.
+        A correct cross-out strategy emits exactly ONE LONG — on the single crossing bar.
+        """
+        prices: list[float] = []
+        base = 1.2000
+        # Warmup — stable
+        for _ in range(50):
+            prices.append(base)
+        # Decline — push RSI deep into oversold and keep it pinned there
+        p = base
+        for _ in range(20):
+            p -= 0.0050
+            prices.append(p)
+        # Single cross-out bar — strong recovery crosses RSI back above 30
+        p += 0.0300
+        prices.append(p)
+        # Tail — stable, RSI idles mid-range
+        for _ in range(5):
+            prices.append(p)
+
+        df = _make_candles(prices)
         strategy = RSIReversion(14, 30.0, 70.0, instrument="EUR_USD", timeframe="H1")
-        df = _rsi_oversold_bounce_df()
         signals = strategy.generate_signals(df)
-        # Verify: all LONG signals are generated at a single cross-out bar, not continuous
-        # The oversold stretch should produce at most a handful of cross-out signals
         long_signals = [s for s in signals if s.direction == Direction.LONG]
-        assert len(long_signals) >= 1
-        # No bar should be a level-signal — each cross-out is once per zone exit
-        timestamps = [s.generated_at for s in long_signals]
-        assert len(timestamps) == len(set(timestamps))
+        assert len(long_signals) == 1, (
+            f"Expected exactly 1 LONG signal on the cross-out bar, "
+            f"got {len(long_signals)} — a level-based strategy would fire once per pinned bar"
+        )
 
 
 # ---------------------------------------------------------------------------

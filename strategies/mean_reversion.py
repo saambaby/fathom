@@ -313,8 +313,11 @@ class RSIReversion(Strategy):
 
         # RSI: avoid division by zero when avg_loss == 0
         rsi: pd.Series = 100.0 - (100.0 / (1.0 + avg_gain / avg_loss.replace(0, float("inf"))))
-        # When avg_loss == 0 → RS → ∞ → RSI == 100 (fully overbought, correct)
-        rsi = rsi.fillna(100.0)
+        # Row 0 of delta is NaN (diff() has no predecessor); gains/losses[0] propagate NaN
+        # through ewm, making avg_gain[0]/avg_loss[0] NaN → rsi[0] NaN. Force that to stay
+        # NaN so the cross-out check (float(NaN) >= overbought) evaluates False — no spurious
+        # signal on bar 1.  Only when avg_gain is genuinely zero (not NaN) is RSI 100.
+        rsi = rsi.where(avg_gain.notna(), other=float("nan"))
 
         # ATR(14) — shared helper (INV-11)
         atr_series = _atr(df, 14)
