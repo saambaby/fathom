@@ -168,7 +168,7 @@ def _register(open_trades: dict[str, Any], summary: dict[str, Any]) -> None:
 class TestPureDiff:
     def test_broker_only_is_adopted(self) -> None:
         broker = BrokerState(
-            open_trades=(_broker_trade(trade_id="T1"),), nav=10_000.0, realized_day_pl=0.0
+            open_trades=(_broker_trade(trade_id="T1"),), nav=10_000.0
         )
         store = StoreState(open_positions=())
         actions = compute_reconcile_actions(broker, store)
@@ -180,7 +180,7 @@ class TestPureDiff:
 
     def test_store_only_is_closed_with_realized_pl(self) -> None:
         # Store thinks T1 open; broker reports nothing → close it.
-        broker = BrokerState(open_trades=(), nav=9_900.0, realized_day_pl=-100.0)
+        broker = BrokerState(open_trades=(), nav=9_900.0)
         store = StoreState(open_positions=(_position(trade_id="T1", upl=-42.0),))
         actions = compute_reconcile_actions(broker, store)
         assert len(actions) == 1
@@ -193,7 +193,6 @@ class TestPureDiff:
         broker = BrokerState(
             open_trades=(_broker_trade(trade_id="T1", upl=9.0),),
             nav=10_000.0,
-            realized_day_pl=0.0,
         )
         store = StoreState(open_positions=(_position(trade_id="T1", upl=0.0),))
         actions = compute_reconcile_actions(broker, store)
@@ -207,7 +206,6 @@ class TestPureDiff:
         broker = BrokerState(
             open_trades=(_broker_trade(trade_id="T1", stop=1.07000),),
             nav=10_000.0,
-            realized_day_pl=0.0,
         )
         store = StoreState(open_positions=(_position(trade_id="T1", stop=1.08000),))
         actions = compute_reconcile_actions(broker, store)
@@ -226,7 +224,7 @@ class TestPureDiff:
             status=FillStatus.FILLED,
         )
         broker = BrokerState(
-            open_trades=(_broker_trade(trade_id="T1"),), nav=10_000.0, realized_day_pl=0.0
+            open_trades=(_broker_trade(trade_id="T1"),), nav=10_000.0
         )
         store = StoreState(open_positions=(), orphaned_fills=(fill,))
         actions = compute_reconcile_actions(broker, store)
@@ -245,7 +243,7 @@ class TestPureDiff:
             filled_at=NOW,
             status=FillStatus.FILLED,
         )
-        broker = BrokerState(open_trades=(), nav=10_000.0, realized_day_pl=-10.0)
+        broker = BrokerState(open_trades=(), nav=10_000.0)
         store = StoreState(open_positions=(), orphaned_fills=(fill,))
         actions = compute_reconcile_actions(broker, store)
         assert len(actions) == 1
@@ -289,9 +287,14 @@ class TestClose:
         realized_pl, closed_at = cur.fetchone()
         assert realized_pl == -42.0
         assert closed_at is not None and closed_at.endswith("Z")  # RFC 3339 (INV-03)
-        # account_state.day_pl mirrors the broker account-summary figure.
+        # account_state.day_pl is today's total P&L vs start-of-day equity
+        # (NAV − start_of_day_equity), NOT the broker's lifetime ``pl`` field.
+        # This is the day-open snapshot reconcile, so start_of_day_equity == NAV
+        # and day_pl ≈ 0 (the lifetime pl=-100.0 must NOT leak through).
         state = store.load_account_state()
-        assert state is not None and state["day_pl"] == -100.0
+        assert state is not None
+        assert state["start_of_day_equity"] == 9900.0
+        assert state["day_pl"] == 0.0
 
 
 class TestMatchedRefresh:
@@ -337,6 +340,59 @@ class TestAccountStateSnapshot:
         assert r2.day_pl == -250.0
 
     @resp_lib.activate
+    def test_day_pl_is_nav_delta_not_lifetime_pl(self) -> None:
+        # WARN-1 pin: day_pl must be today's total P&L vs start-of-day equity
+        # (NAV − start_of_day_equity), NEVER the v20 lifetime ``pl`` field.
+        # Use a large, distinctive lifetime ``pl`` that would be obviously wrong
+        # if it leaked into day_pl.
+        store = _store()
+
+        # Day-open snapshot: start_of_day_equity = NAV = 10000.0. Lifetime pl is
+        # +8765.43 (years of gains) — day_pl on the snapshot pass must be ~0.
+        _register(
+            _open_trades_response(),
+            _summary_response(nav="10000.00", pl="8765.43"),
+        )
+        r1 = reconcile(client=_client(), store=store, now=NOW)
+        assert r1.snapshotted_today is True
+        assert r1.start_of_day_equity == 10000.0
+        assert r1.day_pl == 0.0  # NOT 8765.43
+        assert store.load_account_state()["day_pl"] == 0.0  # type: ignore[index]
+        resp_lib.reset()
+
+        # Later same UTC day: NAV dropped to 9750.00. day_pl is the (negative)
+        # delta vs the morning snapshot = -250.0 — the kill switch's drawdown
+        # input — regardless of the still-large lifetime pl.
+        _register(
+            _open_trades_response(),
+            _summary_response(nav="9750.00", pl="8515.43"),
+        )
+        later = NOW.replace(hour=18)
+        r2 = reconcile(client=_client(), store=store, now=later)
+        assert r2.snapshotted_today is False
+        assert r2.start_of_day_equity == 10000.0
+        assert r2.day_pl == -250.0  # NOT 8515.43
+        assert store.load_account_state()["day_pl"] == -250.0  # type: ignore[index]
+
+    @resp_lib.activate
+    def test_nav_falls_back_to_balance_plus_unrealized(self) -> None:
+        # WARN-1: when the summary omits NAV, equity = balance + unrealizedPL.
+        store = _store()
+        summary = {
+            "account": {
+                "id": ACCOUNT_ID,
+                "balance": "10000.00",
+                "unrealizedPL": "25.00",
+                "pl": "9999.00",  # lifetime — must be ignored
+            },
+            "lastTransactionID": "100",
+        }
+        _register(_open_trades_response(), summary)
+        r = reconcile(client=_client(), store=store, now=NOW)
+        assert r.start_of_day_equity == 10025.0  # balance + unrealizedPL
+        assert r.day_pl == 0.0  # snapshot pass
+
+    @resp_lib.activate
     def test_new_utc_day_resnapshots(self) -> None:
         store = _store()
         _register(_open_trades_response(), _summary_response(nav="10050.00", pl="0.00"))
@@ -367,23 +423,39 @@ class TestIdempotency:
     @resp_lib.activate
     def test_rerun_no_broker_change_is_noop(self) -> None:
         store = _store()
-        # Two identical reconcile passes, same open trade.
-        for _ in range(2):
-            _register(
-                _open_trades_response(_open_trade_json(trade_id="T1")),
-                _summary_response(),
-            )
-            reconcile(client=_client(), store=store, now=NOW)
-            resp_lib.reset()
+        # First pass: adopts the broker-only trade.
+        _register(
+            _open_trades_response(_open_trade_json(trade_id="T1")),
+            _summary_response(),
+        )
+        first = reconcile(client=_client(), store=store, now=NOW)
+        assert first.adopted == ["T1"]  # adopted on the first pass only
+        resp_lib.reset()
+
+        # Second pass, identical broker state: must NOT re-adopt — the trade is
+        # now matched (a refresh), and adopted is empty.  This pins the exact
+        # regression where a second pass re-adopts an already-present trade.
+        _register(
+            _open_trades_response(_open_trade_json(trade_id="T1")),
+            _summary_response(),
+        )
+        second = reconcile(client=_client(), store=store, now=NOW)
+        assert second.adopted == []
+        assert second.matched == ["T1"]  # refresh, not a re-adopt
+        resp_lib.reset()
+
         # Exactly one position row (no duplicate adoption); still open.
         cur = store._conn.execute("SELECT COUNT(*) FROM positions")
         assert cur.fetchone()[0] == 1
         assert len(store.load_open_positions()) == 1
-        # Second pass adopted nothing.
+
+        # Third pass stays a no-op too (no duplicate, still matched).
         _register(_open_trades_response(_open_trade_json(trade_id="T1")), _summary_response())
-        report = reconcile(client=_client(), store=store, now=NOW)
-        assert report.adopted == []
-        assert report.matched == ["T1"]  # now a refresh, not an adopt
+        third = reconcile(client=_client(), store=store, now=NOW)
+        assert third.adopted == []
+        assert third.matched == ["T1"]  # still a refresh, never a re-adopt
+        cur = store._conn.execute("SELECT COUNT(*) FROM positions")
+        assert cur.fetchone()[0] == 1
 
 
 class TestOrphanedFillRepair:

@@ -29,9 +29,13 @@ Conflict resolution — one rule resolves every case (INV-16):
 
 account_state (DRIFT-02 / DRIFT-05)
 -----------------------------------
-* ``day_pl`` ← the **account-summary's** realized day P&L (the broker's figure,
-  authoritative per INV-16; the store column is a cached mirror, not an
-  independent sum).
+* ``day_pl`` ← **today's total P&L vs start-of-day equity**, computed
+  broker-truthfully as ``current_equity_NAV − start_of_day_equity``.  This is
+  NOT the v20 account-summary ``pl`` field — that field is *lifetime* realized
+  P&L since account creation and is never read here.  On the day-open snapshot
+  reconcile this yields ~0 (NAV == the equity we just snapshotted); as the day
+  progresses a loss drives ``day_pl`` negative, which is exactly the drawdown
+  signal the kill switch (P3-T-04) tests against ``start_of_day_equity``.
 * ``start_of_day_equity`` ← snapshotted **once, on the first reconcile after the
   UTC-day boundary** (00:00 UTC, INV-03-consistent with the kill-switch reset).
   A mid-day process restart **re-reads** the persisted snapshot — it does not
@@ -106,9 +110,10 @@ class BrokerState:
 
     open_trades: tuple[BrokerTrade, ...]
     nav: float
-    """Net asset value / equity from the account summary."""
-    realized_day_pl: float
-    """Realized day P&L from the account summary (authoritative ``day_pl``)."""
+    """Net asset value / equity from the account summary (the v20 ``NAV`` field,
+    falling back to ``balance + unrealizedPL`` if ``NAV`` is absent).  This is
+    the figure snapshotted as ``start_of_day_equity`` and the basis for
+    today's ``day_pl`` (``nav − start_of_day_equity``)."""
 
 
 @dataclass(frozen=True)
@@ -159,7 +164,9 @@ class ReconcileReport:
     ``adopted`` / ``closed`` / ``matched`` are broker-trade-id lists;
     ``drift_flags`` collects every drift message (also logged at WARNING).
     ``start_of_day_equity`` / ``day_pl`` are the figures written to
-    ``account_state`` this pass (the kill switch's inputs).
+    ``account_state`` this pass (the kill switch's inputs).  ``day_pl`` is
+    today's total P&L vs start-of-day equity (``nav − start_of_day_equity``),
+    NOT the v20 lifetime ``pl`` field.
     """
 
     adopted: list[str] = field(default_factory=list)
@@ -377,11 +384,16 @@ def _fetch_broker_state(client: "OandaClient") -> BrokerState:
     trades = tuple(_parse_open_trade(t) for t in raw_trades)
     summary = client.account_summary()
     account = summary.get("account", summary)
-    nav = float(account.get("NAV", account.get("balance", 0.0)))
-    # v20 account summary exposes realized day P&L as ``pl`` over the broker's
-    # day; the kill switch reasons in UTC (start_of_day_equity below).
-    realized_day_pl = float(account.get("pl", 0.0))
-    return BrokerState(open_trades=trades, nav=nav, realized_day_pl=realized_day_pl)
+    # Equity / NAV is the kill switch's only P&L input.  Prefer the v20 ``NAV``
+    # field; if absent, reconstruct equity as ``balance + unrealizedPL``.
+    # NOTE: we deliberately do NOT read the v20 ``pl`` field here — it is the
+    # account's *lifetime* realized P&L since creation, not today's P&L.  Today's
+    # day_pl is derived downstream as ``nav − start_of_day_equity``.
+    if "NAV" in account:
+        nav = float(account["NAV"])
+    else:
+        nav = float(account.get("balance", 0.0)) + float(account.get("unrealizedPL", 0.0))
+    return BrokerState(open_trades=trades, nav=nav)
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +424,13 @@ def _resolve_start_of_day_equity(
         if prior_as_of.astimezone(timezone.utc).date() == today:
             # Same UTC day → re-read, never re-snapshot.
             stored_equity = existing["start_of_day_equity"]
-            assert isinstance(stored_equity, (int, float))
+            # Explicit type guard (NOT assert): this value feeds the kill switch
+            # and asserts vanish under ``python -O``.
+            if not isinstance(stored_equity, (int, float)):
+                raise TypeError(
+                    "account_state.start_of_day_equity must be numeric, got "
+                    f"{type(stored_equity).__name__}"
+                )
             return float(stored_equity), False
     # New UTC day (or first-ever reconcile) → snapshot now.
     return nav, True
@@ -437,9 +455,11 @@ def reconcile(
     3. Apply each action: ADOPT inserts, CLOSE marks closed with ``realized_pl``,
        REFRESH updates unrealized/bracket/units.  Every drift action is logged
        at WARNING and recorded in ``drift_flags`` — never silently dropped.
-    4. Update ``account_state``: ``day_pl`` ← the broker account-summary figure
-       (authoritative); ``start_of_day_equity`` ← snapshot-once-per-UTC-day,
-       stable across restarts.
+    4. Update ``account_state``: ``start_of_day_equity`` ← snapshot-once-per-UTC-day,
+       stable across restarts; ``day_pl`` ← today's total P&L vs start-of-day
+       equity, computed as ``broker.nav − start_of_day_equity`` (NOT the v20
+       lifetime ``pl`` field).  On the snapshot pass this is ~0; a NAV below
+       the morning snapshot makes it negative — the kill switch's drawdown input.
 
     Idempotent: a re-run with no broker change produces only REFRESH no-op
     rewrites, no new adopts/closes, and re-reads (does not re-snapshot)
@@ -505,16 +525,20 @@ def reconcile(
             )
             report.matched.append(action.broker_trade_id)
 
-    # account_state: broker is truth for day_pl; UTC-day snapshot for equity.
+    # account_state: UTC-day snapshot for equity; day_pl is today's total P&L vs
+    # that snapshot (current NAV − start_of_day_equity), broker-truthful and the
+    # kill switch's drawdown input.  On the snapshot pass NAV == the equity we
+    # just snapshotted, so day_pl ≈ 0 (correct).
     start_of_day_equity, snapshotted = _resolve_start_of_day_equity(
         store, nav=broker.nav, now=now
     )
+    day_pl = broker.nav - start_of_day_equity
     store.write_account_state(
         start_of_day_equity=start_of_day_equity,
-        day_pl=broker.realized_day_pl,
+        day_pl=day_pl,
         as_of=now,
     )
     report.start_of_day_equity = start_of_day_equity
-    report.day_pl = broker.realized_day_pl
+    report.day_pl = day_pl
     report.snapshotted_today = snapshotted
     return report

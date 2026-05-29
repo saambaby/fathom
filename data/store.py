@@ -258,8 +258,11 @@ class Store:
     #: (DRIFT-02).  Owned by the reconciliation migration.  ``id`` is a fixed
     #: singleton PK (always ``1``) so there is exactly one row; reconciliation
     #: re-reads then updates it in place.  ``start_of_day_equity`` is snapshotted
-    #: once per UTC day; ``day_pl`` mirrors the broker account-summary figure;
-    #: ``as_of`` is the UTC RFC 3339 time of the last reconcile (INV-03).
+    #: once per UTC day; ``day_pl`` is **today's total P&L vs start-of-day
+    #: equity** (current NAV − ``start_of_day_equity``), NOT the broker's
+    #: lifetime ``pl`` field — the kill switch tests ``day_pl`` (negative on a
+    #: loss) against ``start_of_day_equity``; ``as_of`` is the UTC RFC 3339 time
+    #: of the last reconcile (INV-03).
     _CREATE_ACCOUNT_STATE_SQL: str = """
         CREATE TABLE IF NOT EXISTS account_state (
             id                    INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
