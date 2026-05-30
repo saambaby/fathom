@@ -23,6 +23,8 @@ from risk.limits import (
     DEFAULT_MAX_PER_CORRELATION_GROUP,
     LimitDecision,
     LimitsConfig,
+    book_risk_budget,
+    book_risk_sum,
     check_limits,
     kill_switch_status,
     position_risk,
@@ -260,6 +262,59 @@ class TestBookRisk:
         decision = _check(_order(), open_positions=positions, order_risk=1.0)
         assert decision.allowed is False
         assert decision.reason is not None and "book-risk" in decision.reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# Extracted helpers (P4-T-02 / DRIFT-02): book_risk_sum + book_risk_budget are
+# the single source of truth check_limits calls back into, so the admin-panel
+# blotter can show the exact figures the kill switch uses.
+# ---------------------------------------------------------------------------
+
+
+class TestBookRiskHelpers:
+    def test_book_risk_sum_empty_is_zero(self) -> None:
+        assert book_risk_sum([]) == 0.0
+
+    def test_book_risk_sum_single_matches_position_risk(self) -> None:
+        p = _position(units=1, entry_price=1000.0, stop_loss_price=500.0)  # risk 500
+        assert book_risk_sum([p]) == pytest.approx(position_risk(p))
+        assert book_risk_sum([p]) == pytest.approx(500.0)
+
+    def test_book_risk_sum_multi_matches_sum_of_position_risk(self) -> None:
+        positions = [
+            _position(trade_id="A", units=1000, entry_price=1.2500, stop_loss_price=1.2450),
+            _position(trade_id="B", units=1, entry_price=1000.0, stop_loss_price=500.0),
+            _position(trade_id="C", units=2000, entry_price=1.1000, stop_loss_price=1.0900),
+        ]
+        expected = sum(position_risk(p) for p in positions)
+        assert book_risk_sum(positions) == pytest.approx(expected)
+
+    def test_book_risk_budget_is_max_book_risk_times_equity(self) -> None:
+        cfg = LimitsConfig()  # default max_book_risk == 0.01
+        assert book_risk_budget(100_000.0, cfg) == pytest.approx(1000.0)
+
+    def test_book_risk_budget_honours_overridden_cap(self) -> None:
+        cfg = LimitsConfig(max_book_risk=0.025)
+        assert book_risk_budget(80_000.0, cfg) == pytest.approx(0.025 * 80_000.0)
+
+    def test_check_limits_uses_the_helpers_at_the_boundary(self) -> None:
+        # Reconstruct check_limits' book-risk decision from the extracted
+        # helpers: current + order vs budget — confirming one source of truth.
+        positions = [
+            _position(trade_id="A", units=1, entry_price=1000.0, stop_loss_price=500.0),  # 500
+            _position(trade_id="B", units=1, entry_price=1000.0, stop_loss_price=500.0),  # 500
+        ]
+        cfg = LimitsConfig()
+        current = book_risk_sum(positions)
+        budget = book_risk_budget(EQUITY, cfg)
+        assert current == pytest.approx(1000.0)
+        assert budget == pytest.approx(1000.0)
+        # order_risk that exactly fills the budget is allowed; one cent over rejects.
+        at_budget = _check(_order(), open_positions=positions, order_risk=0.0, config=cfg)
+        assert at_budget.allowed is True
+        over = _check(_order(), open_positions=positions, order_risk=0.01, config=cfg)
+        assert over.allowed is False
+        assert over.reason is not None and "book-risk" in over.reason.lower()
 
 
 # ---------------------------------------------------------------------------

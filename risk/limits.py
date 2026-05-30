@@ -66,6 +66,8 @@ __all__ = [
     "DEFAULT_MAX_PER_CORRELATION_GROUP",
     "DEFAULT_CORRELATION_THRESHOLD",
     "position_risk",
+    "book_risk_sum",
+    "book_risk_budget",
     "check_limits",
     "kill_switch_status",
 ]
@@ -213,6 +215,32 @@ def position_risk(position: Position) -> float:
     if not math.isfinite(risk) or risk < 0:
         return 0.0
     return risk
+
+
+def book_risk_sum(open_positions: Sequence[Position]) -> float:
+    """Aggregate stop-distance risk of the open book in account-price terms.
+
+    The single source of truth for ``current_book_risk`` — the sum of every open
+    position's :func:`position_risk` (stop-distance, **not** notional).
+    :func:`check_limits` calls this for its book-risk check, and the read-only
+    admin-panel blotter reuses it so the panel's "risk-in-use" figure is
+    byte-identical to the figure the kill-switch backstop evaluates (INV-05;
+    panel-data-layer DRIFT-02). An empty book is ``0.0``.
+    """
+    return sum(position_risk(p) for p in open_positions)
+
+
+def book_risk_budget(equity: float, config: LimitsConfig) -> float:
+    """The aggregate book-risk budget in account currency: ``max_book_risk × equity``.
+
+    The single source of truth for the book-risk cap amount. :func:`check_limits`
+    compares ``book_risk_sum(open) + order_risk`` against this, and the read-only
+    admin-panel blotter reuses it so the panel's "limit" figure matches the
+    kill-switch backstop exactly (INV-05; panel-data-layer DRIFT-02). The caller
+    owns guarding ``equity`` finiteness/positivity before relying on the result
+    (``check_limits`` rejects a non-finite/non-positive equity upstream).
+    """
+    return config.max_book_risk * equity
 
 
 def _next_utc_midnight(now: datetime) -> datetime:
@@ -397,14 +425,14 @@ def check_limits(
         )
 
     # --- 3. Book risk (stop-distance risk, not notional). -------------------
-    current_book_risk = sum(position_risk(p) for p in open_positions)
-    book_risk_budget = cfg.max_book_risk * equity
-    if current_book_risk + order_risk > book_risk_budget:
+    current_book_risk = book_risk_sum(open_positions)
+    budget = book_risk_budget(equity, cfg)
+    if current_book_risk + order_risk > budget:
         return _reject(
             f"Book-risk cap exceeded: current {current_book_risk:.6g} + order "
             f"{order_risk:.6g} = {current_book_risk + order_risk:.6g} > "
             f"{cfg.max_book_risk:.4g} × equity {equity:.6g} = "
-            f"{book_risk_budget:.6g}."
+            f"{budget:.6g}."
         )
 
     # --- 4. Correlation bucket (shared exposure). ---------------------------
