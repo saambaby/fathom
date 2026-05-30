@@ -240,10 +240,19 @@ class TestCleanSubprocessImport:
             "os.environ.setdefault('OANDA_API_KEY', 'TEST_KEY'); "
             "os.environ.setdefault('OANDA_ACCOUNT_ID', 'TEST_ACCT'); "
             # Importing panel.app will try to call st.set_page_config() at
-            # module level.  We intercept streamlit before the import so the
-            # Streamlit machinery doesn't crash in a headless subprocess.
+            # module level, and the __main__ guard calls
+            # ``from streamlit.runtime import exists`` at import time.
+            # We must mock every streamlit submodule that panel/app.py imports
+            # at module level BEFORE importing the package, so the subprocess
+            # doesn't crash with "streamlit is not a package".
             "import unittest.mock; "
             "sys.modules['streamlit'] = unittest.mock.MagicMock(); "
+            "_st_runtime_mock = unittest.mock.MagicMock(); "
+            # Make streamlit.runtime.exists() return False so the module-level
+            # render guard (``if _st_runtime_exists(): ...``) does NOT execute
+            # view-rendering code in a headless subprocess.
+            "_st_runtime_mock.exists.return_value = False; "
+            "sys.modules['streamlit.runtime'] = _st_runtime_mock; "
             "sys.modules['streamlit.components'] = unittest.mock.MagicMock(); "
             "sys.modules['streamlit.components.v1'] = unittest.mock.MagicMock(); "
             "sys.modules['streamlit_lightweight_charts'] = unittest.mock.MagicMock(); "
@@ -257,17 +266,22 @@ class TestCleanSubprocessImport:
             text=True,
             cwd="/tmp",
         )
-        # We accept a non-zero exit in case of unrelated import errors in the
-        # mocked environment — what matters is the LEAK/clean verdict in stdout.
+        # The subprocess must complete cleanly (returncode 0) — a crash means
+        # the mock scaffold is broken and the assertion never ran, which is
+        # itself a test failure.
+        assert result.returncode == 0, (
+            f"Subprocess crashed before reaching the LEAK/clean verdict.\n"
+            f"returncode: {result.returncode}\n"
+            f"stderr: {result.stderr}\nstdout: {result.stdout}"
+        )
+        # The verdict must be present and must be "clean" — an empty stdout or
+        # "LEAK" are both hard failures (the permissive ``if stdout:`` guard
+        # was removed to prevent silent null-test regression).
         stdout = result.stdout.strip()
-        # If subprocess crashed completely, stdout may be empty — treat as not
-        # leaked (we can't assert what didn't run).  The AST probe above is the
-        # authoritative check; this test is belt-and-suspenders.
-        if stdout:
-            assert stdout == "clean", (
-                f"execution.orders leaked into sys.modules after importing panel.app.\n"
-                f"stdout: {result.stdout}\nstderr: {result.stderr}"
-            )
+        assert stdout == "clean", (
+            f"execution.orders leaked into sys.modules after importing panel.app.\n"
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr}"
+        )
 
 
 # ---------------------------------------------------------------------------
