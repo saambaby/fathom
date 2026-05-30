@@ -874,6 +874,35 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the SQLite store.",
     )
 
+    # ---- preflight ----------------------------------------------------------
+    # P5-T-03: read-only go/no-go readiness check before a live cutover.
+    # INV-07: never places orders; requires --attest-track-record to go GO.
+    pf = sub.add_parser(
+        "preflight",
+        help=(
+            "Read-only go/no-go readiness check before a live cutover. "
+            "Verifies account reachability, kill-switch state, bracket/INV-04 "
+            "contract, env/flag/token consistency, and requires explicit "
+            "track-record attestation (INV-07).  Exits 0 on GO, non-zero on "
+            "NO-GO.  Places no orders and writes no state."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    pf.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+    pf.add_argument(
+        "--attest-track-record",
+        action="store_true",
+        default=False,
+        help=(
+            "Operator attestation: assert the demo track record satisfies INV-07 "
+            "(positive, stable edge on demo before live cutover).  Required for GO."
+        ),
+    )
+
     return parser
 
 
@@ -1783,6 +1812,82 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# preflight command (P5-T-03)
+# ---------------------------------------------------------------------------
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Execute the ``fathom preflight`` command.  Returns the process exit code.
+
+    Read-only: no order is placed, no state is written.  Exits 0 on GO,
+    non-zero (1) on NO-GO.  INV-07: requires ``--attest-track-record`` for GO.
+    INV-08: never prints the OANDA token.
+    """
+    from execution.preflight import run_preflight
+
+    run_dt = datetime.now(tz=timezone.utc)
+    _log.info("fathom preflight started at %s", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    db_path = args.db_path
+    attested: bool = args.attest_track_record
+
+    try:
+        settings = Settings()
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: could not load settings: {exc}", file=sys.stderr)
+        return 1
+
+    store = Store(db_path)
+    try:
+        # Build a real OandaClient for the reachability check.
+        try:
+            client: "Optional[OandaClient]" = OandaClient(settings)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("preflight: could not construct OandaClient: %s", exc)
+            client = None
+
+        report = run_preflight(
+            settings=settings,
+            store=store,
+            client=client,
+            attested=attested,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.error("preflight: unexpected error: %s", exc)
+        print(f"ERROR: preflight failed unexpectedly: {exc}", file=sys.stderr)
+        store.close()
+        return 1
+    finally:
+        store.close()
+
+    # Print per-check status table.
+    print(f"\nFathom preflight check — {report.checked_at.strftime('%Y-%m-%dT%H:%M:%SZ')} UTC\n")
+    print(f"{'Check':<35}  {'Status':<8}  Detail")
+    print("-" * 90)
+    for check in report.checks:
+        status = "PASS" if check.ok else "FAIL"
+        print(f"{check.name:<35}  {status:<8}  {check.detail}")
+
+    print()
+    if report.go:
+        print("OVERALL: GO — all checks passed.  System is mechanically ready.")
+        _log.info("fathom preflight: GO at %s", report.checked_at.isoformat())
+        return 0
+    else:
+        failing = [c.name for c in report.checks if not c.ok]
+        print(
+            f"OVERALL: NO-GO — failing check(s): {', '.join(failing)}",
+            file=sys.stderr,
+        )
+        _log.info(
+            "fathom preflight: NO-GO at %s (failing: %s)",
+            report.checked_at.isoformat(),
+            ", ".join(failing),
+        )
+        return 1
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1805,6 +1910,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_positions(args)
     if args.command == "reconcile":
         return cmd_reconcile(args)
+    if args.command == "preflight":
+        return cmd_preflight(args)
     parser.error(f"Unknown command: {args.command}")
     return 2  # unreachable — parser.error exits
 
