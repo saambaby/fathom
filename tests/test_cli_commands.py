@@ -699,6 +699,188 @@ class TestBacktestUnbroken:
 
 
 # ---------------------------------------------------------------------------
+# cmd_scan live ALL-discovery (behaviour preservation test)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdScanLiveAllDiscovery:
+    """cmd_scan with instruments='ALL' and dry_run=False must trigger live
+    OANDA universe discovery (via _discover_universe) and pass the resolved
+    explicit instrument list to run_scan.
+
+    This verifies the behaviour regression fix: before the fix, cmd_scan
+    with ALL+live silently used the cache-only path.  After the fix the CLI
+    adapter calls _discover_universe for the live path, then passes the
+    resolved list into run_scan so run_scan itself stays order-free/cache-only.
+    """
+
+    def test_cmd_scan_all_live_calls_discover_universe(
+        self, tmp_path: Path
+    ) -> None:
+        """cmd_scan(instruments='ALL', dry_run=False) triggers _discover_universe
+        and forwards the resolved list to run_scan.
+        """
+        db_path = str(tmp_path / "live_all.db")
+        candidate = _make_candidate()
+
+        # _discover_universe is the live universe path in cli.py.
+        # We patch it to return a known instrument list without any real HTTP.
+        resolved_instruments = ["EUR_USD", "GBP_USD"]
+
+        args = _make_namespace(
+            command="scan",
+            db_path=db_path,
+            instruments="ALL",
+            timeframes="H1",
+            dry_run=False,   # live path — must trigger discovery
+            history_years=1,
+        )
+
+        with (
+            patch("cli._discover_universe", return_value=resolved_instruments) as mock_discover,
+            patch("signals.scan.run_scan", return_value=[candidate]) as mock_run_scan,
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.cmd_scan(args)
+
+        assert rc == 0
+
+        # _discover_universe must have been called once (live discovery).
+        mock_discover.assert_called_once()
+        discover_call = mock_discover.call_args
+        assert discover_call.kwargs.get("dry_run") is False or (
+            len(discover_call.args) >= 3 and discover_call.args[2] is False
+        ), "discovery must be called with dry_run=False (live)"
+
+        # run_scan must have been called with the resolved list, NOT 'ALL'.
+        mock_run_scan.assert_called_once()
+        run_scan_call = mock_run_scan.call_args
+        instruments_passed = run_scan_call.kwargs.get("instruments", "")
+        assert instruments_passed != "ALL", (
+            "run_scan must receive the resolved list, not 'ALL', "
+            f"but got instruments={instruments_passed!r}"
+        )
+        # The resolved list is comma-joined; both instruments must be present.
+        passed_list = [s.strip() for s in instruments_passed.split(",") if s.strip()]
+        assert set(passed_list) == set(resolved_instruments), (
+            f"Expected resolved instruments {resolved_instruments}, "
+            f"but run_scan received {passed_list!r}"
+        )
+
+    def test_cmd_scan_all_dry_run_skips_live_discovery(
+        self, tmp_path: Path
+    ) -> None:
+        """cmd_scan(instruments='ALL', dry_run=True) must NOT call _discover_universe.
+
+        The dry-run path should pass 'ALL' straight through to run_scan,
+        which handles it cache-only (no HTTP, no Settings).
+        """
+        db_path = str(tmp_path / "dry_all.db")
+
+        args = _make_namespace(
+            command="scan",
+            db_path=db_path,
+            instruments="ALL",
+            timeframes="H1",
+            dry_run=True,   # dry-run → skip live discovery
+            history_years=1,
+        )
+
+        with (
+            patch("cli._discover_universe") as mock_discover,
+            patch("signals.scan.run_scan", return_value=[]) as mock_run_scan,
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.cmd_scan(args)
+
+        assert rc == 0
+
+        # _discover_universe must NOT be called on the dry-run path.
+        mock_discover.assert_not_called()
+
+        # run_scan must receive 'ALL' as-is (not a resolved list).
+        mock_run_scan.assert_called_once()
+        run_scan_call = mock_run_scan.call_args
+        instruments_passed = run_scan_call.kwargs.get("instruments", "")
+        assert instruments_passed.strip().upper() == "ALL", (
+            "dry-run path must pass 'ALL' to run_scan unchanged; "
+            f"got instruments={instruments_passed!r}"
+        )
+
+    def test_cmd_scan_explicit_list_skips_live_discovery(
+        self, tmp_path: Path
+    ) -> None:
+        """cmd_scan with an explicit instrument list must NOT call _discover_universe,
+        regardless of dry_run flag.
+        """
+        db_path = str(tmp_path / "explicit.db")
+        candidate = _make_candidate()
+
+        args = _make_namespace(
+            command="scan",
+            db_path=db_path,
+            instruments="EUR_USD,GBP_USD",
+            timeframes="H1",
+            dry_run=False,   # live but explicit — no discovery needed
+            history_years=1,
+        )
+
+        with (
+            patch("cli._discover_universe") as mock_discover,
+            patch("signals.scan.run_scan", return_value=[candidate]) as mock_run_scan,
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.cmd_scan(args)
+
+        assert rc == 0
+
+        # _discover_universe must NOT be called for explicit lists.
+        mock_discover.assert_not_called()
+
+        # run_scan must receive the exact explicit string.
+        mock_run_scan.assert_called_once()
+        run_scan_call = mock_run_scan.call_args
+        instruments_passed = run_scan_call.kwargs.get("instruments", "")
+        assert instruments_passed == "EUR_USD,GBP_USD"
+
+    def test_run_scan_itself_has_no_order_imports(self) -> None:
+        """run_scan (signals.scan) must remain order-free regardless of this fix.
+
+        This is a duplicate guard — the transitive-import test in test_scan.py
+        is the canonical check.  This test confirms the fix did not accidentally
+        add a cli import or order-path import into signals/scan.py.
+        """
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = (
+            "import sys\n"
+            "import signals.scan\n"
+            "modules = list(sys.modules.keys())\n"
+            "forbidden = ['execution.orders', 'execution.models', 'risk.sizing', 'risk.limits', 'cli']\n"
+            "hits = [m for m in forbidden if m in modules]\n"
+            "if hits:\n"
+            "    print('FORBIDDEN:', ','.join(hits))\n"
+            "    sys.exit(1)\n"
+            "sys.exit(0)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).parent.parent),
+        )
+        assert result.returncode == 0, (
+            "signals.scan still has forbidden imports after the fix.\n"
+            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # main() router — all four subcommands registered
 # ---------------------------------------------------------------------------
 

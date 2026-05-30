@@ -1034,6 +1034,24 @@ def cmd_scan(args: argparse.Namespace) -> int:
     the order-free ``run_scan``; this function maps ``args.*`` → kwargs,
     delegates, then does the stdout JSON printing and exit-code conversion.
 
+    Universe resolution (ALL, live mode)
+    -------------------------------------
+    When ``--instruments ALL`` is given and ``--dry-run`` is False, this
+    adapter calls the existing ``_discover_universe`` helper (which triggers a
+    live OANDA ``list_instruments()`` call and caches the result) and passes
+    the resolved explicit instrument list into ``run_scan``.  This restores the
+    original ``cmd_scan`` behaviour: ``fathom scan --instruments ALL`` (live)
+    discovers the full tradeable universe live, not just from cache.
+
+    For ``--dry-run`` and for explicit instrument lists, ``args.instruments``
+    is passed through to ``run_scan`` unchanged — ``run_scan`` handles both
+    the comma-separated and cache-only ALL cases itself.
+
+    ``run_scan`` remains order-free and cache-only for its own ALL discovery
+    (correct for the admin panel, which does not need live discovery).  This
+    adapter is the only place live discovery fires, keeping ``signals.scan``
+    import-clean.
+
     INV-01: this adapter imports only ``signals.scan`` — the order-free path.
         The order/execution imports in this module (the Phase 3 block) are
         isolated to the execute/positions/reconcile command functions; they do
@@ -1047,13 +1065,39 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     from signals.scan import run_scan
 
+    # --- Universe resolution: live ALL-discovery in the CLI adapter. ----------
+    # When the operator runs `fathom scan --instruments ALL` (live, not
+    # --dry-run), we call _discover_universe here (which issues a live
+    # list_instruments() call and caches the result) and pass the resolved
+    # explicit list to run_scan.  run_scan stays cache-only / order-free.
+    # For --dry-run or an explicit list, pass args.instruments through as-is.
+    instruments_for_scan: str = args.instruments
+    dry_run: bool = args.dry_run
+    if args.instruments.strip().upper() == "ALL" and not dry_run:
+        try:
+            resolved = _discover_universe(
+                instruments_arg=args.instruments,
+                db_path=args.db_path,
+                dry_run=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.error("Universe discovery failed: %s", exc)
+            return 1
+        # Pass the resolved list as a comma-joined string so run_scan treats it
+        # as an explicit (non-ALL) list and skips its own cache discovery.
+        instruments_for_scan = ",".join(resolved)
+        _log.info(
+            "cmd_scan: resolved ALL → %d instruments via live discovery.",
+            len(resolved),
+        )
+
     try:
         candidates = run_scan(
             db_path=args.db_path,
-            instruments=args.instruments,
+            instruments=instruments_for_scan,
             timeframes=args.timeframes,
             history_years=args.history_years,
-            dry_run=args.dry_run,
+            dry_run=dry_run,
         )
     except Exception as exc:  # noqa: BLE001
         _log.error("Scan failed: %s", exc)
