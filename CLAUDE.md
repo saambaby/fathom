@@ -25,7 +25,7 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 | Phase 2 | [`docs/phases/phase-2.md`](docs/phases/phase-2.md) | ✅ Code merged · ⏳ T-08 live-Discord acceptance is an operator gate |
 | Phase 3 | [`docs/phases/phase-3.md`](docs/phases/phase-3.md) | ✅ Code merged (10/10 units) · ⏳ T-11 live demo-loop acceptance is an operator gate |
 | Phase 4 | [`docs/phases/phase-4.md`](docs/phases/phase-4.md) | ✅ Code merged (5/5 units) · ⏳ T-06 panel acceptance is an operator gate |
-| Phase 5 | _not yet carved_ | ◻ Not started — go-live decision (product-spec Phase 6, INV-07) |
+| Phase 5 | [`docs/phases/phase-5.md`](docs/phases/phase-5.md) | ✅ Code merged (4/4 guardrail units) · ⛔ T-05 live cutover is operator-only + **INV-07-blocked** (no demo track record yet) |
 
 **Read before starting any session:** `docs/PLAYBOOK.md` (status + method) + `docs/architecture-overview.md` (boundaries) + `docs/invariants.md` (rules) + the active phase doc.
 
@@ -80,6 +80,12 @@ streamlit run panel/app.py    # launch the read-only Streamlit dashboard
 #   streamlit run panel/app.py [-- --db-path PATH]
 #   5 views: Charts (Lightweight Charts + overlays), Equity, Blotter, Watchlist, Deviation Log
 #   Refresh button → signals.scan.run_scan (order-free); never fathom execute
+
+# Phase 5 — go-live guardrails (P5-T-03) — go-live is operator-only + INV-07-blocked
+fathom preflight              # GO/NO-GO live-readiness check (read-only); NO-GO without --attest
+#   fathom preflight [--db-path PATH] [--attest-track-record]
+#   Live cutover: see docs/go-live-runbook.md. ENV=live + LIVE_TRADING_ENABLED +
+#   preflight GO + typed account-id confirm all required; live sizes at LIVE_RISK_FRACTION (0.10%)
 
 # PoC (superseded by `fathom backtest`)
 python scripts/poc_run.py     # end-to-end PoC: fetch candles → backtest → approved-set table
