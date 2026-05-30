@@ -23,7 +23,8 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 | Phase 1 | [`docs/phases/phase-1.md`](docs/phases/phase-1.md) | ✅ Done — 1A 10/72 approved + 1B live stream/calendar |
 | Phase 2 | [`docs/phases/phase-2.md`](docs/phases/phase-2.md) | ✅ Code merged · ⏳ T-08 live-Discord acceptance is an operator gate |
 | Phase 3 | [`docs/phases/phase-3.md`](docs/phases/phase-3.md) | ✅ Code merged (10/10 units) · ⏳ T-11 live demo-loop acceptance is an operator gate |
-| Phase 4 | _not yet carved_ | ◻ Not started — admin panel (product-spec Phase 5) |
+| Phase 4 | [`docs/phases/phase-4.md`](docs/phases/phase-4.md) | ✅ Code merged (5/5 units) · ⏳ T-06 panel acceptance is an operator gate |
+| Phase 5 | _not yet carved_ | ◻ Not started — go-live decision (product-spec Phase 6, INV-07) |
 
 **Read before starting any session:** `docs/PLAYBOOK.md` (status + method) + `docs/architecture-overview.md` (boundaries) + `docs/invariants.md` (rules) + the active phase doc.
 
