@@ -118,12 +118,18 @@ from strategies.trend import DonchianBreakout, MACrossover
 try:
     from config.settings import Settings
     from data.oanda_client import OandaClient
+    from execution.live_gate import (
+        LiveTradingBlocked,
+        assert_live_allowed,
+        effective_risk_fraction,
+    )
     from execution.models import build_bracket
     from execution.orders import OrderRejected, submit_order
+    from execution.preflight import run_preflight
     from execution.reconcile import reconcile
     from hermes_integration.pretrade_check import pretrade_check
     from risk.limits import LimitsConfig, check_limits, kill_switch_status
-    from risk.sizing import DEFAULT_RISK_FRACTION, size_position
+    from risk.sizing import size_position
 except ImportError:  # pragma: no cover
     # During module-level import in environments where execution deps are
     # absent, defer to runtime so the non-execution subcommands still work.
@@ -1474,6 +1480,66 @@ def cmd_execute(args: argparse.Namespace) -> int:
     equity: float = start_of_day_equity + day_pl  # nav = snapshot + today's delta
 
     # ------------------------------------------------------------------
+    # Step 2.5: LIVE-TRADING GATE (P5-T-02) — defense-in-depth, real money.
+    # Only runs on ENV=live; on demo this whole block is skipped, so the demo
+    # path is byte-identical to Phase 3.  Four independent gates, all required:
+    #   env=="live" AND live_trading_enabled AND preflight.go AND typed confirm.
+    # Bias is always to REFUSE: any failure (incl. a preflight EXCEPTION, B-1)
+    # exits non-zero with no order placed and is never interpreted as GO.
+    # The typed account-id confirmation is NOT guarded by --yes (N-3): live
+    # always requires it; the [y/N] confirm below remains demo-only.
+    # ------------------------------------------------------------------
+    if settings.env == "live":
+        # (a) run_preflight — any exception → refuse (never GO).  B-1.
+        store_pf = Store(db_path)
+        try:
+            preflight_report = run_preflight(
+                settings=settings,
+                store=store_pf,
+                client=client,
+                attested=True,  # operator runs `fathom preflight` separately;
+                # the live confirm + the gate are the deliberate operator act here.
+            )
+        except Exception as exc:  # noqa: BLE001  — fail closed.
+            _log.error("execute: live preflight raised, refusing: %s", exc)
+            print(
+                f"LIVE REFUSED: preflight failed unexpectedly ({exc}). "
+                "No order placed.",
+                file=sys.stderr,
+            )
+            store_pf.close()
+            return 1
+        finally:
+            store_pf.close()
+
+        # (b) Typed confirmation — operator types the account id.  NOT --yes
+        #     bypassable (N-3).  Anything but an exact match → confirmed=False.
+        expected_account = settings.oanda_account_id
+        print(
+            "\nLIVE order requested (ENV=live).  Type the OANDA account id "
+            f"to confirm (account: {expected_account}):",
+        )
+        try:
+            typed = input("Account id: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nLIVE REFUSED: no confirmation provided.", file=sys.stderr)
+            return 1
+        confirmed = bool(expected_account) and typed == expected_account
+
+        # (c) The pure four-gate assertion.  LiveTradingBlocked → refuse.
+        try:
+            assert_live_allowed(
+                settings=settings,
+                preflight_report=preflight_report,
+                confirmed=confirmed,
+            )
+        except LiveTradingBlocked as exc:
+            _log.warning("execute: live gate blocked: %s", exc)
+            print(f"LIVE REFUSED: {exc}", file=sys.stderr)
+            return 1
+        _log.info("execute: live gate PASSED — all four gates satisfied.")
+
+    # ------------------------------------------------------------------
     # Step 3: Pretrade check.
     # ``block`` aborts with a clear reason and non-zero exit.
     # ------------------------------------------------------------------
@@ -1554,7 +1620,11 @@ def cmd_execute(args: argparse.Namespace) -> int:
         equity,
         instrument_meta=inst_meta,
         rate=rate,
-        risk_fraction=DEFAULT_RISK_FRACTION,  # 0.0025 — never above INV-05 cap
+        # B-2 / INV-09: the env-aware fraction is selected ONLY here (the gate
+        # layer).  Demo → DEFAULT_RISK_FRACTION (0.0025, numerically unchanged);
+        # live → live_risk_fraction (validated ≤ 0.0025).  size_position itself
+        # is unchanged — the same mechanics run demo and live.
+        risk_fraction=effective_risk_fraction(settings),
     )
     if sizing_result.units == 0:
         _log.warning("execute: sizing rejected: %s", sizing_result.reason)
@@ -1650,8 +1720,10 @@ def cmd_execute(args: argparse.Namespace) -> int:
 
     # ------------------------------------------------------------------
     # Step 6: Interactive confirm (unless --yes) + submit.
+    # N-3: this [y/N] confirm is DEMO-ONLY.  Live confirmation is the typed
+    # account-id prompt in the live gate above, which --yes does NOT bypass.
     # ------------------------------------------------------------------
-    if not skip_confirm:
+    if settings.env != "live" and not skip_confirm:
         summary = (
             f"  Instrument : {order.instrument}\n"
             f"  Direction  : {order.direction.value}\n"
