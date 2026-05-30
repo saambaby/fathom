@@ -1502,6 +1502,55 @@ class Store:
             )
         return result
 
+    def load_fills(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> "list[Fill]":
+        """Return filled/partial ``Fill`` rows ordered newest-first by ``filled_at``.
+
+        Reconstructs the frozen INV-14 ``Fill`` shape for each matching row,
+        mirroring :meth:`get_fill_by_client_order_id`'s reconstruction.  Rejected
+        rows (``status="rejected"``, written by :meth:`write_rejection`) are
+        excluded — they are not valid ``Fill`` objects and are never surfaced
+        through this accessor.
+
+        Args:
+            limit: Maximum number of rows to return (newest first).  ``None``
+                returns all filled/partial rows.
+
+        Returns:
+            A list of ``Fill`` instances, ordered by ``filled_at`` descending
+            (newest first).  Empty when no filled/partial rows exist.
+        """
+        from execution.models import Fill, FillStatus  # local: avoid import cycle
+
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        cursor = self._conn.execute(
+            f"""
+            SELECT client_order_id, broker_trade_id, fill_price, units_filled,
+                   slippage, status, filled_at
+            FROM   fills
+            WHERE  status IN ('filled', 'partial')
+            ORDER  BY filled_at DESC
+            {limit_clause}
+            """
+        )
+        result: list[Fill] = []
+        for row in cursor.fetchall():
+            result.append(
+                Fill(
+                    client_order_id=row[0],
+                    broker_trade_id=row[1],
+                    fill_price=float(row[2]),
+                    units_filled=int(row[3]),
+                    slippage=float(row[4]),
+                    status=FillStatus(row[5]),
+                    filled_at=pd.to_datetime(row[6], utc=True).to_pydatetime(),
+                )
+            )
+        return result
+
     # ------------------------------------------------------------------
     # Parquet archive
     # ------------------------------------------------------------------
