@@ -24,10 +24,11 @@ up. Every prompt block below is copy-paste ready.
 | **Phase 3 — T-11** | Live demo-loop acceptance (proceed→fill→monitor→alert over demo days) | ⏳ **Operator gate** | Needs `ANTHROPIC_API_KEY` + `DISCORD_WEBHOOK_URL` + a sustained demo run. The gate already runs end-to-end on the live practice account and safely aborts without a key (INV-02 verified). |
 | **Phase 4** | Admin panel & hardening (product-spec Phase 5): read-only Streamlit dashboard over the store — per-pair charts (Lightweight Charts), equity curve + drawdown, live blotter, watchlist, deviation log; scan-refresh button | ✅ Code merged | All 5 code/config units merged (#103, #110–114). Read-only — no order surface (INV-01 transitive-import boundary enforced + verified); equity via a new `equity_snapshots` table. Panel boots headless against the demo store. [phase-4-results.md](phases/phase-4-results.md) |
 | **Phase 4 — T-06** | Panel acceptance (operator runs it in a browser over a sustained demo) | ⏳ **Operator gate** | Run `streamlit run panel/app.py -- --db-path data/fathom.db` against live demo data; confirm the 5 views + refresh over a sustained track record. |
-| **Phase 5** | Go-live decision (product-spec Phase 6) | ◻ Not started | Live-endpoint switch + small-size deliberate go-live, gated on the sustained demo track record (INV-07). |
+| **Phase 5** | Go-live decision (product-spec Phase 6): go-live **safety guardrails** — defense-in-depth gate (`ENV=live` + `live_trading_enabled` + `fathom preflight` GO + typed confirm), reduced `live_risk_fraction` (0.10%), the deliberate cutover runbook | ✅ Code merged | All 4 guardrail units merged (#125–128). Default-refuse, demo-safe — **nothing connects live**; INV-09 amended for the env-aware gate. [phase-5-results.md](phases/phase-5-results.md) |
+| **Phase 5 — T-05** | Live cutover (real money) | ⛔ **Operator gate · INV-07-blocked** | The actual flip-to-live — operator-only, deliberate, **blocked until the demo track record exists** (T-08/T-11/T-06 closed + positive). The agent never performs it. See [go-live-runbook.md](go-live-runbook.md). |
 
-**Health (as of last run).** `mypy .` → 0 errors (87 files, strict). `pytest` →
-1040 passed. Both are the merge gate — keep them green.
+**Health (as of last run).** `mypy .` → 0 errors (92 files, strict). `pytest` →
+1179 passed. Both are the merge gate — keep them green.
 
 ### What's next (concrete)
 
