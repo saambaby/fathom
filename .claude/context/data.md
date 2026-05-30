@@ -323,3 +323,53 @@
 CLAUDE.md NOT edited.
 
 **Merge plan:** `gh pr merge 112 --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P4-T-04: panel-data-layer — read-only view models + load_fills (2026-05-29)
+
+**Branch:** `feat/p4-T-04-paneldata` | **PR:** #113
+
+**Files touched:**
+- `data/store.py` — added `load_fills(*, limit=None) -> list[Fill]` (newest-first by
+  `filled_at`, mirrors `get_fill_by_client_order_id` reconstruction, excludes rejected rows).
+- `panel/__init__.py` — new package init (read-only boundary declaration).
+- `panel/data.py` — new; five frozen dataclass view models + five accessor functions.
+- `tests/test_panel_data.py` — 45 new tests.
+
+**View models added (`panel/data.py`):**
+- `EquityPoint(as_of, equity, day_pl, drawdown)` — drawdown = `(running_peak - equity) / running_peak`
+  (fraction ≥ 0, 0 at new peak — A-01 resolution).
+- `BlotterRow` / `BlotterView` — open positions with reconciled `unrealized_pl` passthrough
+  (INV-16 / D-05); `risk_in_use = book_risk_sum(open_positions)` and `risk_budget =
+  book_risk_budget(equity, cfg)` reused from `risk/limits.py` so the panel figure is
+  byte-identical to the kill-switch backstop (DRIFT-02, INV-05).
+- `DeviationRow` — deviation log rows.
+- `Overlay(label, entry, stop, target)` / `ChartData` — chart candles + overlays.
+  A-02 precedence: open `Position` → `"active"`, watchlist `Candidate` → `"proposed"`,
+  both drawn when both exist. `timeframe` kept end-to-end (INV-13); only mapped to
+  `granularity` at the `load_candles` call.
+
+**INV-01 boundary test approach:** AST probe (subprocess) walks `panel/data.py` source
+and asserts no forbidden import (`execution.orders`, `risk.sizing`, `cli`) or forbidden
+name (`build_bracket`) is present in the source AST. An AST-based probe is used rather
+than `sys.modules` walk because `risk/__init__.py` re-exports `risk.sizing` — any import
+from the `risk` package (including the permitted `risk.limits`) would trigger it as a
+package init side effect, giving a false positive on a `sys.modules` scan.
+
+**Gotcha:** `risk/__init__.py` imports `risk.sizing` unconditionally. Any code that imports
+anything from the `risk` package will transitively load `risk.sizing` at runtime, even if
+it only uses `risk.limits`. The AST boundary test correctly scopes this to the panel source.
+If a future refactor needs a `sys.modules` clean boundary, the `risk/__init__.py` should
+be split or `risk.sizing` should be removed from the package-level re-exports.
+
+**AC verification results:**
+- `./.venv/bin/python -m mypy .` → "Success: no issues found in 85 source files", exit 0
+- `./.venv/bin/python -m pytest -q tests/test_panel_data.py` → 45 passed, exit 0
+- `./.venv/bin/python -m pytest -q` (full suite) → 1029 passed, exit 0
+
+**No new dependencies.**
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command, no new doc/feature —
+CLAUDE.md NOT edited.
+
+**Merge plan:** `gh pr merge 113 --squash --delete-branch` (lead action after reviewer pass)
