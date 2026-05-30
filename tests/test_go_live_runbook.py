@@ -348,3 +348,69 @@ def test_attest_track_record_flag_referenced(runbook_text: str) -> None:
         "The runbook must reference 'fathom preflight --attest-track-record' exactly "
         "— this is the shipped flag for the operator attestation."
     )
+
+
+# ---------------------------------------------------------------------------
+# 11. fathom execute uses the colon-delimited candidate-ref form (no --timeframe/--strategy)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_uses_colon_ref_form(runbook_text: str) -> None:
+    """The runbook must show fathom execute with a colon-delimited candidate_ref.
+
+    The execute subparser takes a single positional ``candidate_ref`` in the
+    form ``instrument:timeframe:strategy_name`` (e.g.
+    ``EUR_USD:H1:macrossover_10_50_eur_usd_h1``).  There are no
+    ``--timeframe`` or ``--strategy`` flags — passing those would produce an
+    argparse error at the critical live-execute moment.
+    """
+    # Must contain at least one usage line matching the colon-ref form.
+    colon_ref_pattern = re.compile(
+        r"fathom execute\s+\S+:\S+:\S+",  # e.g. fathom execute EUR_USD:H1:...
+    )
+    generic_ref_pattern = re.compile(
+        r"fathom execute\s+<[^>]+>:<[^>]+>:<[^>]+>",  # generic placeholder form
+    )
+    assert colon_ref_pattern.search(runbook_text) or generic_ref_pattern.search(runbook_text), (
+        "The runbook must show 'fathom execute' with the colon-delimited "
+        "instrument:timeframe:strategy_name form "
+        "(e.g. 'fathom execute EUR_USD:H1:macrossover_10_50_eur_usd_h1'). "
+        "The execute subparser has NO --timeframe or --strategy flags."
+    )
+
+
+def test_execute_no_timeframe_flag(runbook_text: str) -> None:
+    """The runbook must NOT show fathom execute with a --timeframe flag.
+
+    The execute subparser takes only a positional candidate_ref; showing
+    ``fathom execute ... --timeframe ...`` would cause an argparse error.
+    """
+    # Find every line that has both "fathom execute" and "--timeframe".
+    bad_lines = [
+        line
+        for line in runbook_text.splitlines()
+        if "fathom execute" in line and "--timeframe" in line
+    ]
+    assert not bad_lines, (
+        "The runbook must NOT show 'fathom execute' with a '--timeframe' flag — "
+        "that flag does not exist on the execute subparser. "
+        f"Offending line(s): {bad_lines}"
+    )
+
+
+def test_execute_no_strategy_flag(runbook_text: str) -> None:
+    """The runbook must NOT show fathom execute with a --strategy flag.
+
+    The execute subparser takes only a positional candidate_ref; showing
+    ``fathom execute ... --strategy ...`` would cause an argparse error.
+    """
+    bad_lines = [
+        line
+        for line in runbook_text.splitlines()
+        if "fathom execute" in line and "--strategy" in line
+    ]
+    assert not bad_lines, (
+        "The runbook must NOT show 'fathom execute' with a '--strategy' flag — "
+        "that flag does not exist on the execute subparser. "
+        f"Offending line(s): {bad_lines}"
+    )

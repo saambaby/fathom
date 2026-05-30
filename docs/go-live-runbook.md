@@ -131,11 +131,20 @@ covers the ramp schedule.
 
 ### Step 4 — Execute one small candidate (typed account-id confirmation)
 
-Select a single small candidate from the current watchlist:
+Select a single small candidate from the current watchlist. The `execute`
+subcommand takes a single positional `candidate_ref` in the form
+`instrument:timeframe:strategy_name` — there are no `--timeframe` or
+`--strategy` flags:
 
 ```bash
-fathom execute <instrument> --timeframe <TF> --strategy <name>
+fathom execute <instrument>:<timeframe>:<strategy_name>
+# e.g.
+fathom execute EUR_USD:H1:macrossover_10_50_eur_usd_h1
 ```
+
+Optional flags: `--db-path PATH` (default `data/fathom.db`), `--dry-run`
+(runs gate steps 1–5 without submitting), `--yes` (skips the demo-only
+`[y/N]` confirm — does NOT bypass the live typed account-id confirmation).
 
 When prompted, type the OANDA live account ID exactly to confirm. This is not
 bypassable with `--yes` or any flag. The gate requires all four conditions:
