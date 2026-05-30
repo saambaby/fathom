@@ -95,6 +95,8 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 **Enforcement:** No `if env == 'live':` branches in logic code. Only `oanda_client.py` reads `env` to select the endpoint.
 
+**Enforcement (operator-boundary go-live gate — added Phase 5):** The single-code-path rule governs the **execution, risk, and monitoring mechanics** — `risk/sizing.py`, `execution/orders.py`, `execution/reconcile.py`, and the deviation monitor must contain **no** `env`-aware branches and must not read `settings.env`. The go-live **safety gate** is the one sanctioned exception: `execution/live_gate.py` (`assert_live_allowed`, `effective_risk_fraction`) and the `fathom execute`/`fathom preflight` wiring in `cli.py` may read `settings.env`, `settings.live_trading_enabled`, and `settings.live_risk_fraction` **solely to select the operator-boundary gate behaviour and the risk-fraction *input***. It must not alter the mechanics: the same `size_position`/`build_bracket`/`submit_order` code runs demo and live; only the injected `risk_fraction` value and the pre-submit gate differ. `oanda_client.py` remains the only reader of `env` for **endpoint** selection. A test asserts no `env`-aware branch exists in `risk/sizing.py`, `execution/orders.py`, `execution/reconcile.py`, or the monitor.
+
 ---
 
 ## INV-10 · Approved-Set Gate — No Signal Without Validation

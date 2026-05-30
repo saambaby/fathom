@@ -1,6 +1,6 @@
 # Feature: go-live-runbook
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 5
 **Owner.** saambaby
 **Last updated.** 2026-05-30
@@ -30,9 +30,11 @@ A markdown runbook (e.g. `docs/go-live-runbook.md` or
   `live_trading_enabled=True`; `fathom execute` a single small candidate (typed
   confirmation) at `live_risk_fraction` (0.10%); watch it fill + bracket;
   `scripts/run_monitor.py` running; `fathom reconcile` matches broker truth.
-- **Small-size start + ramp:** begin at 0.10%; ramp toward 0.25% only after a
-  documented live track record; the ramp is a deliberate operator decision, never
-  automatic.
+- **Small-size start + ramp:** begin at 0.10% (`LIVE_RISK_FRACTION=0.001` in `.env`);
+  ramp toward 0.25% only after a documented live track record, by editing
+  `LIVE_RISK_FRACTION` — the settings-time `Field(le=0.0025)` validator rejects any
+  ramp typo above the INV-05 cap at startup. The ramp is a deliberate operator
+  decision, never automatic.
 - **Rollback:** how to immediately stand down — set `live_trading_enabled=False`
   (instant: the gate refuses), `ENV=demo`, flatten/close open live positions via the
   operator path, and the daily-loss kill switch as the automated backstop.
