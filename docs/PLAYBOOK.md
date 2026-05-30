@@ -22,10 +22,12 @@ up. Every prompt block below is copy-paste ready.
 | **Phase 2 — T-08** | Live Discord acceptance of the daily watchlist job | ⏳ **Operator gate** | Blocked on human: needs a configured Hermes + Discord webhook + Anthropic key. See *What's next*. |
 | **Phase 3** | Risk + execution + monitoring (demo): sizing (0.25% cap), limits + daily kill switch, atomic bracketed idempotent order placement, broker-truth reconciliation, always-on deviation monitor + alerts, `fathom execute` gate | ✅ Code merged | All 10 code/config units merged (#75, #87–96). Order authority gained — kept on the deterministic side of INV-01 (operator CLI, never a Hermes tool). Promoted **INV-14/15/16**. [phase-3-results.md](phases/phase-3-results.md) |
 | **Phase 3 — T-11** | Live demo-loop acceptance (proceed→fill→monitor→alert over demo days) | ⏳ **Operator gate** | Needs `ANTHROPIC_API_KEY` + `DISCORD_WEBHOOK_URL` + a sustained demo run. The gate already runs end-to-end on the live practice account and safely aborts without a key (INV-02 verified). |
-| **Phase 4** | Admin panel & hardening (product-spec Phase 5) | ◻ Not started | Streamlit + Lightweight Charts: charts, blotter, equity curve, watchlist, deviation log. |
+| **Phase 4** | Admin panel & hardening (product-spec Phase 5): read-only Streamlit dashboard over the store — per-pair charts (Lightweight Charts), equity curve + drawdown, live blotter, watchlist, deviation log; scan-refresh button | ✅ Code merged | All 5 code/config units merged (#103, #110–114). Read-only — no order surface (INV-01 transitive-import boundary enforced + verified); equity via a new `equity_snapshots` table. Panel boots headless against the demo store. [phase-4-results.md](phases/phase-4-results.md) |
+| **Phase 4 — T-06** | Panel acceptance (operator runs it in a browser over a sustained demo) | ⏳ **Operator gate** | Run `streamlit run panel/app.py -- --db-path data/fathom.db` against live demo data; confirm the 5 views + refresh over a sustained track record. |
+| **Phase 5** | Go-live decision (product-spec Phase 6) | ◻ Not started | Live-endpoint switch + small-size deliberate go-live, gated on the sustained demo track record (INV-07). |
 
-**Health (as of last run).** `mypy .` → 0 errors (79 files, strict). `pytest` →
-955 passed. Both are the merge gate — keep them green.
+**Health (as of last run).** `mypy .` → 0 errors (87 files, strict). `pytest` →
+1040 passed. Both are the merge gate — keep them green.
 
 ### What's next (concrete)
 
