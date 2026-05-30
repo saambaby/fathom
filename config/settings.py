@@ -11,7 +11,7 @@ Usage:
 
 from typing import Literal, Optional
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BASE_URLS: dict[str, str] = {
@@ -48,6 +48,25 @@ class Settings(BaseSettings):
     oanda_account_id: str
     oanda_base_url: str = ""
     discord_webhook_url: Optional[SecretStr] = None
+
+    # --- Phase 5: live-trading gate fields (INV-05 / INV-07) ----------------
+    #: Enable live-order placement. Defaults to ``False`` — an explicit opt-in
+    #: is required before a live `fathom execute` can proceed (D-P5-2).
+    live_trading_enabled: bool = False
+
+    #: Per-trade risk fraction for live orders.  Validated ≤ 0.0025 (the
+    #: INV-05 per-trade cap) so a ``.env`` typo can never exceed the cap (B-5).
+    #: Default 0.001 (0.10%) — the reduced initial live size (D-P5-3).
+    live_risk_fraction: float = Field(
+        default=0.001,
+        gt=0.0,
+        le=0.0025,
+        description=(
+            "Per-trade risk fraction for live orders (default 0.001 = 0.10%). "
+            "Must be > 0 and ≤ 0.0025 (the INV-05 0.25% per-trade cap). "
+            "Validated at Settings construction so a .env typo raises immediately."
+        ),
+    )
 
     @model_validator(mode="after")
     def derive_base_url(self) -> "Settings":

@@ -26,6 +26,7 @@ from risk.limits import (
     book_risk_budget,
     book_risk_sum,
     check_limits,
+    kill_switch_armed,
     kill_switch_status,
     position_risk,
 )
@@ -506,3 +507,124 @@ class TestPurity:
         _check(order, open_positions=positions, returns=returns)
         assert len(positions) == n_before
         assert set(returns.keys()) == keys_before
+
+
+# ---------------------------------------------------------------------------
+# kill_switch_armed — P5-T-01 (preflight readiness helper, B-3 semantics).
+# ---------------------------------------------------------------------------
+
+
+class TestKillSwitchArmed:
+    """kill_switch_armed(account_state, now, config=...) -> (bool, reason).
+
+    Armed + healthy ≡ present + fresh (within 10 min) + not tripped.
+    Each of the three failure modes returns (False, named_reason).
+    """
+
+    # RFC 3339 UTC timestamp 5 minutes before NOW — fresh.
+    _FRESH_AS_OF = "2026-05-29T11:55:00Z"
+    # 15 minutes before NOW — stale (> default 10-min window).
+    _STALE_AS_OF = "2026-05-29T11:45:00Z"
+
+    def _state(
+        self,
+        *,
+        as_of: str = _FRESH_AS_OF,
+        day_pl: float = 0.0,
+        start_of_day_equity: float = SOD_EQUITY,
+    ) -> dict[str, object]:
+        return {
+            "start_of_day_equity": start_of_day_equity,
+            "day_pl": day_pl,
+            "as_of": as_of,
+        }
+
+    def test_armed_when_present_fresh_not_tripped(self) -> None:
+        armed, reason = kill_switch_armed(
+            self._state(), NOW, config=LimitsConfig()
+        )
+        assert armed is True
+        assert reason == ""
+
+    def test_missing_returns_false_missing(self) -> None:
+        armed, reason = kill_switch_armed(None, NOW, config=LimitsConfig())
+        assert armed is False
+        assert reason == "missing"
+
+    def test_stale_returns_false_stale(self) -> None:
+        armed, reason = kill_switch_armed(
+            self._state(as_of=self._STALE_AS_OF), NOW, config=LimitsConfig()
+        )
+        assert armed is False
+        assert reason == "stale"
+
+    def test_exactly_at_staleness_boundary_is_not_stale(self) -> None:
+        # Exactly 10 minutes old: age == timedelta(minutes=10) — NOT stale
+        # (boundary is >, not >=).
+        exactly_10_ago = "2026-05-29T11:50:00Z"
+        armed, reason = kill_switch_armed(
+            self._state(as_of=exactly_10_ago), NOW, config=LimitsConfig()
+        )
+        assert armed is True
+        assert reason == ""
+
+    def test_one_second_over_staleness_is_stale(self) -> None:
+        one_sec_over = "2026-05-29T11:49:59Z"
+        armed, reason = kill_switch_armed(
+            self._state(as_of=one_sec_over), NOW, config=LimitsConfig()
+        )
+        assert armed is False
+        assert reason == "stale"
+
+    def test_tripped_returns_false_tripped(self) -> None:
+        # day_pl at/below the cap trips the switch.
+        armed, reason = kill_switch_armed(
+            self._state(day_pl=-SOD_EQUITY * LimitsConfig().daily_loss_cap),
+            NOW,
+            config=LimitsConfig(),
+        )
+        assert armed is False
+        assert reason == "tripped"
+
+    def test_over_cap_also_tripped(self) -> None:
+        armed, reason = kill_switch_armed(
+            self._state(day_pl=-5000.0), NOW, config=LimitsConfig()
+        )
+        assert armed is False
+        assert reason == "tripped"
+
+    def test_custom_staleness_minutes_respected(self) -> None:
+        # 5 minutes old is fresh with default window=10 but stale with window=4.
+        five_min_ago = "2026-05-29T11:55:00Z"
+        armed_default, _ = kill_switch_armed(
+            self._state(as_of=five_min_ago), NOW, config=LimitsConfig(),
+            staleness_minutes=10,
+        )
+        armed_short, reason_short = kill_switch_armed(
+            self._state(as_of=five_min_ago), NOW, config=LimitsConfig(),
+            staleness_minutes=4,
+        )
+        assert armed_default is True
+        assert armed_short is False
+        assert reason_short == "stale"
+
+    def test_pure_identical_inputs_identical_result(self) -> None:
+        state = self._state()
+        r1 = kill_switch_armed(state, NOW, config=LimitsConfig())
+        r2 = kill_switch_armed(state, NOW, config=LimitsConfig())
+        assert r1 == r2
+
+    def test_reuses_kill_switch_status_logic_for_tripped(self) -> None:
+        """kill_switch_armed's tripped decision must agree with kill_switch_status."""
+        day_pl = -1500.0
+        state = self._state(day_pl=day_pl)
+        armed, reason = kill_switch_armed(state, NOW, config=LimitsConfig())
+        status = kill_switch_status(
+            day_pl=day_pl,
+            start_of_day_equity=SOD_EQUITY,
+            config=LimitsConfig(),
+            now=NOW,
+        )
+        assert armed is not status.active  # if tripped → not armed
+        assert reason == "tripped"
+        assert status.active is True

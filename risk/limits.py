@@ -70,6 +70,7 @@ __all__ = [
     "book_risk_budget",
     "check_limits",
     "kill_switch_status",
+    "kill_switch_armed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -479,3 +480,71 @@ def kill_switch_status(
         cap_amount=cap_amount,
         reset_at=_next_utc_midnight(now),
     )
+
+
+def kill_switch_armed(
+    account_state: "dict[str, object] | None",
+    now: datetime,
+    *,
+    config: LimitsConfig,
+    staleness_minutes: int = 10,
+) -> tuple[bool, str]:
+    """Report whether the kill switch is "armed and healthy" for preflight.
+
+    "Armed and healthy" means the account state is present, its ``as_of``
+    timestamp is within ``staleness_minutes`` of ``now`` (UTC, INV-03), **and**
+    the kill switch is not currently tripped (``KillSwitchStatus.active is
+    False``).  Any of these failing returns ``(False, reason)`` naming why.
+
+    This is the single source of truth for the kill-switch readiness used by
+    the preflight check (P5-T-03).  It reuses :func:`kill_switch_status`
+    internally so the tripped/not-tripped logic is never duplicated.
+
+    Args:
+        account_state: The dict returned by ``store.load_account_state()``
+            (keys: ``start_of_day_equity``, ``day_pl``, ``as_of``), or
+            ``None`` when reconciliation has never written a row.
+        now: UTC-aware current time (INV-03).  Never use ``datetime.now()``
+            without a timezone — pass ``datetime.now(timezone.utc)``.
+        config: Book-level limits config; the ``daily_loss_cap`` is used to
+            evaluate whether the switch is tripped.
+        staleness_minutes: Maximum age of ``account_state.as_of`` (in minutes)
+            before the state is considered stale and the function returns
+            ``(False, "stale")``.  Default 10 (D-P5-B).
+
+    Returns:
+        ``(True, "")`` iff all three conditions hold: present, fresh, not
+        tripped.  ``(False, reason)`` otherwise, where ``reason`` is one of
+        ``"missing"`` (no account_state row), ``"stale"`` (as_of too old), or
+        ``"tripped"`` (kill switch active).
+    """
+    if account_state is None:
+        return False, "missing"
+
+    # Parse as_of — stored as RFC 3339 UTC string (INV-03); handle "Z" suffix.
+    as_of_raw = str(account_state["as_of"])
+    as_of_str = as_of_raw.rstrip("Z") if as_of_raw.endswith("Z") else as_of_raw
+    as_of_dt = datetime.fromisoformat(as_of_str).replace(tzinfo=timezone.utc)
+
+    # Normalise now to UTC (guard against naive callers, per _next_utc_midnight).
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    age = now - as_of_dt
+    if age > timedelta(minutes=staleness_minutes):
+        return False, "stale"
+
+    day_pl_val: float = float(account_state["day_pl"])  # type: ignore[arg-type]
+    sod_equity_val: float = float(account_state["start_of_day_equity"])  # type: ignore[arg-type]
+    status = kill_switch_status(
+        day_pl=day_pl_val,
+        start_of_day_equity=sod_equity_val,
+        config=config,
+        now=now,
+    )
+    if status.active:
+        return False, "tripped"
+
+    return True, ""
