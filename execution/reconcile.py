@@ -541,4 +541,31 @@ def reconcile(
     report.start_of_day_equity = start_of_day_equity
     report.day_pl = day_pl
     report.snapshotted_today = snapshotted
+
+    # equity-snapshots (P4-T-03): append one immutable broker-sourced equity
+    # point for the panel's equity curve, reusing the figures we just wrote to
+    # account_state — equity == broker.nav (INV-16), day_pl == nav − sod_equity.
+    # STRICTLY AFTER write_account_state so a snapshot-write failure can never
+    # delay or interpose before the kill switch's broker-truth row.  Purely
+    # additive and NON-FATAL: a failure here is logged at WARNING and swallowed
+    # — broker-truth reconciliation must never abort over a history append.
+    try:
+        # Local import keeps reconcile's module-level import discipline intact
+        # (data.store is otherwise TYPE_CHECKING-only here) and reuses the store's
+        # RFC 3339 helper so this as_of byte-matches the account_state.as_of just
+        # written from the same `now` (INV-03).
+        from data.store import _to_rfc3339
+
+        store.write_equity_snapshot(
+            as_of=_to_rfc3339(now),
+            equity=broker.nav,
+            day_pl=day_pl,
+        )
+    except Exception:  # noqa: BLE001 — snapshot is best-effort, never fatal
+        logger.warning(
+            "equity snapshot append failed (non-fatal; reconcile broker-truth "
+            "already committed)",
+            exc_info=True,
+        )
+
     return report
