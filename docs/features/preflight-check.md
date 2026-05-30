@@ -1,6 +1,6 @@
 # Feature: preflight-check
 
-**Status.** draft
+**Status.** ready
 **Phase.** Phase 5
 **Owner.** saambaby
 **Last updated.** 2026-05-30
@@ -20,7 +20,7 @@ no orders and changes no state.
 
 - `execution/preflight.py` — `run_preflight(*, settings, store, client=None, attested: bool = False) -> PreflightReport`:
   - **Account reachable** — an account-summary read succeeds (uses the injected client; on demo this hits practice, never live unless the operator has already set ENV=live).
-  - **Kill switch** — `risk/limits.py` reports the daily-loss kill switch is *armed and not tripped* for the current `account_state`.
+  - **Kill switch (B-3 — concrete shipped semantics):** there is no "armed" field on the shipped API. Preflight loads `store.load_account_state()` and calls `risk.limits.kill_switch_status(day_pl=…, start_of_day_equity=…, config=LimitsConfig(), now=…)`. **"Armed and healthy" ≡ `account_state is not None` AND its `as_of` is within the staleness window (default 10 min of `now`) AND `KillSwitchStatus.active is False` (not tripped).** NO-GO if `account_state` is missing, stale, or the switch is tripped (`active is True`). For single-source reuse (à la `book_risk_sum`, P4-T-02), extract a small **`kill_switch_armed(account_state, now, config) -> (bool, reason)`** into `risk/limits.py` and have preflight call it (coordinator-serialized edit to the shipped `risk/limits.py`).
   - **Brackets/INV-04** — confirms the execution path enforces SL+TP (a static check that `build_bracket`/order submission can't produce a naked order — e.g. config/contract assertion).
   - **Env/flag/token consistency** — if `ENV=live`, a live-shaped token + `oanda_account_id` are present; `live_trading_enabled` state is reported; no demo/live mismatch.
   - **Track-record attestation** — `attested` must be True (the operator asserts the demo track record per INV-07); preflight **does not** judge edge quality itself.
@@ -31,7 +31,7 @@ no orders and changes no state.
 
 - [ ] `run_preflight` returns `go=False` if ANY check fails, with the failing check(s) named in the report; `go=True` only when **all** mechanical checks pass **and** `attested=True`.
 - [ ] Track-record attestation is required: `attested=False` → NO-GO with a reason pointing at INV-07 (preflight never green-lights live on its own).
-- [ ] Kill-switch check is NO-GO when the switch is tripped or `account_state` is missing/stale; GO when armed and not tripped.
+- [ ] Kill-switch check is NO-GO when `account_state is None`, when its `as_of` is older than the staleness window (default 10 min), or when `kill_switch_status(...).active is True` (tripped); GO only when present + fresh + not tripped (`kill_switch_armed` returns True). A test pins each case.
 - [ ] Env/flag/token consistency: `ENV=live` without a token/account or with `live_trading_enabled=False` is reported clearly (NO-GO or a flagged warning per the rules); demo is always internally consistent.
 - [ ] `fathom preflight` exits 0 on GO, non-zero on NO-GO; prints per-check status; **places no order and writes no state** (read-only — a test asserts no order/write capability).
 - [ ] No secret (token) is printed (INV-08); all timestamps UTC (INV-03).
@@ -61,21 +61,29 @@ practice account; it never forces a live connection.
 
 ## Depends on
 
-- `config/settings.py` (env + the new flags from [[live-trading-gate]] — preflight *reports* `live_trading_enabled`; the flag itself is added by that spec, so coordinate ordering), `risk/limits.py` (kill-switch armed/tripped state), `data/store.py` (`load_account_state`), `data/oanda_client.py` (account-summary read).
+- [[live-trading-gate]] (lands its settings fields **first** — preflight reads `live_trading_enabled` directly), `risk/limits.py` (`kill_switch_status` + the new `kill_switch_armed` helper this spec extracts — coordinator-serialized edit to the shipped file), `data/store.py` (`load_account_state`), `data/oanda_client.py` (`account_summary` read).
 
 ## Approach
 
-Build the pure `run_preflight` + report first (full offline tests with a seeded
-store + stub client), then the thin `fathom preflight` CLI command. Note: it reports
-`live_trading_enabled`, which [[live-trading-gate]] adds to settings — if drafted
-first, gate the report behind a `getattr` default or sequence after the flag lands.
+Build order (N-1, resolved): [[live-trading-gate]]'s settings fields land **first**,
+so this spec reads `live_trading_enabled`/`live_risk_fraction` **directly — no
+`getattr` hedge**. Add the `kill_switch_armed` helper to `risk/limits.py`
+(coordinator-serialized), then build the pure `run_preflight` + report (full offline
+tests with a seeded store + stub client), then the thin `fathom preflight` CLI
+command (the second Phase-5 `cli.py` edit, after the gate's — see N-2 in the
+taskgraph).
 
 ## Open questions
 
-- Exact check set — propose the five above; confirm whether "brackets/INV-04" is a
-  static contract assertion or a dry-run order construction (lean static).
-- Attestation marker — a CLI flag (`--attest-track-record`) for now vs a persisted
-  signed-off record. Propose the flag for Phase 5; a persisted marker later.
+- "brackets/INV-04" check — static contract assertion vs a dry-run order
+  construction. Lean **static** (assert the order/bracket contract can't yield a
+  naked order); confirm.
+
+**Resolved at cross-spec audit (2026-05-30):** B-3 — concrete `kill_switch_status`
+semantics + a defined 10-min staleness window + the `kill_switch_armed` extraction
+(no phantom "armed" API); N-1 — build order pinned, `getattr` hedge dropped.
+Attestation marker = the `--attest-track-record` CLI flag for Phase 5 (a persisted
+signed-off record later).
 
 ## Out of scope
 
