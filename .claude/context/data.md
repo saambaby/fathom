@@ -261,3 +261,65 @@
 **CLAUDE.md trigger-table:** pyproject.toml dep added → CLAUDE.md Stack updated (YES).
 
 **Merge plan:** `gh pr merge 46 --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P4-T-03 — 2026-05-29 (feat/p4-T-03-equity)
+
+**What was done:**
+- Added the `equity_snapshots` table to `data/store.py` — an APPEND-ONLY broker-sourced
+  equity time series for the panel's equity curve. Columns: `as_of` (TEXT, UTC RFC-3339 /
+  INV-03), `equity` (REAL, broker NAV / INV-16), `day_pl` (REAL, `nav − start_of_day_equity`).
+  - `_CREATE_EQUITY_SNAPSHOTS_SQL` — **no PK / no unique constraint** (deliberate): every
+    reconcile pass yields a distinct `rowid`, so history is never clobbered. Wired into
+    `_create_tables` via `CREATE TABLE IF NOT EXISTS` (additive migration).
+  - `_INSERT_EQUITY_SNAPSHOT_SQL` — plain `INSERT` (NOT `INSERT OR REPLACE/IGNORE` — those
+    would defeat append-only; contrast with the `account_state` SINGLETON `id=1` row).
+  - `write_equity_snapshot(*, as_of: str, equity: float, day_pl: float) -> None` — note the
+    signature takes `as_of` as an already-formatted RFC-3339 **str** (per the feature spec),
+    unlike `write_account_state` which takes a `datetime` and formats internally.
+  - `load_equity_snapshots(*, since: str | None = None) -> list[dict]` — ordered by `as_of`
+    ASC; `since` is an INCLUSIVE (`>=`) lower bound, works lexicographically because RFC-3339
+    UTC `Z` strings sort chronologically (same trick as `load_watchlist`).
+- Added the snapshot append to `execution/reconcile.py`, **STRICTLY AFTER**
+  `store.write_account_state(...)`, reusing already-computed `broker.nav` + `day_pl` (no new
+  broker call). The `as_of` is the reconcile `now` formatted via `data.store._to_rfc3339` so
+  it byte-matches the `account_state.as_of` written from the same `now`.
+  - Import of `_to_rfc3339` is **local** (inside the guarded block) — keeps reconcile's
+    module-level import discipline intact (`data.store` is otherwise TYPE_CHECKING-only there,
+    to avoid an import cycle) and only runs on the snapshot path.
+  - Wrapped in a **NON-FATAL guard** (`try/except Exception` → `logger.warning(..., exc_info=True)`):
+    a snapshot-write failure never aborts the reconcile. Broker-truth (the kill switch's
+    `account_state` row) is already committed before the append is attempted, so a failure
+    here cannot delay or interpose before it.
+
+**Behaviour-preserving guarantee (the load-bearing claim):**
+- ZERO change to the diff/adopt/close/refresh logic, the `account_state` write, or the
+  `ReconcileReport`. **All 18 existing `tests/test_reconciliation.py` tests pass UNCHANGED.**
+- Store-edit ownership (D-03): this task OWNS the `equity_snapshots` migration and **lands
+  first** on `data/store.py`. P4-T-04 (panel-data-layer) will later add `load_fills` to the
+  same file — serialized after, not parallel.
+
+**Tests (`tests/test_equity_snapshots.py`, 12 tests):**
+- Store: empty store → `[]`; round-trip; append-only (two writes at SAME `as_of` → two rows);
+  ascending order from out-of-order inserts; `since` inclusive filter; `since=None` returns all.
+- Reconcile (v20 mocked via `responses`): one snapshot per pass with `equity == broker.nav`
+  and `day_pl == nav − start_of_day_equity` (== `ReconcileReport.day_pl` == `account_state`);
+  drawdown second-pass (`day_pl == -50`, NOT the lifetime `pl`); two reconciles → two ordered
+  points; **call-order spy** proving `account_state` write precedes the snapshot; non-fatal
+  guard (snapshot raise → reconcile still returns, account_state still written, WARNING logged,
+  no partial row).
+- Reuses helpers imported from `tests.test_reconciliation` (`_client`, `_register`,
+  `_summary_response`, `_open_trades_response`, `NOW`, `OPEN_TRADES_URL`, `SUMMARY_URL`).
+
+**AC verification results:**
+- `./.venv/bin/python -m mypy .` → "Success: no issues found in 82 source files", exit 0
+- `./.venv/bin/python -m pytest -q tests/test_equity_snapshots.py` → 12 passed, exit 0
+- `./.venv/bin/python -m pytest -q tests/test_reconciliation.py` → 18 passed (UNCHANGED), exit 0
+- `./.venv/bin/python -m pytest -q` (full suite) → 984 passed, exit 0
+
+**No new dependencies** (sqlite3 stdlib; `responses` already a dev dep).
+**CLAUDE.md trigger-table check:** no new dep, no new CLI command, no new doc/feature —
+CLAUDE.md NOT edited.
+
+**Merge plan:** `gh pr merge 112 --squash --delete-branch` (lead action after reviewer pass)
