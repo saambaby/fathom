@@ -76,8 +76,12 @@ Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the exist
 | panel-data-layer | `panel/data.py` read-only accessors + view models (blotter incl. risk-in-use, equity series + drawdown, watchlist, deviation log, chart data); the tested seam | [panel-data-layer.md](panel-data-layer.md) | ready |
 | admin-panel | Streamlit app: 5 views + Lightweight Charts overlays + scan-refresh button; INV-01 transitive read-only boundary | [admin-panel.md](admin-panel.md) | ready |
 
-## Later — go-live (impl-Phase 5)
+## Phase 5 — go-live decision, real money (specs drafted; cross-spec audit pending)
 
-| Feature | Summary | Status |
-|---|---|---|
-| go-live | live-endpoint switch + small-size deliberate go-live decision (product-spec Phase 6, INV-07) | planned |
+Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cutover is INV-07-blocked** (no demo track record yet) and operator-only; nothing here flips live or wires the live token. See [phase-5.md](../phases/phase-5.md).
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| preflight-check | `fathom preflight` GO/NO-GO readiness (account/kill-switch/brackets/env consistency + operator track-record attestation); read-only | [preflight-check.md](preflight-check.md) | draft |
+| live-trading-gate | defense-in-depth live gate (ENV=live + `live_trading_enabled` + preflight pass + typed confirm) + reduced `live_risk_fraction` (0.10%); pure, default-refuse | [live-trading-gate.md](live-trading-gate.md) | draft |
+| go-live-runbook | the deliberate reviewed cutover procedure (INV-07 prerequisite, gate sequence, small-size start, rollback) — doc/config artifact | [go-live-runbook.md](go-live-runbook.md) | draft |
