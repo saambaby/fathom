@@ -73,6 +73,12 @@ fathom positions              # print open Position[] JSON from the store
 fathom reconcile              # run one broker-truth reconcile pass, print ReconcileReport JSON
 #   fathom reconcile [--db-path PATH]
 
+# Phase 4 — admin panel (P4-T-05)
+streamlit run panel/app.py    # launch the read-only Streamlit dashboard
+#   streamlit run panel/app.py [-- --db-path PATH]
+#   5 views: Charts (Lightweight Charts + overlays), Equity, Blotter, Watchlist, Deviation Log
+#   Refresh button → signals.scan.run_scan (order-free); never fathom execute
+
 # PoC (superseded by `fathom backtest`)
 python scripts/poc_run.py     # end-to-end PoC: fetch candles → backtest → approved-set table
 
