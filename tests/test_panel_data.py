@@ -325,6 +325,64 @@ class TestEquitySeries:
         pts = equity_series(store)
         assert pts[0].as_of.endswith("Z"), "as_of must be RFC 3339 with Z suffix (INV-03)"
 
+    # --- Negative / blown-account edge cases (bug fix: running_peak init) ---
+
+    def test_first_snapshot_negative_equity_no_crash(self) -> None:
+        # Regression: running_peak initialised to 0.0 caused ZeroDivisionError
+        # when the first equity was negative (blown demo account).
+        # First point must always have drawdown == 0.0 regardless of sign.
+        store = _store()
+        store.write_equity_snapshot(
+            as_of="2026-05-29T12:00:00Z", equity=-500.0, day_pl=-10_500.0
+        )
+        pts = equity_series(store)
+        assert isinstance(pts, list), "equity_series must return a list, not raise"
+        assert len(pts) == 1
+        assert pts[0].drawdown == 0.0
+
+    def test_equity_crosses_zero_no_crash(self) -> None:
+        # Series: positive → negative.  Points whose running_peak <= 0 must
+        # report drawdown == 0.0 (degrade gracefully, never crash).
+        store = _store()
+        store.write_equity_snapshot(
+            as_of="2026-05-29T10:00:00Z", equity=1_000.0, day_pl=0.0
+        )
+        store.write_equity_snapshot(
+            as_of="2026-05-29T11:00:00Z", equity=-200.0, day_pl=-1_200.0
+        )
+        store.write_equity_snapshot(
+            as_of="2026-05-29T12:00:00Z", equity=-500.0, day_pl=-1_500.0
+        )
+        pts = equity_series(store)
+        assert isinstance(pts, list), "equity_series must not raise on zero-crossing"
+        assert len(pts) == 3
+        # First point: new peak → drawdown = 0.0
+        assert pts[0].drawdown == 0.0
+        # Second point: equity fell below the positive peak → valid drawdown
+        # running_peak = 1_000; drawdown = (1000 - (-200)) / 1000 = 1.2
+        assert abs(pts[1].drawdown - 1.2) < 1e-9
+        # Third point: equity fell further; running_peak still 1_000 (> 0)
+        # drawdown = (1000 - (-500)) / 1000 = 1.5
+        assert abs(pts[2].drawdown - 1.5) < 1e-9
+
+    def test_existing_positive_range_unchanged(self) -> None:
+        # Confirm the normal-range behaviour is identical after the fix.
+        store = _store()
+        store.write_equity_snapshot(
+            as_of="2026-05-29T12:00:00Z", equity=10_000.0, day_pl=0.0
+        )
+        store.write_equity_snapshot(
+            as_of="2026-05-29T13:00:00Z", equity=10_500.0, day_pl=500.0
+        )
+        store.write_equity_snapshot(
+            as_of="2026-05-29T14:00:00Z", equity=10_200.0, day_pl=200.0
+        )
+        pts = equity_series(store)
+        assert pts[0].drawdown == 0.0
+        assert pts[1].drawdown == 0.0  # new peak
+        expected = (10_500.0 - 10_200.0) / 10_500.0
+        assert abs(pts[2].drawdown - expected) < 1e-9
+
 
 # ===========================================================================
 # blotter — risk_in_use, risk_budget, unrealized_pl passthrough

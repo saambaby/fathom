@@ -283,7 +283,10 @@ def equity_series(
         return []
 
     points: list[EquityPoint] = []
-    running_peak: float = 0.0
+    # Initialise to the first row's equity so the first point is always a
+    # peak (drawdown = 0.0), even when equity is negative (blown account).
+    first_row = raw[0]
+    running_peak: float = float(first_row["equity"])  # type: ignore[arg-type]
 
     for row in raw:
         as_of = str(row["as_of"])
@@ -295,8 +298,13 @@ def equity_series(
             running_peak = equity
             drawdown = 0.0
         else:
-            # running_peak > 0 guaranteed after the first iteration.
-            drawdown = (running_peak - equity) / running_peak
+            # Guard: running_peak <= 0 means a degenerate/blown account —
+            # the drawdown fraction is undefined for a non-positive peak so
+            # degrade gracefully rather than crash.
+            if running_peak > 0:
+                drawdown = (running_peak - equity) / running_peak
+            else:
+                drawdown = 0.0
 
         points.append(
             EquityPoint(
