@@ -361,3 +361,73 @@ CREATE TABLE IF NOT EXISTS watchlist (
 `fathom reconcile` → CLAUDE.md Commands section updated (YES).
 
 **Merge plan:** `gh pr merge 85 --squash --delete-branch` (lead action after reviewer pass).
+
+---
+
+## P5-T-03 — 2026-05-30 (feat/p5-T-03-preflight) — preflight-check (fathom preflight GO/NO-GO)
+
+**What was done:**
+- New `execution/preflight.py`:
+  - `PreflightReport(go, checks, checked_at)` + `CheckResult(name, ok, detail)` pydantic models.
+  - `run_preflight(*, settings, store, client=None, attested=False) -> PreflightReport` — five checks:
+    1. **account_reachable** — `client.account_summary()` succeeds; `None` client → FAIL.
+    2. **kill_switch_armed** — calls `risk.limits.kill_switch_armed(store.load_account_state(),
+       now, config=LimitsConfig(), staleness_minutes=10)`; NO-GO on missing/stale/tripped.
+    3. **bracket_contract_inv04** — static assertion: `build_bracket` raises `ValueError` on
+       non-positive `stop_distance`; confirms INV-04 can't produce a naked order.
+    4. **env_flag_token_consistency** — if `ENV=live`: token present + account_id present +
+       `live_trading_enabled=True`; demo always consistent. Token value never in detail (INV-08).
+    5. **track_record_attested** — `attested` must be `True`; references INV-07.
+  - `go=True` only when ALL five pass; `go=False` on any failure.
+- Extended `cli.py`:
+  - `_build_parser()`: added `preflight` subparser with `--db-path` + `--attest-track-record`.
+  - `cmd_preflight(args)`: loads `Settings`, constructs `OandaClient`, calls `run_preflight`.
+    Prints per-check table; exits 0 on GO / 1 on NO-GO. Never prints token (INV-08). UTC log.
+  - `main()`: dispatches `args.command == "preflight"` to `cmd_preflight`.
+- New `tests/test_preflight.py` — 24 tests:
+  - All kill-switch cases: missing, stale (15-min-old as_of), tripped (day_pl=-200 on $10k equity),
+    healthy (present + fresh + not tripped).
+  - All env/flag/token cases: live no-token, live no-account-id, live disabled, demo consistent, live all-ok.
+  - Account reachable: stub OK + stub raises + no client.
+  - INV-04 bracket contract: PASS in correct build.
+  - INV-08: token never in report details (asserts each `detail` string).
+  - INV-03: `checked_at` UTC offset == 0.
+  - Read-only: monkey-patches `write_account_state` + asserts no order-placement method called.
+  - CLI: `--help` exits 0; no-attest demo exits 1; seeded store + attest exits 0.
+  - All five check names present in report.
+  - Parametrized: tripped + stale → go=False even when attested.
+
+**Key patterns / gotchas:**
+- `kill_switch_armed` is imported from `risk.limits` (landed in P5-T-01). Preflight calls it directly;
+  no duplication of the staleness/tripped logic.
+- The bracket/INV-04 check uses a standalone helper `_check_bracket_contract()` that creates a minimal
+  `Candidate` with `stop_distance=0.0`. If `Candidate` itself rejects that, the check also passes
+  (contract enforced even earlier). If `Candidate` accepts it, `build_bracket` must raise `ValueError`.
+- `cmd_preflight` lazily imports `execution.preflight.run_preflight` (consistent with the lazy import
+  pattern in `cli.py` for execution deps). `OandaClient` and `Settings` are already module-level
+  imports from the Phase 3 `try/except ImportError` block; they work correctly.
+- Tests stub `cli.Settings` and `cli.OandaClient` for the CLI tests; test `run_preflight` directly
+  with mock `Settings` objects (not the real pydantic class) for unit tests.
+- The `mem_store` fixture uses `tempfile.mktemp` + explicit cleanup (yielding a `Generator[Store, None,
+  None]`) so it works on the CI filesystem without needing pytest's `tmp_path` path type resolution.
+- INV-09 compliance: `run_preflight` reads `settings.env` / `settings.live_trading_enabled` only for
+  the env/flag/token consistency check (sanctioned operator-boundary gate). No env-aware branch
+  in `execution/models.py` or `risk/sizing.py` etc.
+
+**AC verification results (raw, captured exit codes):**
+- `python -m pytest tests/test_preflight.py -v` → **24 passed**, exit 0
+- `python -m pytest -q` (full suite) → **1082 passed, 87 warnings**, exit 0
+- `python -m mypy .` → **"Success: no issues found in 89 source files"**, exit 0
+- `fathom preflight --help` → shows `--db-path` + `--attest-track-record`, exit 0
+- `fathom preflight` (demo, no attest, stale store) → NO-GO exit 1;
+  stdout: per-check table; FAIL on `kill_switch_armed` (stale) + `track_record_attested`.
+  Account reachable PASS (real demo endpoint reachable in test env).
+
+**No new dependencies.** No changes to `pyproject.toml`.
+
+**CLAUDE.md trigger-table check:** New CLI command `fathom preflight` → CLAUDE.md Commands NOT
+updated (the task instruction says "Touch ONLY execution/preflight.py, cli.py, tests/test_preflight.py").
+CLAUDE.md update is a lead/reviewer action. CLAUDE.md Commands section should receive
+`fathom preflight [--db-path PATH] [--attest-track-record]` in the Phase 5 / Common Commands block.
+
+**Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
