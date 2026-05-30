@@ -344,6 +344,36 @@ class Store:
         WHERE  event_id  = ?
     """
 
+    # ------------------------------------------------------------------
+    # equity_snapshots table (Phase 4 — equity-snapshots P4-T-03).
+    # An append-only broker-sourced equity time series for the panel's equity
+    # curve.  Each reconcile pass appends one immutable row; there is no PK to
+    # overwrite (the surrogate ``rowid`` is the only key).  All timestamps are
+    # UTC RFC 3339 TEXT (INV-03).  Broker-truth ``nav`` is the equity (INV-16).
+    # ------------------------------------------------------------------
+
+    #: SQL to create the ``equity_snapshots`` table if it does not exist.
+    #: Append-only: no PRIMARY KEY / unique constraint, so every reconcile pass
+    #: yields a distinct row even at the same ``as_of`` — history is never
+    #: clobbered.  ``as_of`` is UTC RFC 3339 (INV-03); ``equity`` is broker NAV
+    #: (INV-16); ``day_pl`` is ``nav − start_of_day_equity``.
+    _CREATE_EQUITY_SNAPSHOTS_SQL: str = """
+        CREATE TABLE IF NOT EXISTS equity_snapshots (
+            as_of    TEXT NOT NULL,
+            equity   REAL NOT NULL,
+            day_pl   REAL NOT NULL
+        )
+    """
+
+    #: Append one equity snapshot row.  Plain ``INSERT`` (no OR REPLACE/IGNORE):
+    #: the table is append-only, so repeated calls accumulate history.
+    _INSERT_EQUITY_SNAPSHOT_SQL: str = """
+        INSERT INTO equity_snapshots
+            (as_of, equity, day_pl)
+        VALUES
+            (?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -408,6 +438,7 @@ class Store:
         self._conn.execute(self._CREATE_POSITIONS_SQL)
         self._conn.execute(self._CREATE_ACCOUNT_STATE_SQL)
         self._conn.execute(self._CREATE_DEVIATION_LOG_SQL)
+        self._conn.execute(self._CREATE_EQUITY_SNAPSHOTS_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1387,6 +1418,86 @@ class Store:
                     "severity": severity,
                     "created_at": created_at,
                     "delivered": bool(delivered_int),
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # equity_snapshots table (Phase 4 — equity-snapshots P4-T-03)
+    # ------------------------------------------------------------------
+
+    def write_equity_snapshot(
+        self,
+        *,
+        as_of: str,
+        equity: float,
+        day_pl: float,
+    ) -> None:
+        """Append one immutable equity snapshot (append-only — no overwrite).
+
+        Each reconcile pass calls this once with the broker-truth figures it
+        already computed (``equity`` ← ``broker.nav`` (INV-16), ``day_pl`` ←
+        ``nav − start_of_day_equity``).  A plain ``INSERT`` accumulates history;
+        there is no PK to clobber, so two calls at the same ``as_of`` yield two
+        distinct rows.
+
+        Args:
+            as_of: UTC RFC 3339 timestamp of the snapshot (INV-03). Already a
+                string — the caller formats the reconcile ``now`` via the store's
+                RFC 3339 helper so it matches the ``account_state.as_of`` it just
+                wrote.
+            equity: Broker NAV at ``as_of`` (broker-truth equity, INV-16).
+            day_pl: Today's P&L vs start-of-day equity (``nav − sod_equity``).
+        """
+        self._conn.execute(
+            self._INSERT_EQUITY_SNAPSHOT_SQL,
+            (as_of, float(equity), float(day_pl)),
+        )
+        self._conn.commit()
+
+    def load_equity_snapshots(
+        self,
+        *,
+        since: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Load equity snapshots ordered by ``as_of`` ascending (oldest first).
+
+        Args:
+            since: If given, return only rows with ``as_of >= since`` (an RFC
+                3339 string lower bound — works lexicographically because RFC
+                3339 UTC strings sort chronologically).  ``None`` returns all.
+
+        Returns:
+            A list of dicts with keys ``as_of`` (RFC 3339 TEXT), ``equity``
+            (float) and ``day_pl`` (float), ordered by ``as_of`` ascending.
+            Empty list when no rows match.
+        """
+        if since is not None:
+            cursor = self._conn.execute(
+                """
+                SELECT as_of, equity, day_pl
+                FROM   equity_snapshots
+                WHERE  as_of >= ?
+                ORDER  BY as_of ASC
+                """,
+                (since,),
+            )
+        else:
+            cursor = self._conn.execute(
+                """
+                SELECT as_of, equity, day_pl
+                FROM   equity_snapshots
+                ORDER  BY as_of ASC
+                """
+            )
+        result: list[dict[str, object]] = []
+        for row in cursor.fetchall():
+            as_of, equity, day_pl = row
+            result.append(
+                {
+                    "as_of": as_of,
+                    "equity": float(equity),
+                    "day_pl": float(day_pl),
                 }
             )
         return result
