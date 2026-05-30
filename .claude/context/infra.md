@@ -29,3 +29,31 @@
 - `mypy config/` → "Success: no issues found in 2 source files", exit 0
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+---
+
+## P5-T-01 — 2026-05-30 (feat/p5-T-01-settings)
+
+**What was done:**
+- `config/settings.py`: added two Phase 5 live-trading gate fields (additive, no existing behaviour changed):
+  - `live_trading_enabled: bool = False` — explicit opt-in required before any live order (INV-07, D-P5-2).
+  - `live_risk_fraction: float = Field(default=0.001, gt=0.0, le=0.0025)` — per-trade risk fraction for live orders; `le=0.0025` mirrors the INV-05 0.25% per-trade cap so the two cannot drift (B-5). A `Settings` constructed with `live_risk_fraction <= 0` or `> 0.0025` raises `pydantic.ValidationError` at load time.
+  - Added `Field` to the pydantic import. Pattern mirrors `LimitsConfig`'s `Field` constraints in `risk/limits.py`.
+- `.env.example`: added `LIVE_TRADING_ENABLED=false` and `LIVE_RISK_FRACTION=0.001` entries (required by the drift-guard test in `test_config.py`).
+- `risk/limits.py`: added `kill_switch_armed(account_state, now, *, config, staleness_minutes=10) -> tuple[bool, str]` (pure, exported in `__all__`). Single source of truth for kill-switch readiness used by the preflight check (P5-T-03). "Armed and healthy" = account_state present + `as_of` within `staleness_minutes` of `now` (UTC, INV-03) + `kill_switch_status().active is False`. Returns `(True, "")` or `(False, "missing" | "stale" | "tripped")`. Reuses `kill_switch_status` internally — no logic duplication.
+  - `as_of` is parsed from RFC 3339 UTC string via `fromisoformat(s.rstrip("Z")).replace(tzinfo=timezone.utc)` (codebase-standard pattern). The `dict[str, object]` values are cast with `# type: ignore[arg-type]` before `float()` (mypy cannot narrow from `object`; the value contract is documented).
+
+**Patterns established / confirmed:**
+- `Field(gt=0.0, le=0.0025)` in `Settings` validates at construction — same pattern as `LimitsConfig.daily_loss_cap` etc.
+- `kill_switch_armed` is the single-source readiness helper; never re-implement the tripped/staleness logic elsewhere — always call this.
+- Staleness window default is 10 min (D-P5-B). Callers can override via `staleness_minutes`.
+- RFC 3339 parsing: `datetime.fromisoformat(s.rstrip("Z")).replace(tzinfo=timezone.utc)` — matches `execution/reconcile.py` and `execution/orders.py` pattern.
+
+**AC verification results:**
+- `mypy .` (87 files) → "Success: no issues found", exit 0
+- `pytest -q` → 1058 passed (18 new), 87 pre-existing warnings, exit 0
+- `pytest tests/test_limits.py tests/test_config.py -v` → 54 passed, exit 0
+
+**New dependency added to pyproject.toml:** NO
+
+**Merge plan:** `gh pr merge 125 --squash --delete-branch`
