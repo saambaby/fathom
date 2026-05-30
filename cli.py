@@ -1029,93 +1029,79 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 def cmd_scan(args: argparse.Namespace) -> int:
     """Execute the ``fathom scan`` command.
 
-    Refreshes candles (unless ``--dry-run``), runs ``Ranker`` →
-    ``PortfolioLimiter``, persists the ranked ``Candidate`` list to the
-    ``watchlist`` SQLite table, and prints the list as ``Candidate[]`` JSON to
-    stdout.
+    **Thin argparse adapter** over ``signals.scan.run_scan``.  All scan
+    logic (candle refresh → Ranker → PortfolioLimiter → persist) lives in
+    the order-free ``run_scan``; this function maps ``args.*`` → kwargs,
+    delegates, then does the stdout JSON printing and exit-code conversion.
 
-    Empty approved-set → empty watchlist, clear message, **exit 0** (INV-10).
+    Universe resolution (ALL, live mode)
+    -------------------------------------
+    When ``--instruments ALL`` is given and ``--dry-run`` is False, this
+    adapter calls the existing ``_discover_universe`` helper (which triggers a
+    live OANDA ``list_instruments()`` call and caches the result) and passes
+    the resolved explicit instrument list into ``run_scan``.  This restores the
+    original ``cmd_scan`` behaviour: ``fathom scan --instruments ALL`` (live)
+    discovers the full tradeable universe live, not just from cache.
 
-    INV-01: no order placement — candidates only.
-    INV-03: all timestamps UTC.
+    For ``--dry-run`` and for explicit instrument lists, ``args.instruments``
+    is passed through to ``run_scan`` unchanged — ``run_scan`` handles both
+    the comma-separated and cache-only ALL cases itself.
+
+    ``run_scan`` remains order-free and cache-only for its own ALL discovery
+    (correct for the admin panel, which does not need live discovery).  This
+    adapter is the only place live discovery fires, keeping ``signals.scan``
+    import-clean.
+
+    INV-01: this adapter imports only ``signals.scan`` — the order-free path.
+        The order/execution imports in this module (the Phase 3 block) are
+        isolated to the execute/positions/reconcile command functions; they do
+        NOT affect ``cmd_scan``.
+    INV-03: ``run_scan`` handles UTC internally.
     INV-08: token/account never logged.
+    INV-10: empty approved-set → empty watchlist, clear message, exit 0.
+    INV-13: ``run_scan`` returns ``Candidate[]`` (frozen wire contract).
     """
-    run_dt = datetime.now(tz=timezone.utc)
-    _log.info("fathom scan started at %s", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    _log.info("fathom scan started at %s", _utc_now_rfc3339())
 
-    db_path: str = args.db_path
+    from signals.scan import run_scan
+
+    # --- Universe resolution: live ALL-discovery in the CLI adapter. ----------
+    # When the operator runs `fathom scan --instruments ALL` (live, not
+    # --dry-run), we call _discover_universe here (which issues a live
+    # list_instruments() call and caches the result) and pass the resolved
+    # explicit list to run_scan.  run_scan stays cache-only / order-free.
+    # For --dry-run or an explicit list, pass args.instruments through as-is.
+    instruments_for_scan: str = args.instruments
     dry_run: bool = args.dry_run
-    timeframes = [s.strip() for s in args.timeframes.split(",") if s.strip()]
-
-    # ---- Optional candle refresh (LIVE mode only; mirrors backtest). --------
-    if not dry_run:
-        instruments_to_fetch: list[str]
-        if args.instruments.strip().upper() == "ALL":
-            # In LIVE mode for ALL, discover via the OANDA API and cache.
-            try:
-                instruments_to_fetch = _discover_universe(
-                    args.instruments, db_path, dry_run=False
-                )
-            except Exception as exc:  # noqa: BLE001
-                _log.error("Universe discovery failed: %s", exc)
-                return 1
-        else:
-            instruments_to_fetch = [
-                s.strip() for s in args.instruments.split(",") if s.strip()
-            ]
-        if instruments_to_fetch:
-            start_fetch, end_fetch = _build_date_range(args.history_years)
-            try:
-                _fetch_candles_for_universe(
-                    instruments=instruments_to_fetch,
-                    timeframes=timeframes,
-                    db_path=db_path,
-                    start=start_fetch,
-                    end=end_fetch,
-                )
-            except Exception as exc:  # noqa: BLE001
-                _log.error("Candle fetch failed: %s", exc)
-                return 1
-
-    # ---- Build Ranker + PortfolioLimiter (lazy imports — no HTTP in tests). -
-    from data.calendar import FairEconomyCalendar
-    from signals.portfolio import PortfolioLimiter
-    from signals.ranker import Ranker
-
-    store = Store(db_path)
-    try:
+    if args.instruments.strip().upper() == "ALL" and not dry_run:
         try:
-            # FairEconomyCalendar.upcoming_events returns list[CalendarEvent] while
-            # Ranker's _CalendarLike Protocol declares list[object].  Structurally
-            # compatible (CalendarEvent IS an object) but mypy's strict return-type
-            # covariance check rejects it — suppress with ignore on this line only.
-            ranker = Ranker(store=store, calendar=FairEconomyCalendar(db_path=db_path))  # type: ignore[arg-type]
-            limiter = PortfolioLimiter(store=store)
-
-            _log.info(
-                "Running Ranker at %s …", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            )
-            ranked = ranker.rank(now=run_dt)
-            candidates = limiter.apply(ranked)
-
-            _log.info(
-                "Ranker produced %d candidate(s); %d after portfolio limits.",
-                len(ranked),
-                len(candidates),
-            )
-
-            # Persist to watchlist table (single transaction, mirrors approved_set).
-            written = store.write_watchlist(candidates, run_timestamp=run_dt)
-            _log.info(
-                "Persisted %d watchlist row(s) (run_timestamp=%s).",
-                written,
-                run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            resolved = _discover_universe(
+                instruments_arg=args.instruments,
+                db_path=args.db_path,
+                dry_run=False,
             )
         except Exception as exc:  # noqa: BLE001
-            _log.error("Ranker/portfolio step failed: %s", exc)
+            _log.error("Universe discovery failed: %s", exc)
             return 1
-    finally:
-        store.close()
+        # Pass the resolved list as a comma-joined string so run_scan treats it
+        # as an explicit (non-ALL) list and skips its own cache discovery.
+        instruments_for_scan = ",".join(resolved)
+        _log.info(
+            "cmd_scan: resolved ALL → %d instruments via live discovery.",
+            len(resolved),
+        )
+
+    try:
+        candidates = run_scan(
+            db_path=args.db_path,
+            instruments=instruments_for_scan,
+            timeframes=args.timeframes,
+            history_years=args.history_years,
+            dry_run=dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.error("Scan failed: %s", exc)
+        return 1
 
     if not candidates:
         print(
