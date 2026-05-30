@@ -30,20 +30,30 @@ up. Every prompt block below is copy-paste ready.
 **Health (as of last run).** `mypy .` → 0 errors (92 files, strict). `pytest` →
 1179 passed. Both are the merge gate — keep them green.
 
-### What's next (concrete)
+### What's next (concrete) — updated 2026-05-30
 
-1. **Close P2-T-08 (operator).** This is a human-in-the-loop acceptance, not a
-   coding task. The daily Hermes job is defined (`hermes_integration/`); to accept
-   it live you must: configure the Hermes agent, set a Discord webhook + Anthropic
-   API key, run the job once, and confirm a ranked watchlist narration posts to
-   Discord with **no order placed** (INV-01). Until that's done Phase 2 is
-   "code-complete, acceptance-pending."
-2. **Phase 3 kickoff (planning only).** Sizing/orders cross INV-01 — Hermes still
-   never places orders; a separate, explicitly-gated executor would. Run the
-   *Phase kickoff (planning-only)* prompt below against a freshly carved
-   `docs/phases/phase-3.md` before any code.
-3. **Standing hygiene.** Reviewers must run **`mypy .`** (whole-repo), not scoped
-   mypy — scoped runs let test-layer type-debt accumulate (that was PR #68).
+**All engineering is done.** PoC + Phases 1–5 are code-complete (`mypy .` clean, 1179
+tests green, 0 open PRs). The only remaining work is **four operator acceptance gates**
+— external services + judgment, no code. **Start at → [`operator-acceptance.md`](operator-acceptance.md)**
+(the consolidated, ordered checklist with exact commands + prerequisites).
+
+1. **Gate 1 — P2-T-08 (#59):** stand up Hermes + set `ANTHROPIC_API_KEY` and
+   `DISCORD_WEBHOOK_URL`, register `daily.md`, confirm the watchlist lands in Discord
+   over ≥5 weekday runs with no order placed.
+2. **Gate 2 — P3-T-11 (#86):** the live *demo* execution loop (`fathom execute` →
+   bracketed demo fill → monitor → alert → reconcile). *(The "Phase 3 testing" you deferred.)*
+3. **Gate 3 — P4-T-06 (#109):** run `streamlit run panel/app.py` over a sustained demo.
+4. **Gate 4 — P5-T-05 (#123):** the deliberate go-live cutover — **INV-07-blocked**
+   until gates 1–3 are closed *positive*; operator-only, never done by the agent.
+
+**Honest caveat:** gates 1–3 can pass and the system can *still* not clear the go-live
+bar if the demo edge isn't convincingly positive (the backtest was thin — 10/72).
+That's INV-07 working as designed. See [`half-cycle-verdict.md`](half-cycle-verdict.md)
+Root Cause D for why a green codebase is not evidence the edge holds.
+
+**Standing hygiene.** Reviewers run **`mypy .`** (whole-repo), not scoped. Merge only
+via `gh pr merge`. Specs should cite real `file:symbol` for what they build on (the
+biggest source of rework this project — verdict Root Cause A).
 
 ---
 

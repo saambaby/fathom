@@ -9,6 +9,8 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 | Doc | What's in it |
 |---|---|
 | [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | **Start here.** Phase status (what's done / what's next) + the reproducible build method: kickoff prompt, half-cycle layers, runbook flow, orchestration pattern, copy-paste prompts |
+| [`docs/operator-acceptance.md`](docs/operator-acceptance.md) | **Resume here.** The 4 remaining operator gates (T-08 → T-11 → T-06 → T-05) as one ordered checklist with exact commands + the credentials you must supply |
+| [`docs/half-cycle-verdict.md`](docs/half-cycle-verdict.md) | Deep retrospective/verdict on the half-cycle method (efficiency, root-cause failure modes, what worked, improvements) — Fathom as the case study |
 | [`docs/product-spec.md`](docs/product-spec.md) | Scope, confirmed decisions, build phases, honest caveats |
 | [`docs/architecture-overview.md`](docs/architecture-overview.md) | Container diagram, key boundaries, data flows, repo layout, stack |
 | [`docs/invariants.md`](docs/invariants.md) | 16 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, approved-set gate, frozen `Candidate` + `Order`/`Fill`/`Position` contracts, client-order-id idempotency, broker-is-truth, …) |
