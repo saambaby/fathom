@@ -3,10 +3,13 @@
 Two responsibilities:
 1. Drift guard — assert that .env.example keys match the declared Settings fields.
 2. Validation guard — assert that Settings() raises a clear error when required fields are absent.
+3. Phase 5 live-trading gate fields — live_trading_enabled / live_risk_fraction defaults +
+   Field(gt=0.0, le=0.0025) boundary validation (INV-05).
 """
 
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +120,6 @@ def test_oanda_base_url_derived_from_env(monkeypatch: pytest.MonkeyPatch) -> Non
 
     # Temporarily prevent loading from any .env file on disk.
     # We achieve this by pointing cwd at a directory with no .env.
-    import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.chdir(tmpdir)
 
@@ -131,3 +133,72 @@ def test_oanda_base_url_derived_from_env(monkeypatch: pytest.MonkeyPatch) -> Non
 
         live_settings = Settings(env="live")
         assert live_settings.oanda_base_url == "https://api-fxtrade.oanda.com"
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Phase 5 live-trading gate fields (INV-05 / INV-07) P5-T-01
+# ---------------------------------------------------------------------------
+
+
+class TestLiveTradingGateFields:
+    """live_trading_enabled + live_risk_fraction defaults + boundary validation."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Inject required fields and isolate from .env on disk."""
+        monkeypatch.setenv("OANDA_API_TOKEN", "test-token")
+        monkeypatch.setenv("OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.chdir(tempfile.mkdtemp())
+
+    def _make_settings(self, **kwargs: Any) -> Any:
+        from importlib import reload
+        import config.settings as settings_mod
+        reload(settings_mod)
+        return settings_mod.Settings(**kwargs)
+
+    def test_live_trading_enabled_default_false(self) -> None:
+        """live_trading_enabled must default to False (INV-07: demo first)."""
+        s = self._make_settings()
+        assert s.live_trading_enabled is False
+
+    def test_live_trading_enabled_can_be_set_true(self) -> None:
+        s = self._make_settings(live_trading_enabled=True)
+        assert s.live_trading_enabled is True
+
+    def test_live_risk_fraction_default(self) -> None:
+        """live_risk_fraction must default to 0.001 (0.10%, D-P5-3)."""
+        s = self._make_settings()
+        assert s.live_risk_fraction == pytest.approx(0.001)
+
+    def test_live_risk_fraction_upper_bound_exact(self) -> None:
+        """Exactly 0.0025 (the INV-05 cap) is allowed (le=0.0025)."""
+        s = self._make_settings(live_risk_fraction=0.0025)
+        assert s.live_risk_fraction == pytest.approx(0.0025)
+
+    def test_live_risk_fraction_above_cap_raises(self) -> None:
+        """Any value > 0.0025 must raise ValidationError at construction (INV-05, B-5)."""
+        with pytest.raises(ValidationError) as exc_info:
+            self._make_settings(live_risk_fraction=0.0026)
+        errors = exc_info.value.errors()
+        assert any(e["loc"] == ("live_risk_fraction",) for e in errors), (
+            f"Expected ValidationError on live_risk_fraction field, got: {errors}"
+        )
+
+    def test_live_risk_fraction_zero_raises(self) -> None:
+        """live_risk_fraction=0.0 must raise ValidationError (gt=0.0)."""
+        with pytest.raises(ValidationError) as exc_info:
+            self._make_settings(live_risk_fraction=0.0)
+        errors = exc_info.value.errors()
+        assert any(e["loc"] == ("live_risk_fraction",) for e in errors)
+
+    def test_live_risk_fraction_negative_raises(self) -> None:
+        """Negative live_risk_fraction must raise ValidationError (gt=0.0)."""
+        with pytest.raises(ValidationError) as exc_info:
+            self._make_settings(live_risk_fraction=-0.001)
+        errors = exc_info.value.errors()
+        assert any(e["loc"] == ("live_risk_fraction",) for e in errors)
+
+    def test_live_risk_fraction_custom_within_bounds(self) -> None:
+        """A valid fraction within (0, 0.0025] is accepted."""
+        s = self._make_settings(live_risk_fraction=0.0015)
+        assert s.live_risk_fraction == pytest.approx(0.0015)
