@@ -78,8 +78,11 @@ fathom reconcile              # run one broker-truth reconcile pass, print Recon
 #   fathom reconcile [--db-path PATH]
 
 # Phase 4 — admin panel (P4-T-05)
-streamlit run panel/app.py    # launch the read-only Streamlit dashboard
-#   streamlit run panel/app.py [-- --db-path PATH]
+streamlit run run_panel.py    # launch the read-only Streamlit dashboard
+#   streamlit run run_panel.py [-- --db-path PATH]
+#   Use the repo-root run_panel.py launcher, NOT panel/app.py directly: streamlit
+#   prepends the script's dir to sys.path, so launching panel/app.py shadows the
+#   top-level `data` package with panel/data.py (ModuleNotFoundError). See run_panel.py.
 #   5 views: Charts (Lightweight Charts + overlays), Equity, Blotter, Watchlist, Deviation Log
 #   Refresh button → signals.scan.run_scan (order-free); never fathom execute
 
