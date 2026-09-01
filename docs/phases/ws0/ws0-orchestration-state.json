@@ -1,0 +1,21 @@
+{
+ "sweep": "ws0",
+ "started_at": "2026-09-01T05:40:00Z",
+ "base": "main",
+ "cap": 4,
+ "items": {
+  "134": "merged-pr144",
+  "135": "merged-pr150",
+  "136": "merged-pr149",
+  "137": "merged-pr151",
+  "138": "merged-pr145",
+  "139": "not-started (open issue, next on resume)",
+  "140": "not-started (open issue; carries 5 folded-in follow-up notes from PR reviews)",
+  "141": "merged-pr146",
+  "142": "merged-pr148",
+  "143": "blocked-on-human (needs OANDA token or candle-db export)",
+  "ws1-pr133": "merged-pr147-closed-133"
+ },
+ "completed_at": "2026-09-01T06:35:00Z",
+ "summary": "Sweep closed early at operator request. 9 of 11 items merged to main via reviewed squash PRs: #134(PR144) #141(PR146) #138(PR145, 1 rejection cycle) #142(PR148) #136(PR149) #135(PR150) #137(PR151) + WS1 adapter(PR147, closed draft 133) + plan docs(PR132). Remaining open: #139 (attestation/runbook), #140 (docs+lint, includes review follow-ups), #143 (blocked-on-human). Two latent bugs discovered during fixes: conversion-rate lookup never worked (close_mid never present); risk-rationale text inverted. 7 spec amendments landed with their fixes -> run /halfcycle:cross-spec-audit on resume before new spec work."
+}
