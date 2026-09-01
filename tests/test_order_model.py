@@ -29,6 +29,7 @@ from execution.models import (
     FillStatus,
     Order,
     Position,
+    _client_order_id,
     build_bracket,
 )
 from signals.ranker import Candidate
@@ -414,6 +415,31 @@ def test_client_order_id_deterministic() -> None:
     assert a.client_order_id != ""
 
 
+def test_client_order_id_stable_across_same_utc_day_reruns() -> None:
+    """INV-15: an operator re-run on the same UTC day dedups (same id)."""
+    c = _candidate()
+    morning = datetime(2026, 8, 31, 9, 15, 3, 123456, tzinfo=UTC)
+    evening = datetime(2026, 8, 31, 17, 42, 59, 999999, tzinfo=UTC)
+    assert _client_order_id(c, morning) == _client_order_id(c, evening)
+    a = build_bracket(c, 1000, execution_date=morning, precision=5)
+    b = build_bracket(c, 1000, execution_date=evening, precision=5)
+    assert a.client_order_id == b.client_order_id
+    # created_at keeps full timestamp resolution.
+    assert a.created_at == morning
+    assert b.created_at == evening
+
+
+def test_client_order_id_distinct_on_next_utc_day() -> None:
+    """A genuine re-approval the next day yields a distinct id."""
+    c = _candidate()
+    day1 = datetime(2026, 8, 31, 23, 59, 59, tzinfo=UTC)
+    day2 = datetime(2026, 9, 1, 0, 0, 1, tzinfo=UTC)
+    assert _client_order_id(c, day1) != _client_order_id(c, day2)
+    a = build_bracket(c, 1000, execution_date=day1, precision=5)
+    b = build_bracket(c, 1000, execution_date=day2, precision=5)
+    assert a.client_order_id != b.client_order_id
+
+
 def test_client_order_id_changes_with_execution_date() -> None:
     c = _candidate()
     a = build_bracket(c, 1000, execution_date=EXEC_DATE, precision=5)
@@ -433,7 +459,7 @@ def test_client_order_id_matches_formula() -> None:
     c = _candidate()
     payload = (
         f"{c.instrument}:{c.strategy_name}:{c.timeframe}:"
-        f"{c.generated_at}:{EXEC_DATE}"
+        f"{c.generated_at}:{EXEC_DATE.date().isoformat()}"
     )
     expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
     order = build_bracket(c, 1000, execution_date=EXEC_DATE, precision=5)
