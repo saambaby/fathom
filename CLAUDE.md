@@ -35,7 +35,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | `phase-03` | [risk, execution & monitoring](docs/phases/phase-03/phase.md) | 🔵 in_progress — 10/10 units merged · ⏳ T-11 operator gate |
 | `phase-04` | [admin panel](docs/phases/phase-04/phase.md) | 🔵 in_progress — 5/5 units merged · ⏳ T-06 operator gate |
 | `phase-05` | [go-live decision](docs/phases/phase-05/phase.md) | ⛔ blocked — guardrails merged · T-05 operator-only + **INV-07-blocked** |
-| `phase-06` | [WS0: audit fixes, portability, CI](docs/phases/phase-06/phase.md) | 🔵 in_progress — 9/11 merged · open: #139, #143 (blocked on human) |
+| `phase-06` | [WS0: audit fixes, portability, CI](docs/phases/phase-06/phase.md) | 🔵 in_progress — 10/11 merged · open: #143 (blocked on human) |
 
 **Read before starting any session:** [`phases-manifest.json`](docs/phases/phases-manifest.json)
 (status) + [`docs/product/architecture.md`](docs/product/architecture.md) (boundaries) +

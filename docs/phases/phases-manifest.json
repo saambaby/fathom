@@ -78,10 +78,9 @@
       "doc": "phase-06/phase.md",
       "brief": "phase-06/coordinator-brief.md",
       "state": "phase-06/orchestration-state.json",
-      "outcome": "9 of 11 items merged (PRs #144-#151 + #147). Sweep closed early at operator request.",
+      "outcome": "10 of 11 items merged via reviewed, CI-gated squash PRs (#144-#151, #153, #154 + WS1 #147).",
       "open_items": [
-        "#139 INV-07 attestation / runbook deadlock",
-        "#143 real-OANDA-data fixture — blocked on human (OANDA token or candle-db export)"
+        "#143 real-OANDA-data fixture — blocked on human (OANDA practice token or candle-db export)"
       ]
     }
   ]
