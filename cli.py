@@ -127,13 +127,37 @@ try:
     from execution.orders import OrderRejected, submit_order
     from execution.preflight import run_preflight
     from execution.reconcile import reconcile
-    from hermes_integration.pretrade_check import pretrade_check
+    from hermes_integration.pretrade_check import OpenAICompatClient, pretrade_check
     from risk.limits import LimitsConfig, check_limits, kill_switch_status
     from risk.sizing import size_position
 except ImportError:  # pragma: no cover
     # During module-level import in environments where execution deps are
     # absent, defer to runtime so the non-execution subcommands still work.
     pass
+
+# ---------------------------------------------------------------------------
+# Pre-trade veto LLM client — built from Settings (.env-aware)
+# ---------------------------------------------------------------------------
+
+
+def _llm_client_from_settings(settings: "Settings") -> "Optional[OpenAICompatClient]":
+    """Build the pre-trade veto LLM client from ``Settings``.
+
+    Returns ``None`` when ``llm_api_key`` is unset — ``pretrade_check`` then
+    falls back to its ``LLM_API_KEY`` env path, and failing that to the INV-02
+    safe default ``block``.
+
+    INV-08: the key is unwrapped from ``SecretStr`` only here, and the client
+    keeps it private (never logged, excluded from ``repr``).
+    """
+    if settings.llm_api_key is None:
+        return None
+    return OpenAICompatClient(
+        api_key=settings.llm_api_key.get_secret_value(),
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Logging — UTC RFC 3339 timestamps (INV-03)
@@ -1543,7 +1567,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
     # Step 3: Pretrade check.
     # ``block`` aborts with a clear reason and non-zero exit.
     # ------------------------------------------------------------------
-    verdict = pretrade_check(candidate)
+    verdict = pretrade_check(candidate, client=_llm_client_from_settings(settings))
     if verdict.decision == "block":
         _log.warning(
             "execute: pretrade-check blocked: %s", verdict.reason
