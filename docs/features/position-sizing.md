@@ -85,6 +85,14 @@ cached candle mid** for the conversion pair; `equity` is the live account-summar
 value fetched once by [[execution-cli]]. The freshness mismatch (cached rate vs live
 equity) is accepted — it perturbs the 0.25% cap by less than intraday rate drift.
 
+**Amended (WS0-T02):** the rate is *required*, never defaulted. If no recent cached
+mid exists for the conversion pair, [[execution-cli]] refuses to size — it prints
+`SIZING REFUSED: no quote->account conversion rate for <pair>`, exits non-zero, and
+places no order (also under `--dry-run`). Assuming `rate = 1.0` for a JPY-quoted pair
+understates per-unit risk by the JPY mid (~150x), sizing the position ~150x the 0.25%
+intent, so guessing is never acceptable. The mid is derived from the cached
+`close_bid`/`close_ask` of the instrument's own timeframe within the last 3 days.
+
 ## Out of scope
 
 - Book-level limits ([[risk-limits-kill-switch]]), submission ([[order-placement]]).

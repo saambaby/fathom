@@ -35,6 +35,11 @@ fathom execute <candidate-ref> [--db-path PATH] [--dry-run] [--yes]
    operator-initiated and infrequent, so it must not trust a stale `day_pl`).
 3. **Pre-trade check** ([[pretrade-check]]) → `block` aborts (exit non-zero, reason printed).
 4. **Sizing** ([[position-sizing]], using the freshly-fetched equity) → reject (size 0) aborts with the reason.
+   For a non-account-quote instrument (e.g. `USD_JPY` on a USD account) the CLI first
+   resolves `quote_to_account_rate` from the latest cached candle mid. If that rate
+   cannot be resolved, the CLI **refuses to size** (`SIZING REFUSED: no quote->account
+   conversion rate for <pair>`, exit 1, no order, applies to `--dry-run` too) — it never
+   assumes 1.0, which would mis-size a JPY-quoted pair by ~150x against the INV-05 cap.
 5. **Limits / kill switch** ([[risk-limits-kill-switch]], reading the fresh `account_state`) → reject aborts with the reason.
 6. **Submit** ([[order-placement]]) the bracketed, idempotent order; print the `Fill`.
 7. `--dry-run` runs steps 1–5 and prints what *would* be submitted without placing

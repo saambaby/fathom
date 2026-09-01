@@ -1614,13 +1614,16 @@ def cmd_execute(args: argparse.Namespace) -> int:
         return 1
 
     # quote_to_account_rate: for pairs where the quote currency is USD
-    # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid.
-    # Simple heuristic: if instrument ends in "_USD", rate = 1.0; otherwise
-    # load the latest close_mid from the candle store as the proxy rate.
-    # If unavailable, fall back to 1.0 with a warning (safe — sizing still runs,
-    # may reject on the minimum-trade-size floor if the rate is very wrong).
+    # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid,
+    # derived from the latest cached close_mid in the candle store.
+    #
+    # There is deliberately NO 1.0 fallback: for a JPY-quoted pair, rate = 1.0
+    # understates per-unit risk by the JPY mid (~150x), so the position would be
+    # sized ~150x the 0.25% risk intent (INV-05).  If the rate cannot be
+    # derived, we refuse to size and place no order — never guess (WS0-T02).
     rate: float = 1.0
     if not candidate.instrument.endswith("_USD"):
+        resolved_rate: Optional[float] = None
         store3 = Store(db_path)
         try:
             end_dt = datetime.now(tz=timezone.utc)
@@ -1631,19 +1634,44 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 start=start_dt,
                 end=end_dt,
             )
-            if not candles.empty and "close_mid" in candles.columns:
-                last_mid = float(candles["close_mid"].iloc[-1])
+            if not candles.empty:
+                # ``load_candles`` returns bid/ask columns only — the mid is
+                # derived here.  (A ``close_mid`` column is honoured if a
+                # future loader adds one.)
+                if "close_mid" in candles.columns:
+                    last_mid = float(candles["close_mid"].iloc[-1])
+                elif {"close_bid", "close_ask"} <= set(candles.columns):
+                    last_mid = (
+                        float(candles["close_bid"].iloc[-1])
+                        + float(candles["close_ask"].iloc[-1])
+                    ) / 2.0
+                else:
+                    last_mid = 0.0
                 if last_mid > 0:
-                    rate = 1.0 / last_mid
+                    resolved_rate = 1.0 / last_mid
         except Exception as exc:  # noqa: BLE001
-            _log.warning(
-                "execute: could not derive quote→account rate for %s "
-                "(using 1.0 fallback): %s",
+            _log.error(
+                "execute: could not derive quote→account rate for %s: %s",
                 candidate.instrument,
                 exc,
             )
         finally:
             store3.close()
+
+        if resolved_rate is None:
+            _log.error(
+                "execute: SIZING REFUSED — no quote→account conversion rate "
+                "for %s; refusing to size rather than assume 1.0.",
+                candidate.instrument,
+            )
+            print(
+                "SIZING REFUSED: no quote->account conversion rate for "
+                f"{candidate.instrument} — refresh candles (fathom scan) and "
+                "retry. No order placed.",
+                file=sys.stderr,
+            )
+            return 1
+        rate = resolved_rate
 
     sizing_result = size_position(
         candidate,
