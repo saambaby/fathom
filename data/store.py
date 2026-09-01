@@ -1637,7 +1637,7 @@ class Store:
 
             day_df = df[df["time"].dt.date == date].copy()
             table = pa.Table.from_pandas(day_df, preserve_index=False)
-            pq.write_table(table, path)  # type: ignore[no-untyped-call]
+            pq.write_table(table, path)
 
     def load_parquet(
         self,
@@ -1692,7 +1692,7 @@ class Store:
         while current <= end_date:
             path = self._parquet_path(instrument, granularity, current.strftime("%Y-%m-%d"))
             if path.exists():
-                day_df = pq.read_table(path).to_pandas()  # type: ignore[no-untyped-call]
+                day_df = pq.read_table(path).to_pandas()
                 # Ensure the time column is datetime64[ns, UTC] (pyarrow
                 # reads back with tz info but may use us resolution).
                 day_df["time"] = pd.to_datetime(

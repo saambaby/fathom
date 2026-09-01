@@ -382,6 +382,13 @@ class TestPriceStreamReconnect:
     def test_reconnect_on_heartbeat_timeout(self) -> None:
         """Heartbeat timeout must cause a reconnect (attempt counter increments)."""
         attempts_seen: list[int] = []
+        # Signals when the background thread has reached the second attempt
+        # and set the stop event itself.  Waiting on this (instead of racing
+        # start()/stop() back-to-back) removes a timing margin that was too
+        # tight under full-suite load: without it, the main thread could call
+        # stop() — and set _stop_event — before the background thread had even
+        # entered its loop, starving it of any attempts.
+        reached_second_attempt = threading.Event()
 
         def mock_stream_once(
             self_inner: PriceStream, gap_on_next: bool, attempt: int
@@ -390,6 +397,7 @@ class TestPriceStreamReconnect:
             if attempt >= 1:
                 # On second attempt, shut down cleanly.
                 self_inner._stop_event.set()
+                reached_second_attempt.set()
                 return False
             # First attempt: return True to simulate timeout/disconnect.
             return True
@@ -400,6 +408,10 @@ class TestPriceStreamReconnect:
         with patch("data.stream._backoff_delay", return_value=0.0):
             with patch.object(PriceStream, "_stream_once", mock_stream_once):
                 stream.start()
+                assert reached_second_attempt.wait(timeout=5.0), (
+                    "background stream thread did not reach the second "
+                    "attempt in time"
+                )
                 stream.stop()
 
         assert 0 in attempts_seen
