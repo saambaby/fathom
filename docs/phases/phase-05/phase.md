@@ -1,16 +1,19 @@
-# Fathom — Phase 5: Go-Live Decision (real money)
+# phase-05 — Go-Live Decision (real money)
 
-**Status:** Carved — planning. No code yet. **Live cutover is INV-07-blocked (see below).**
-**Depends on:** [Phase 4](phase-4.md) code-complete **AND** a recorded, sustained positive demo track record (the Phase 2/3/4 operator acceptances — T-08, T-11, T-06 — closed with a positive result). **This prerequisite is NOT yet met.**
-**Unlocks:** ongoing live operation (out of the build-phase scope).
-**Spec layer:** [product-spec.md](../product-spec.md) ("Phase 6 — Go-Live Decision") · [invariants.md](../invariants.md) (INV-07, INV-09, INV-05) · [architecture-overview.md](../architecture-overview.md) (Demo/Live switch).
-**Maps to:** product-spec **Phase 6**. (impl-Phase 5 = go-live.)
+**Status:** blocked — all 4 guardrail units merged (#125-128), but the live cutover is **INV-07-blocked**: no demo track record yet
+**Commitment level:** Phase N — ships to the operator; the cutover itself is operator-only and never performed by an agent
+**Time horizon:** guardrails merged 2026-05-30; cutover unscheduled
+**Depends on:** [`phase-04`](../phase-04/phase.md) code-complete **AND** a recorded, sustained positive demo track record (the `phase-02`/`phase-03`/`phase-04` operator acceptances — T-08, T-11, T-06 — closed positive). **This prerequisite is NOT yet met.**
+**Unlocks:** ongoing live operation (out of build-phase scope)
+**Product layer:** [spec](../../product/spec.md) ("Phase 6 — Go-Live Decision") · [invariants](../../product/invariants.md) (INV-07, INV-09, INV-05) · [architecture](../../product/architecture.md) (Demo/Live switch)
+**Maps to:** product-spec **Phase 6**.
+**Results:** [results.md](results.md) · **Runbook:** [go-live-runbook.md](../../go-live-runbook.md)
 
 ---
 
 ## ⚠️ INV-07 gate — read first
 
-[INV-07](../invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record):
+[INV-07](../../product/invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record):
 the system must not connect to the live OANDA account until a **sustained positive,
 stable edge is demonstrated on demo AND the execution/monitoring plumbing has proven
 reliable on fake money.** That track record **does not exist yet** — the Phase 2

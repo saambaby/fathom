@@ -1,5 +1,9 @@
 # Verdict — Half-Cycle AI, as Tested by Building Fathom
 
+> **ARCHIVED (reference).** A retrospective written 2026-05-30 on the half-cycle method,
+> with Fathom as the case study. Not maintained; its Root Cause A-D analysis is still cited
+> by [`docs/implementation-plan.md`](../implementation-plan.md).
+
 A deep, honest assessment of the half-cycle method after running it end-to-end:
 PoC + 5 phases, **79 merged PRs** (50 code/scaffold, 29 docs/chore), **16.3k lines
 of source, 22.5k lines of tests, 7.7k lines of method/doc markdown**, across many
@@ -200,6 +204,6 @@ does not support.**
 
 ## See also
 
-- [`PLAYBOOK.md`](PLAYBOOK.md) — phase status + the reproducible method.
-- [`operator-acceptance.md`](operator-acceptance.md) — the remaining human gates (the work the method left to judgment).
+- [`PLAYBOOK.md`](playbook.md) — phase status + the reproducible method.
+- [`operator-acceptance.md`](../operator-acceptance.md) — the remaining human gates (the work the method left to judgment).
 - Per-phase audit reports (`phases/phase-N-spec-audit-*.md`) — the raw evidence behind Root Causes A/B.

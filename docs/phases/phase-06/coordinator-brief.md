@@ -39,4 +39,4 @@
 
 ## Reviewer gates (fresh reviewer per PR; never the implementer)
 
-Diff-vs-issue ACs · anti-tautology (tests fail without the fix) · `grep -n "INV-" ` on the diff for invariant claims vs `docs/invariants.md` · env-drift (new env vars in `.env.example` + docs — `.env.example` keys must match Settings fields) · spec amendments land in the SAME PR · full local gate (pytest + mypy, fresh venv).
+Diff-vs-issue ACs · anti-tautology (tests fail without the fix) · `grep -n "INV-" ` on the diff for invariant claims vs `docs/product/invariants.md` · env-drift (new env vars in `.env.example` + docs — `.env.example` keys must match Settings fields) · spec amendments land in the SAME PR · full local gate (pytest + mypy, fresh venv).

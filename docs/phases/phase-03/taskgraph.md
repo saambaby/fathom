@@ -2,7 +2,7 @@
 
 > **Status: awaiting human approval. Do NOT dispatch to workers until this graph is reviewed and signed off.** (Generated per `runbook-taskgraph-generation`; the session that generated it is not the gate.)
 
-Maps to product-spec Phase 4. Source specs: the 9 `ready` Phase 3 specs (cross-spec audit passed 2026-05-29, INV-14/15/16 promoted). See [phase-3.md](phase-3.md), [phase-3-spec-audit-2026-05-29.md](phase-3-spec-audit-2026-05-29.md), [code-map.md](../code-map.md) (Phase 3 dispatch section).
+Maps to product-spec Phase 4. Source specs: the 9 `ready` Phase 3 specs (cross-spec audit passed 2026-05-29, INV-14/15/16 promoted). See [phase-3.md](phase.md), [phase-3-spec-audit-2026-05-29.md](spec-audit-2026-05-29.md), [code-map.md](../../product/code-map.md) (Phase 3 dispatch section).
 
 ## Confirmed kickoff decisions (already locked)
 
@@ -178,11 +178,11 @@ flowchart TD
 | Field | Value |
 |---|---|
 | area | `execution` + `monitoring` · **model n/a** — human/operator-run · **human_admin true** |
-| feature_spec | `docs/phases/phase-3.md` (Done When) |
+| feature_spec | `docs/phases/phase-03/phase.md` (Done When) |
 | depends_on | P3-T-10, P3-T-09 |
 | verification | manual |
 
-**Checklist:** with `ANTHROPIC_API_KEY` + `DISCORD_WEBHOOK_URL` configured against a live practice account: `fathom execute` an approved candidate → confirm a **bracketed** (SL+TP) demo order places through the gate → fill recorded → `run_monitor.py` tracks it → a deviation alert lands in Discord → reconciliation matches broker state after a restart. Confirm over a **sustained demo period**; no live endpoint touched (INV-07); no secret in output (INV-08). Record results in `docs/phases/phase-3-results.md`. **This is the stack-assembly verification gate** (runnable-stack phase) — the boundary between auto-test-green and shippable.
+**Checklist:** with `ANTHROPIC_API_KEY` + `DISCORD_WEBHOOK_URL` configured against a live practice account: `fathom execute` an approved candidate → confirm a **bracketed** (SL+TP) demo order places through the gate → fill recorded → `run_monitor.py` tracks it → a deviation alert lands in Discord → reconciliation matches broker state after a restart. Confirm over a **sustained demo period**; no live endpoint touched (INV-07); no secret in output (INV-08). Record results in `docs/phases/phase-03/results.md`. **This is the stack-assembly verification gate** (runnable-stack phase) — the boundary between auto-test-green and shippable.
 
 ## Sanity checks
 
@@ -222,4 +222,4 @@ On sign-off → `runbook-orchestration-kickoff`:
 2. Open 11 issues (`area:{execution,risk,hermes_integration,monitoring,signals,cli}` / `phase:p3` / `role:{opus,sonnet}`; T-11 `blocked-on-human`, no role).
 3. Dispatch **T-01 alone** (hub); hold the fan-out until its INV-14 round-trip test passes. Then {T-03, T-06} ∥; T-04 (after T-02+T-03); T-07 (after T-06, serialized store/client); T-08 (after T-07); T-09; T-10 (join); T-11 (manual).
 4. Each PR → fresh read-only `reviewer` → `gh pr merge --squash --delete-branch`. Watch the `Order`/`Fill`/`Position` shape across consumers and the serialized `data/store.py` edits.
-5. **T-11 is operator-run** (live demo loop) — schedule it as the phase gate, not an automated step. Phase 4 (admin panel) does not begin until `docs/phases/phase-3-results.md` exists.
+5. **T-11 is operator-run** (live demo loop) — schedule it as the phase gate, not an automated step. Phase 4 (admin panel) does not begin until `docs/phases/phase-03/results.md` exists.

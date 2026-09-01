@@ -1,5 +1,12 @@
 # Fathom — Build Playbook
 
+> **ARCHIVED — superseded 2026-09-01.** This doc mixed two things that now live
+> elsewhere: the *method* (half-cycle Layers 0-5) is owned by the `halfcycle` plugin
+> v0.2.0 and should be read there, and the *status* is owned by
+> [`docs/phases/phases-manifest.json`](../phases/phases-manifest.json). The status table
+> below is frozen at 2026-05-30 and is **known stale** — it predates the WS0 audit sweep
+> (`phase-06`). Kept for the copy-paste prompts and the historical record only.
+
 **What this is.** The reproducible process we used to build Fathom from a blank
 directory to a working multi-strategy trading system, plus the current status of
 every phase. Read it to (a) see what is done and what's next, and (b) replay the
@@ -15,17 +22,17 @@ up. Every prompt block below is copy-paste ready.
 
 | Phase | Scope | Status | Result |
 |---|---|---|---|
-| **PoC** | MA-crossover only, 3 pairs × {H1,D} × 6 params = 36 combos, walk-forward + costs | ✅ Done | **0/36 approved** — honest negative; strict per-window gate validated. [poc-results.md](phases/poc-results.md) |
-| **Phase 1A** | 6 strategies × 3 pairs × {H1,H4,D} = 72 combos, full backtest runner + swap costs | ✅ Done | **10/72 approved** — genuine OOS edge (Bollinger-on-D strongest but thin; H4 breakouts more trustworthy). O(n) engine: 30 min → 22 s. [phase-1a-results.md](phases/phase-1a-results.md) |
-| **Phase 1B** | Live pricing stream + economic calendar | ✅ Done | Live demo ticks received; 97 FF calendar events stored. Two leaks caught + fixed at the acceptance gate. [phase-1b-results.md](phases/phase-1b-results.md) |
+| **PoC** | MA-crossover only, 3 pairs × {H1,D} × 6 params = 36 combos, walk-forward + costs | ✅ Done | **0/36 approved** — honest negative; strict per-window gate validated. [poc-results.md](../phases/phase-00/results.md) |
+| **Phase 1A** | 6 strategies × 3 pairs × {H1,H4,D} = 72 combos, full backtest runner + swap costs | ✅ Done | **10/72 approved** — genuine OOS edge (Bollinger-on-D strongest but thin; H4 breakouts more trustworthy). O(n) engine: 30 min → 22 s. [phase-1a-results.md](../phases/phase-01.1/results.md) |
+| **Phase 1B** | Live pricing stream + economic calendar | ✅ Done | Live demo ticks received; 97 FF calendar events stored. Two leaks caught + fixed at the acceptance gate. [phase-1b-results.md](../phases/phase-01.2/results.md) |
 | **Phase 2** | Signal ranker → watchlist (Candidate contract), portfolio limits, charts, Claude news-risk, narration, CLI, Hermes job defs | ✅ Code merged | All 7 code/config tasks merged. `Candidate` pinned as **INV-13**. |
 | **Phase 2 — T-08** | Live Discord acceptance of the daily watchlist job | ⏳ **Operator gate** | Blocked on human: needs a configured Hermes + Discord webhook + Anthropic key. See *What's next*. |
-| **Phase 3** | Risk + execution + monitoring (demo): sizing (0.25% cap), limits + daily kill switch, atomic bracketed idempotent order placement, broker-truth reconciliation, always-on deviation monitor + alerts, `fathom execute` gate | ✅ Code merged | All 10 code/config units merged (#75, #87–96). Order authority gained — kept on the deterministic side of INV-01 (operator CLI, never a Hermes tool). Promoted **INV-14/15/16**. [phase-3-results.md](phases/phase-3-results.md) |
+| **Phase 3** | Risk + execution + monitoring (demo): sizing (0.25% cap), limits + daily kill switch, atomic bracketed idempotent order placement, broker-truth reconciliation, always-on deviation monitor + alerts, `fathom execute` gate | ✅ Code merged | All 10 code/config units merged (#75, #87–96). Order authority gained — kept on the deterministic side of INV-01 (operator CLI, never a Hermes tool). Promoted **INV-14/15/16**. [phase-3-results.md](../phases/phase-03/results.md) |
 | **Phase 3 — T-11** | Live demo-loop acceptance (proceed→fill→monitor→alert over demo days) | ⏳ **Operator gate** | Needs `LLM_API_KEY` (pre-trade veto) + `DISCORD_WEBHOOK_URL` + a sustained demo run. The gate already runs end-to-end on the live practice account and safely aborts without a key (INV-02 verified). |
-| **Phase 4** | Admin panel & hardening (product-spec Phase 5): read-only Streamlit dashboard over the store — per-pair charts (Lightweight Charts), equity curve + drawdown, live blotter, watchlist, deviation log; scan-refresh button | ✅ Code merged | All 5 code/config units merged (#103, #110–114). Read-only — no order surface (INV-01 transitive-import boundary enforced + verified); equity via a new `equity_snapshots` table. Panel boots headless against the demo store. [phase-4-results.md](phases/phase-4-results.md) |
+| **Phase 4** | Admin panel & hardening (product-spec Phase 5): read-only Streamlit dashboard over the store — per-pair charts (Lightweight Charts), equity curve + drawdown, live blotter, watchlist, deviation log; scan-refresh button | ✅ Code merged | All 5 code/config units merged (#103, #110–114). Read-only — no order surface (INV-01 transitive-import boundary enforced + verified); equity via a new `equity_snapshots` table. Panel boots headless against the demo store. [phase-4-results.md](../phases/phase-04/results.md) |
 | **Phase 4 — T-06** | Panel acceptance (operator runs it in a browser over a sustained demo) | ⏳ **Operator gate** | Run `streamlit run panel/app.py -- --db-path data/fathom.db` against live demo data; confirm the 5 views + refresh over a sustained track record. |
-| **Phase 5** | Go-live decision (product-spec Phase 6): go-live **safety guardrails** — defense-in-depth gate (`ENV=live` + `live_trading_enabled` + `fathom preflight` GO + typed confirm), reduced `live_risk_fraction` (0.10%), the deliberate cutover runbook | ✅ Code merged | All 4 guardrail units merged (#125–128). Default-refuse, demo-safe — **nothing connects live**; INV-09 amended for the env-aware gate. [phase-5-results.md](phases/phase-5-results.md) |
-| **Phase 5 — T-05** | Live cutover (real money) | ⛔ **Operator gate · INV-07-blocked** | The actual flip-to-live — operator-only, deliberate, **blocked until the demo track record exists** (T-08/T-11/T-06 closed + positive). The agent never performs it. See [go-live-runbook.md](go-live-runbook.md). |
+| **Phase 5** | Go-live decision (product-spec Phase 6): go-live **safety guardrails** — defense-in-depth gate (`ENV=live` + `live_trading_enabled` + `fathom preflight` GO + typed confirm), reduced `live_risk_fraction` (0.10%), the deliberate cutover runbook | ✅ Code merged | All 4 guardrail units merged (#125–128). Default-refuse, demo-safe — **nothing connects live**; INV-09 amended for the env-aware gate. [phase-5-results.md](../phases/phase-05/results.md) |
+| **Phase 5 — T-05** | Live cutover (real money) | ⛔ **Operator gate · INV-07-blocked** | The actual flip-to-live — operator-only, deliberate, **blocked until the demo track record exists** (T-08/T-11/T-06 closed + positive). The agent never performs it. See [go-live-runbook.md](../go-live-runbook.md). |
 
 **Health (as of last run).** `mypy .` → 0 errors (92 files, strict). `pytest` →
 1179 passed. Both are the merge gate — keep them green.
@@ -34,7 +41,7 @@ up. Every prompt block below is copy-paste ready.
 
 **All engineering is done.** PoC + Phases 1–5 are code-complete (`mypy .` clean, 1179
 tests green, 0 open PRs). The only remaining work is **four operator acceptance gates**
-— external services + judgment, no code. **Start at → [`operator-acceptance.md`](operator-acceptance.md)**
+— external services + judgment, no code. **Start at → [`operator-acceptance.md`](../operator-acceptance.md)**
 (the consolidated, ordered checklist with exact commands + prerequisites).
 
 1. **Gate 1 — P2-T-08 (#59):** stand up Hermes + set `ANTHROPIC_API_KEY` and
@@ -65,8 +72,8 @@ durable artifact, each gated before the next:
 
 | Layer | Produces | Where it lives |
 |---|---|---|
-| **L1 — Product spec** | What we're building + invariants | `docs/product-spec.md`, `docs/invariants.md`, `docs/architecture-overview.md` |
-| **L2 — Persistence** | Thin context map | `CLAUDE.md`, `docs/features/INDEX.md`, `docs/code-map.md` |
+| **L1 — Product spec** | What we're building + invariants | `docs/product/spec.md`, `docs/product/invariants.md`, `docs/product/architecture.md` |
+| **L2 — Persistence** | Thin context map | `CLAUDE.md`, `docs/features/INDEX.md`, `docs/product/code-map.md` |
 | **L3 — Phase scoping** | Shippable phases w/ strict-subset diagrams | `docs/phases/<phase>.md` |
 | **L4 — Feature specs** | One spec per feature, audited for coherence | `docs/features/<feature>.md` |
 | **L5 — Orchestrated execution** | Task graph → workers → review → merge | `docs/phases/<phase>-taskgraph.md` + PRs |
@@ -113,20 +120,20 @@ and follow it for this new project.
 
 ```
 Persist the spec we just produced into:
-- docs/product-spec.md
-- docs/invariants.md            (cross-cutting decisions)
+- docs/product/spec.md
+- docs/product/invariants.md            (cross-cutting decisions)
 - docs/features/INDEX.md        (one-line summaries, empty for now)
-- docs/architecture-overview.md (with a Mermaid container diagram)
+- docs/product/architecture.md (with a Mermaid container diagram)
 And update CLAUDE.md to be a thin map (stack + pointers, not content).
 ```
 
 ### 3.2 — Carve phases (Layer 3)
 
 ```
-Read docs/product-spec.md, docs/architecture-overview.md, and the Layer 3 section
+Read docs/product/spec.md, docs/product/architecture.md, and the Layer 3 section
 of ~/development/myQ/content/02-Topics/half-cycle-method.md. Carve the product
 into shippable phases. Apply the four-question diagnostic. Produce
-docs/phases/poc.md (or phase-0.md) and stubs for phase-1.md, phase-2.md.
+docs/phases/phase-00/phase.md (or phase-0.md) and stubs for phase-1.md, phase-2.md.
 Each phase gets its own strict-subset architecture diagram.
 ```
 
@@ -134,7 +141,7 @@ Each phase gets its own strict-subset architecture diagram.
 
 ```
 Phase <N> kickoff — planning only, no code yet.
-Read: docs/phases/phase-<N>.md, the prior phase's results, docs/invariants.md,
+Read: docs/phases/phase-<N>.md, the prior phase's results, docs/product/invariants.md,
 docs/features/, the feature-spec-template, and half-cycle Layer 4.
 Then propose but DO NOT yet write:
   (a) the feature-specs list, grouped + with dependencies
@@ -176,7 +183,7 @@ then realign main and remove the worktree. Complete the phase.
 ## Part 4 — The non-negotiable rules (how we kept it safe)
 
 These are the operating constraints that the whole process leans on. They map to
-`docs/invariants.md` (INV-01…INV-13). The ones that bite most often:
+`docs/product/invariants.md` (INV-01…INV-13). The ones that bite most often:
 
 - **Merge only via `gh pr merge`.** Never `git push origin main` — the auto-mode
   classifier blocks it, and it bypasses review. Everything (even docs/scaffold)
@@ -223,11 +230,11 @@ These are the operating constraints that the whole process leans on. They map to
 
 ## Reference index
 
-- Invariants: [`docs/invariants.md`](invariants.md) (INV-01…INV-13)
-- Architecture: [`docs/architecture-overview.md`](architecture-overview.md)
-- Area boundaries + safe-parallel rules: [`docs/code-map.md`](code-map.md)
-- Feature registry: [`docs/features/INDEX.md`](features/INDEX.md)
-- Phase docs + results + taskgraphs + spec-audits: [`docs/phases/`](phases/)
+- Invariants: [`docs/product/invariants.md`](../product/invariants.md) (INV-01…INV-13)
+- Architecture: [`docs/product/architecture.md`](../product/architecture.md)
+- Area boundaries + safe-parallel rules: [`docs/product/code-map.md`](../product/code-map.md)
+- Feature registry: [`docs/features/INDEX.md`](../features/INDEX.md)
+- Phase docs + results + taskgraphs + spec-audits: [`docs/phases/`](../phases)
 - Worker roles: `.claude/agents/fathom-worker-{sonnet,opus}.md`
 - Method + runbooks: `~/development/myQ/content/02-Topics/half-cycle-method.md`,
   `runbook-{taskgraph-generation,orchestration-kickoff,cross-spec-audit}.md`;

@@ -24,7 +24,7 @@ Usage
                               [--history-years N] [--fast-periods ...]
                               [--slow-periods ...] [--dry-run]
 
-Defaults match the PoC parameters from docs/phases/poc.md:
+Defaults match the PoC parameters from docs/phases/phase-00/phase.md:
     --instruments    EUR_USD,GBP_USD,USD_JPY
     --granularities  H1,D
     --history-years  2

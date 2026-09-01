@@ -44,7 +44,7 @@ under-specified loader/overlay contracts. No deeper rework.
   order-placement or risk sizing/placement — directly or transitively; the
   scan-refresh path uses the order-free `signals/scan.py::run_scan`, not
   `cli.cmd_scan`. Enforced by a transitive-import boundary test." Added to
-  `docs/invariants.md` under INV-01.
+  `docs/product/invariants.md` under INV-01.
 
 ## Consistent (no action)
 

@@ -1,10 +1,13 @@
-# Fathom — Phase 4: Admin Panel & Hardening (demo)
+# phase-04 — Admin Panel & Hardening (demo)
 
-**Status:** Carved — planning. No code yet.
-**Depends on:** [Phase 3](phase-3.md) — the execution/monitoring store tables (orders, fills, positions, account_state, deviation_log) and the watchlist/approved_set are populated.
-**Unlocks:** Phase 5 (Go-Live decision — product-spec Phase 6).
-**Spec layer:** [product-spec.md](../product-spec.md) ("Phase 5 — Admin Panel & Hardening") · [architecture-overview.md](../architecture-overview.md) (`panel/app.py`) · [forex-algo-trading-plan.md](../forex-algo-trading-plan.md) §2.10 · [invariants.md](../invariants.md)
-**Maps to:** product-spec **Phase 5**. (impl-Phase 4 = the admin panel; go-live becomes impl-Phase 5.)
+**Status:** in_progress — all 5 code/config units merged (#103, #110-114); operator acceptance gate P4-T-06 (#109) still open
+**Commitment level:** Phase N — ships to the operator
+**Time horizon:** 2026-05-30 -> code merged 2026-05-30; gate open
+**Depends on:** [`phase-03`](../phase-03/phase.md) — execution/monitoring store tables populated
+**Unlocks:** [`phase-05`](../phase-05/phase.md) — the go-live decision
+**Product layer:** [spec](../../product/spec.md) ("Phase 5 — Admin Panel & Hardening") · [architecture](../../product/architecture.md) (`panel/app.py`) · [invariants](../../product/invariants.md) · [forex-algo-trading-plan](../../reference/forex-algo-trading-plan.md) §2.10
+**Maps to:** product-spec **Phase 5**.
+**Results:** [results.md](results.md) · **Open gate:** [operator-acceptance.md](../../operator-acceptance.md)
 
 ---
 
@@ -20,10 +23,10 @@ deviation log. Plus a single convenience action — a **refresh button** that ru
 
 The panel **monitors**; it does not trade. The only mutating action it exposes is
 the scan-refresh (a non-order operation). Order authority stays the operator CLI
-(`fathom execute`) — a UI that places trades is exactly what [INV-01](../invariants.md#inv-01--hermes-must-not-place-orders)
+(`fathom execute`) — a UI that places trades is exactly what [INV-01](../../product/invariants.md#inv-01--hermes-must-not-place-orders)
 guards against.
 
-**Demo only** ([INV-07](../invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record)).
+**Demo only** ([INV-07](../../product/invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record)).
 
 ---
 

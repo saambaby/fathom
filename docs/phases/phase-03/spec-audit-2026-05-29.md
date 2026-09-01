@@ -51,7 +51,7 @@ not structural rework. All fixed below; corpus is now taskgraph-ready.
 - **INV-15** — deterministic `client_order_id`; retries never double-fill (depends on DRIFT-03 being pinned — done).
 - **INV-16** — the broker is the source of truth for positions and realized P&L.
 
-Added to `docs/invariants.md`; `order-model-and-brackets` §Touches references INV-14/15; phase-3 active-invariants list updated.
+Added to `docs/product/invariants.md`; `order-model-and-brackets` §Touches references INV-14/15; phase-3 active-invariants list updated.
 
 ## Consistent (no action)
 

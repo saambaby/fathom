@@ -65,7 +65,7 @@ Both code tasks depend only on the existing data layer / config / store (all on 
 | depends_on | 1B-T-01, 1B-T-02 |
 | verification | manual |
 
-Checklist: `PriceStream` connects to the live **practice** endpoint and yields real ticks (UTC-aware) for a few seconds, reconnects cleanly on a forced drop; `FairEconomyCalendar` fetches the live weekly XML, stores events with correct UTC times + impact + currency. No token/key in logs. Save a short note to `docs/phases/phase-1-results.md` (or append to 1a-results) confirming both work; then Phase 1 (1A+1B) is complete.
+Checklist: `PriceStream` connects to the live **practice** endpoint and yields real ticks (UTC-aware) for a few seconds, reconnects cleanly on a forced drop; `FairEconomyCalendar` fetches the live weekly XML, stores events with correct UTC times + impact + currency. No token/key in logs. Save a short note to `docs/phases/phase-01.2/results.md` confirming both work; then `phase-01` (both epics) is complete.
 
 ## Sanity checks
 

@@ -92,7 +92,7 @@ None block dispatch.
 | Field | Value |
 |---|---|
 | **area** | strategies | **surface** | backend | **model** | sonnet — small refactor, tight spec |
-| **feature_spec** | INV-11 + `docs/code-map.md` (shared-prerequisite row) |
+| **feature_spec** | INV-11 + `docs/product/code-map.md` (shared-prerequisite row) |
 | **depends_on** | _(none — root)_ |
 | **worktree** | `../fathom-p1a-T-02-indicators` |
 | **verification** | auto — `atr()` reproduces the shipped `trend.py` ATR values exactly (`ewm(com=period-1, adjust=False)`); existing `MACrossover` tests still pass after the refactor |
@@ -175,11 +175,11 @@ None block dispatch.
 | Field | Value |
 |---|---|
 | **area** | cli | **surface** | backend | **model** | n/a — human execution + review |
-| **feature_spec** | `docs/phases/phase-1.md` "Done When" |
+| **feature_spec** | `docs/phases/phase-01.1/phase.md` "Done When" |
 | **depends_on** | P1A-T-08 |
 | **verification** | manual · **human_admin: true** (uses populated `.env` demo creds) |
 
-**Checklist:** run `fathom backtest` over the full universe on demo; confirm per-timeframe windows; review the persisted approved-set table; UTC timestamps; `swap_modelled=True` where financing applies; no creds in output; **does any (strategy, pair, timeframe) now show robust OOS edge?** Empty is still a valid result. Save the table to `docs/phases/phase-1a-results.md`.
+**Checklist:** run `fathom backtest` over the full universe on demo; confirm per-timeframe windows; review the persisted approved-set table; UTC timestamps; `swap_modelled=True` where financing applies; no creds in output; **does any (strategy, pair, timeframe) now show robust OOS edge?** Empty is still a valid result. Save the table to `docs/phases/phase-01.1/results.md`.
 
 ---
 

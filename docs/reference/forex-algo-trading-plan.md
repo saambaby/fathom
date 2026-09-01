@@ -1,5 +1,9 @@
 # Fathom — Forex Algorithmic Trading System
 
+> **ARCHIVED (reference).** The original design narrative — full rationale and deep-dives.
+> Authoritative for *why*, not maintained for *what is*. For current state see
+> [`docs/product/spec.md`](../product/spec.md) and [`docs/product/architecture.md`](../product/architecture.md).
+
 **A complete design and build plan for an OANDA-based, multi-strategy forex trading system, orchestrated by the Hermes Agent platform.**
 
 Version 0.4 · Demo-first · Both intraday and swing horizons

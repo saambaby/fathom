@@ -6,8 +6,8 @@ human/operator acceptance gates** that no code can close — they require extern
 services and judgment. This doc threads them into one ordered checklist with the
 exact commands and prerequisites, so you can pick up cold.
 
-> Status snapshot: see [`PLAYBOOK.md`](PLAYBOOK.md) Part 1. Method retrospective:
-> see [`half-cycle-verdict.md`](half-cycle-verdict.md).
+> Status snapshot: see [`PLAYBOOK.md`](reference/playbook.md) Part 1. Method retrospective:
+> see [`half-cycle-verdict.md`](reference/half-cycle-verdict.md).
 
 ---
 
@@ -60,7 +60,7 @@ placing no orders (INV-01).
 4. **Accept when:** a coherent ranked watchlist + charts + Claude rationale lands in
    Discord over **≥5 consecutive weekday runs**; empty days post "no candidates"; a
    `skip` verdict vetoes; **no order is ever placed**; no secret in output.
-5. Record the run log in [`phases/phase-2-results.md`](phases/phase-2-results.md).
+5. Record the run log in [`phases/phase-2-results.md`](phases/phase-02/results.md).
 
 Full procedure: `hermes_integration/jobs/daily.md → Operator runbook`.
 
@@ -85,7 +85,7 @@ fathom reconcile --db-path data/fathom.db
 monitor tracks the open position and a **deviation alert lands in Discord**;
 `fathom reconcile` matches broker state after a restart; the daily-loss kill switch
 halts new entries if the cap trips. No live endpoint touched (INV-07). Record in
-[`phases/phase-3-results.md`](phases/phase-3-results.md).
+[`phases/phase-3-results.md`](phases/phase-03/results.md).
 
 ---
 
@@ -101,7 +101,7 @@ streamlit run panel/app.py -- --db-path data/fathom.db
 target overlays + attribution), Equity curve + drawdown, Blotter (positions / P&L /
 risk-in-use vs limit), Watchlist (mirrors Discord), Deviation log — the **Refresh**
 button re-ranks with no order placed, no secret is shown, timestamps are UTC. Confirm
-over a sustained demo period. Record in [`phases/phase-4-results.md`](phases/phase-4-results.md).
+over a sustained demo period. Record in [`phases/phase-4-results.md`](phases/phase-04/results.md).
 
 ---
 
@@ -138,19 +138,19 @@ section / a go-live decision record when done.
 
 INV-07's bar is not "the plumbing works" — it is a **sustained, positive demo
 edge**. The backtest found a *thin* edge (10/72 combos approved, several marginal —
-see [`phases/phase-1a-results.md`](phases/phase-1a-results.md)). So gates 1–3 can run
+see [`phases/phase-1a-results.md`](phases/phase-01.1/results.md)). So gates 1–3 can run
 flawlessly and the system can **still** fail to clear the go-live bar if the demo
 P&L isn't convincingly positive. That is the system working as designed (demo-first,
 INV-07). The polish of a green, fully-built codebase is *not* evidence the edge holds
-live — keep gate 4 skeptical. (See [`half-cycle-verdict.md`](half-cycle-verdict.md)
+live — keep gate 4 skeptical. (See [`half-cycle-verdict.md`](reference/half-cycle-verdict.md)
 Root Cause D.)
 
 ---
 
 ## If you're an AI resuming this project
 
-Read, in order: this file → [`PLAYBOOK.md`](PLAYBOOK.md) (status + method) →
-[`invariants.md`](invariants.md) (INV-01…16) → [`architecture-overview.md`](architecture-overview.md).
+Read, in order: this file → [`PLAYBOOK.md`](reference/playbook.md) (status + method) →
+[`invariants.md`](product/invariants.md) (INV-01…16) → [`architecture-overview.md`](product/architecture.md).
 Engineering is complete; do **not** write go-live/live-token code or flip any live
 switch — gate 4 is operator-only and INV-07-blocked. If asked to "continue the
 project," the only remaining work is supporting the operator through the four gates

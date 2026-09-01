@@ -16,11 +16,11 @@ The execution loop below is identical to the Sonnet worker; the difference is th
 - Verify deps merged: `git fetch origin main && git log origin/main --oneline | grep -i "<dep-id>"`. T-05 depends on BOTH T-03 and T-04 — confirm both are on main. If either is missing, comment `waiting on <dep-id>` and exit.
 
 ## 1. Read context (in order)
-- `docs/phases/poc-taskgraph.md` — your row (AC, verification, notes). T-05's notes are not optional reading.
-- `docs/phases/poc.md` — Components-in-Scope for `backtest/engine.py`, `backtest/costs.py`
-- `docs/invariants.md` — **INV-03** (UTC), **INV-06** (non-zero costs). These are the ones you must defend with tests.
+- `docs/phases/phase-00/taskgraph.md` — your row (AC, verification, notes). T-05's notes are not optional reading.
+- `docs/phases/phase-00/phase.md` — Components-in-Scope for `backtest/engine.py`, `backtest/costs.py`
+- `docs/product/invariants.md` — **INV-03** (UTC), **INV-06** (non-zero costs). These are the ones you must defend with tests.
 - The merged `strategies/base.py` (Signal model) and `data/store.py` (candle load contract) you build on
-- `CLAUDE.md`, `docs/architecture-overview.md`
+- `CLAUDE.md`, `docs/product/architecture.md`
 
 ## 2. Plan first — do NOT edit yet
 State the plan AND the correctness argument: how the engine guarantees the strategy never sees a future bar; how `apply_costs` guarantees `total_cost_pips > 0` for any non-zero spread/slippage; how intrabar fills resolve when stop and target both breach in one bar (stop wins — conservative). Proceed without human review unless you hit a conflict with the spec or an invariant — then pause and report.
