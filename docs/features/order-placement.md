@@ -78,9 +78,10 @@ client extension *and* a pre-submit store check — belt and suspenders against
 double-fills. Unit tests mock v20 with `responses`; no live HTTP in tests. → opus.
 
 **Idempotency key (DRIFT-03 — pinned, INV-15).** `client_order_id =
-sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date}").hexdigest()[:32]`,
+sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date.date().isoformat()}").hexdigest()[:32]`,
 computed by `build_bracket()` in [[order-model-and-brackets]] from the `Candidate`
 fields plus an injected `execution_date` (UTC date of the `fathom execute` run).
+Only the UTC date (`YYYY-MM-DD`) is interpolated, never the full timestamp.
 The same approved candidate retried the same day dedups; a genuine re-approval the
 next day yields a distinct id. `order-model`, this spec, and [[execution-cli]] all
 state this one formula.

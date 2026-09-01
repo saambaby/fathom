@@ -38,9 +38,12 @@ Not a CLI surface; consumed by other Phase 3 modules.
   (DRIFT-07).
 
 **`client_order_id` derivation (DRIFT-03 / INV-15).** `build_bracket` computes
-`client_order_id = sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date}").hexdigest()[:32]`
-from the `Candidate` fields + the injected `execution_date`. The same formula is
-stated in [[order-placement]] and [[execution-cli]].
+`client_order_id = sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:{execution_date.date().isoformat()}").hexdigest()[:32]`
+from the `Candidate` fields + the injected `execution_date`. Only the **UTC date**
+(`YYYY-MM-DD`) of `execution_date` enters the payload — never the full timestamp —
+so a same-day operator re-run dedups (INV-15) while the next day yields a distinct
+id. `Order.created_at` still carries the full `execution_date` timestamp. The same
+formula is stated in [[order-placement]] and [[execution-cli]].
 
 **`candidate_ref` (DRIFT-04).** A string `f"{instrument}:{timeframe}:{strategy_name}"`
 — the same value `fathom execute` ([[execution-cli]]) accepts as its argument and
