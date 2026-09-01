@@ -17,6 +17,7 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 | [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area with phase and status |
 | [`docs/forex-algo-trading-plan.md`](docs/forex-algo-trading-plan.md) | Original design narrative (full rationale and deep-dives) |
 | [`docs/go-live-runbook.md`](docs/go-live-runbook.md) | **Go-live runbook** — deliberate operator cutover procedure (INV-07 hard gate, cutover sequence, small-size start + ramp, rollback, monitoring, go/no-go decision record) |
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Master implementation plan (2026-08-31)** — audit fixes, LLM provider swap (in progress), TradingView posture, capture/breadth work, AI research loop (trial ledger + deflation gate), consolidated sequencing |
 
 **Phase docs (current scope):** — full status table in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)
 
