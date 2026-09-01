@@ -40,7 +40,7 @@ import pytest
 
 import cli
 from data.store import Store
-from data.oanda_client import InstrumentMeta
+from data.oanda_client import CandleRow, InstrumentMeta
 from signals.ranker import Candidate
 from execution.models import Fill, FillStatus, Position
 from execution.reconcile import ReconcileReport
@@ -362,6 +362,177 @@ class TestExecuteSizingReject:
 
 
 # ---------------------------------------------------------------------------
+# 3b. Missing quote→account conversion rate → refuse (WS0-T02, INV-05)
+# ---------------------------------------------------------------------------
+
+
+def _make_jpy_candle(
+    close_mid: float = 157.0,
+    when: Optional[datetime] = None,
+) -> CandleRow:
+    """One complete USD_JPY H1 candle whose mid close is ``close_mid``."""
+    ts = when if when is not None else datetime.now(tz=timezone.utc)
+    spread = 0.01
+    bid = close_mid - spread / 2
+    ask = close_mid + spread / 2
+    return CandleRow(
+        instrument="USD_JPY",
+        granularity="H1",
+        time=ts,
+        open_bid=bid, high_bid=bid, low_bid=bid, close_bid=bid,
+        open_ask=ask, high_ask=ask, low_ask=ask, close_ask=ask,
+        open_mid=close_mid, high_mid=close_mid,
+        low_mid=close_mid, close_mid=close_mid,
+        volume=100,
+        complete=True,
+    )
+
+
+class TestExecuteConversionRateRequired:
+    """A non-USD-quoted instrument must never be sized with a guessed rate.
+
+    Falling back to ``rate = 1.0`` for USD_JPY overstates per-unit risk by the
+    JPY mid (~150x), so the position is sized ~150x the 0.25% INV-05 intent.
+    The gate must refuse instead of guessing.
+    """
+
+    @staticmethod
+    def _seed(db_path: str, *, with_candles: bool) -> Candidate:
+        candidate = _make_candidate(
+            instrument="USD_JPY",
+            timeframe="H1",
+            entry_ref=157.00,
+            stop_distance=0.20,
+            target_distance=0.30,
+        )
+        store = Store(db_path)
+        _seed_watchlist(store, candidate)
+        _seed_account_state(store, start_of_day_equity=100_000.0)
+        meta = _make_instrument_meta("USD_JPY").model_copy(
+            update={"pip_location": -2, "display_precision": 3}
+        )
+        store.upsert_instruments([meta])
+        if with_candles:
+            store.upsert([_make_jpy_candle()])
+        store.close()
+        return candidate
+
+    def test_missing_rate_refuses_before_any_order_work(
+        self, tmp_path: object
+    ) -> None:
+        """No cached mid → exit ≠ 0, clear stderr refusal, no sizing/limits/submit."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        self._seed(db_path, with_candles=False)
+
+        from hermes_integration.pretrade_check import PretradeVerdict
+
+        proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
+
+        size_spy = MagicMock()
+        bracket_spy = MagicMock()
+        limits_spy = MagicMock()
+        submit_spy = MagicMock()
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", return_value=_make_reconcile_report()),
+            patch("cli.pretrade_check", return_value=proceed_verdict),
+            patch("cli.size_position", size_spy),
+            patch("cli.build_bracket", bracket_spy),
+            patch("cli.check_limits", limits_spy),
+            patch("cli.submit_order", submit_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="USD_JPY:H1:macrossover_10_50",
+                dry_run=False,
+                yes=True,
+            )
+            buf_err = io.StringIO()
+            with redirect_stderr(buf_err), redirect_stdout(io.StringIO()):
+                code = cli.cmd_execute(args)
+
+        assert code == 1, "Missing conversion rate must exit non-zero"
+        err = buf_err.getvalue()
+        assert "SIZING REFUSED" in err, err
+        assert "conversion rate" in err, err
+        assert "USD_JPY" in err, err
+        size_spy.assert_not_called()
+        bracket_spy.assert_not_called()
+        limits_spy.assert_not_called()
+        submit_spy.assert_not_called()
+
+    def test_missing_rate_refuses_under_dry_run(self, tmp_path: object) -> None:
+        """--dry-run must refuse too: a silently mis-sized preview misleads."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        self._seed(db_path, with_candles=False)
+
+        from hermes_integration.pretrade_check import PretradeVerdict
+
+        proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
+        size_spy = MagicMock()
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", return_value=_make_reconcile_report()),
+            patch("cli.pretrade_check", return_value=proceed_verdict),
+            patch("cli.size_position", size_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="USD_JPY:H1:macrossover_10_50",
+                dry_run=True,
+            )
+            buf_err = io.StringIO()
+            with redirect_stderr(buf_err), redirect_stdout(io.StringIO()):
+                code = cli.cmd_execute(args)
+
+        assert code == 1
+        assert "SIZING REFUSED" in buf_err.getvalue()
+        size_spy.assert_not_called()
+
+    def test_cached_rate_present_sizing_proceeds(self, tmp_path: object) -> None:
+        """Guard against over-refusing: a fresh cached mid → rate = 1/mid, sizing runs."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        self._seed(db_path, with_candles=True)
+
+        from hermes_integration.pretrade_check import PretradeVerdict
+        from risk.sizing import SizingResult
+
+        proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
+        captured: dict[str, object] = {}
+
+        def spy_size_position(candidate, equity, **kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return SizingResult(units=0, risk_amount=0.0, reason="spy stop")
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", return_value=_make_reconcile_report()),
+            patch("cli.pretrade_check", return_value=proceed_verdict),
+            patch("cli.size_position", side_effect=spy_size_position),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="USD_JPY:H1:macrossover_10_50",
+                dry_run=True,
+            )
+            buf_err = io.StringIO()
+            with redirect_stderr(buf_err), redirect_stdout(io.StringIO()):
+                cli.cmd_execute(args)
+
+        assert "SIZING REFUSED" not in buf_err.getvalue()
+        assert "rate" in captured, "size_position was not called"
+        assert captured["rate"] == pytest.approx(1.0 / 157.0)
+
+
+# ---------------------------------------------------------------------------
 # 4. Limits reject — kill switch active
 # ---------------------------------------------------------------------------
 
@@ -580,7 +751,11 @@ class TestExecuteSuccess:
             patch("cli.size_position", return_value=sizing_ok),
             patch("cli.submit_order", return_value=fill),
         ):
-            args = _make_namespace(db_path=db_path, dry_run=False, yes=True)
+            args = _make_namespace(
+                db_path=db_path,
+                dry_run=False,
+                yes=True,
+            )
             buf_out = io.StringIO()
             with redirect_stdout(buf_out):
                 code = cli.cmd_execute(args)
@@ -624,7 +799,11 @@ class TestExecuteSuccess:
             patch("cli.size_position", return_value=sizing_ok),
             patch("cli.submit_order", side_effect=reject_order),
         ):
-            args = _make_namespace(db_path=db_path, dry_run=False, yes=True)
+            args = _make_namespace(
+                db_path=db_path,
+                dry_run=False,
+                yes=True,
+            )
             buf_err = io.StringIO()
             with redirect_stderr(buf_err):
                 code = cli.cmd_execute(args)
@@ -880,7 +1059,11 @@ class TestGateOrdering:
             patch("cli.check_limits", side_effect=track_check_limits),
             patch("cli.submit_order", side_effect=track_submit),
         ):
-            args = _make_namespace(db_path=db_path, dry_run=False, yes=True)
+            args = _make_namespace(
+                db_path=db_path,
+                dry_run=False,
+                yes=True,
+            )
             with redirect_stdout(io.StringIO()):
                 code = cli.cmd_execute(args)
 
