@@ -32,7 +32,7 @@ import io
 import json
 import sys
 from contextlib import redirect_stdout, redirect_stderr
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import MagicMock, patch, call
 
@@ -64,7 +64,13 @@ def _make_candidate(
     entry_ref: float = 1.1050,
     stop_distance: float = 0.0020,
     target_distance: float = 0.0030,
+    generated_at: Optional[str] = None,
 ) -> Candidate:
+    # Default to "just now" (RFC-3339 UTC) so the freshness (TTL) check
+    # doesn't refuse candidates in tests that aren't specifically exercising
+    # staleness. Tests that DO care about age pass an explicit generated_at.
+    if generated_at is None:
+        generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return Candidate(
         instrument=instrument,
         timeframe=timeframe,
@@ -79,7 +85,7 @@ def _make_candidate(
         spread_ok=True,
         session_ok=True,
         news_flag=False,
-        generated_at="2026-04-10T12:00:00Z",
+        generated_at=generated_at,
     )
 
 
@@ -1145,6 +1151,195 @@ class TestGateOrdering:
 
         assert code != 0
         limits_mock.assert_not_called()  # check_limits must NOT be called after sizing reject
+
+
+# ---------------------------------------------------------------------------
+# Candidate freshness TTL (WS0-T04): stale watchlist entries are refused
+# immediately after load, BEFORE reconcile/pretrade/sizing/limits run.
+# ---------------------------------------------------------------------------
+
+
+class TestCandidateFreshnessTTL:
+    """A candidate older than ``max_candidate_age_bars`` × its own bar length
+    must be refused before any downstream gate step (reconcile, pretrade,
+    sizing, limits, submit) runs — order/stop/target must never be anchored
+    to a stale scan-time entry_ref.
+    """
+
+    @staticmethod
+    def _age_offset_generated_at(hours: float) -> str:
+        gen_dt = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+        return gen_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _spies() -> "tuple[MagicMock, MagicMock, MagicMock, MagicMock]":
+        return (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+
+    def test_stale_h4_candidate_refused_before_reconcile(
+        self, tmp_path: object
+    ) -> None:
+        """An H4 candidate 5h old (limit 4h) is refused; no gate step runs."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        candidate = _make_candidate(
+            timeframe="H4",
+            generated_at=self._age_offset_generated_at(5.0),
+        )
+
+        store = Store(db_path)
+        _seed_watchlist(store, candidate)
+        _seed_account_state(store, start_of_day_equity=100_000.0)
+        store.upsert_instruments([_make_instrument_meta()])
+        store.close()
+
+        reconcile_spy, pretrade_spy, sizing_spy, limits_spy = self._spies()
+        submit_spy = MagicMock()
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", reconcile_spy),
+            patch("cli.pretrade_check", pretrade_spy),
+            patch("cli.size_position", sizing_spy),
+            patch("cli.check_limits", limits_spy),
+            patch("cli.submit_order", submit_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="EUR_USD:H4:macrossover_10_50",
+                dry_run=False,
+                yes=True,
+            )
+            buf_err = io.StringIO()
+            with redirect_stderr(buf_err), redirect_stdout(io.StringIO()):
+                code = cli.cmd_execute(args)
+
+        assert code != 0, "Stale candidate must exit non-zero"
+        err = buf_err.getvalue()
+        assert "STALE CANDIDATE REFUSED" in err, err
+        assert "H4" in err, err
+        assert "4.0h" in err or "4h" in err, err
+        reconcile_spy.assert_not_called()
+        pretrade_spy.assert_not_called()
+        sizing_spy.assert_not_called()
+        limits_spy.assert_not_called()
+        submit_spy.assert_not_called()
+
+    def test_fresh_h4_candidate_proceeds_past_age_check(
+        self, tmp_path: object
+    ) -> None:
+        """A 3h-old H4 candidate (within the 4h limit) proceeds to reconcile."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        candidate = _make_candidate(
+            timeframe="H4",
+            generated_at=self._age_offset_generated_at(3.0),
+        )
+
+        store = Store(db_path)
+        _seed_watchlist(store, candidate)
+        _seed_account_state(store, start_of_day_equity=100_000.0)
+        store.upsert_instruments([_make_instrument_meta()])
+        store.close()
+
+        from hermes_integration.pretrade_check import PretradeVerdict
+
+        reconcile_spy = MagicMock(return_value=_make_reconcile_report())
+        pretrade_spy = MagicMock(
+            return_value=PretradeVerdict(decision="block", reason="stop here")
+        )
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", reconcile_spy),
+            patch("cli.pretrade_check", pretrade_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="EUR_USD:H4:macrossover_10_50",
+                dry_run=True,
+            )
+            with redirect_stderr(io.StringIO()):
+                cli.cmd_execute(args)
+
+        reconcile_spy.assert_called_once()
+        pretrade_spy.assert_called_once()
+
+    def test_stale_refusal_applies_under_dry_run(self, tmp_path: object) -> None:
+        """--dry-run must also refuse a stale candidate (no misleading preview)."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        candidate = _make_candidate(
+            timeframe="H4",
+            generated_at=self._age_offset_generated_at(5.0),
+        )
+
+        store = Store(db_path)
+        _seed_watchlist(store, candidate)
+        _seed_account_state(store, start_of_day_equity=100_000.0)
+        store.upsert_instruments([_make_instrument_meta()])
+        store.close()
+
+        reconcile_spy = MagicMock()
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", reconcile_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="EUR_USD:H4:macrossover_10_50",
+                dry_run=True,
+            )
+            buf_err = io.StringIO()
+            with redirect_stderr(buf_err):
+                code = cli.cmd_execute(args)
+
+        assert code != 0
+        assert "STALE CANDIDATE REFUSED" in buf_err.getvalue()
+        reconcile_spy.assert_not_called()
+
+    def test_stale_limit_is_per_timeframe_daily_candidate_proceeds(
+        self, tmp_path: object
+    ) -> None:
+        """A D-timeframe candidate 20h old (limit 24h) proceeds — per-timeframe limit."""
+        from pathlib import Path
+        db_path = str(Path(str(tmp_path)) / "test.db")
+        candidate = _make_candidate(
+            timeframe="D",
+            generated_at=self._age_offset_generated_at(20.0),
+        )
+
+        store = Store(db_path)
+        _seed_watchlist(store, candidate)
+        _seed_account_state(store, start_of_day_equity=100_000.0)
+        store.upsert_instruments([_make_instrument_meta()])
+        store.close()
+
+        from hermes_integration.pretrade_check import PretradeVerdict
+
+        reconcile_spy = MagicMock(return_value=_make_reconcile_report())
+        pretrade_spy = MagicMock(
+            return_value=PretradeVerdict(decision="block", reason="stop here")
+        )
+
+        with (
+            patch("cli.Settings"),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", reconcile_spy),
+            patch("cli.pretrade_check", pretrade_spy),
+        ):
+            args = _make_namespace(
+                db_path=db_path,
+                candidate_ref="EUR_USD:D:macrossover_10_50",
+                dry_run=True,
+            )
+            with redirect_stderr(io.StringIO()):
+                cli.cmd_execute(args)
+
+        reconcile_spy.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
