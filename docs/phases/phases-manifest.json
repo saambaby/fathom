@@ -82,6 +82,34 @@
       "open_items": [
         "#143 real-OANDA-data fixture — blocked on human (OANDA practice token or candle-db export)"
       ]
+    },
+    {
+      "id": "phase-07",
+      "name": "Standalone platform — de-Hermes, on-demand AI analyze, Pine output",
+      "commitment": "Phase N",
+      "status": "not_started",
+      "doc": "phase-07/phase.md"
+    },
+    {
+      "id": "phase-08",
+      "name": "Trader companion commands — review, journal, ask, deviation explainer",
+      "commitment": "Phase N",
+      "status": "not_started",
+      "doc": "phase-08/phase.md"
+    },
+    {
+      "id": "phase-09",
+      "name": "Counterfactual veto ledger — record every veto, replay the would-be trade, veto-report",
+      "commitment": "Phase N",
+      "status": "not_started",
+      "doc": "phase-09/phase.md"
+    },
+    {
+      "id": "phase-10",
+      "name": "AI quant research loop (WS4 A-E as epics 10.1-10.5) — trial ledger, deflation gate, DSL, agent, tiered autonomy",
+      "commitment": "Phase N",
+      "status": "not_started",
+      "doc": "phase-10/phase.md"
     }
   ]
 }
