@@ -946,6 +946,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "(positive, stable edge on demo before live cutover).  Required for GO."
         ),
     )
+    pf.add_argument(
+        "--pre-cutover",
+        action="store_true",
+        default=False,
+        help=(
+            "Runbook Step-2 mode: with ENV=live but LIVE_TRADING_ENABLED still "
+            "off, treat env/flag/token as consistent instead of NO-GO, so the "
+            "documented cutover ordering is satisfiable.  A --pre-cutover GO is "
+            "recorded as such and NEVER authorizes a live order: re-run "
+            "preflight without this flag after setting LIVE_TRADING_ENABLED."
+        ),
+    )
 
     return parser
 
@@ -1465,6 +1477,100 @@ def _candidate_staleness_error(
     )
 
 
+#: How long a persisted preflight attestation authorizes live execution.
+ATTESTATION_MAX_AGE = timedelta(hours=24)
+
+#: Appended to every live-attestation refusal so the operator knows the remedy.
+_ATTESTATION_REMEDY = (
+    "Run `fathom preflight --attest-track-record` (without --pre-cutover) and "
+    "obtain a GO first.  No order placed."
+)
+
+
+def _live_attestation_error(
+    attestation: "dict[str, object] | None",
+    *,
+    account_id: str,
+    now: datetime,
+) -> Optional[str]:
+    """Return a refusal reason when the persisted attestation cannot authorize live.
+
+    WS0-T06.  ``fathom execute`` on ``ENV=live`` used to pass ``attested=True``
+    to ``run_preflight`` unconditionally, so nothing linked an operator's
+    ``fathom preflight --attest-track-record`` ceremony to the moment an order
+    was placed.  This check restores that link: the latest persisted row must
+    exist, be attested, be a GO, be a **non-pre-cutover** GO (a pre-cutover GO
+    only satisfies the runbook's Step-2 ordering), be for the configured
+    account, and be less than :data:`ATTESTATION_MAX_AGE` old.
+
+    Fail closed: an unparseable timestamp is treated as no attestation at all.
+
+    Args:
+        attestation: The row from ``Store.load_latest_preflight_attestation``,
+            or ``None`` when preflight has never run against this store.
+        account_id: The configured ``OANDA_ACCOUNT_ID``.
+        now: UTC-aware current time (INV-03).
+
+    Returns:
+        ``None`` when the attestation authorizes live execution; otherwise a
+        human-readable refusal reason naming the remedy.
+    """
+    if attestation is None:
+        return (
+            "no preflight attestation on record for this store.  " + _ATTESTATION_REMEDY
+        )
+
+    if not attestation.get("attested"):
+        return (
+            "the latest preflight attestation was recorded WITHOUT "
+            "--attest-track-record (INV-07 not attested).  " + _ATTESTATION_REMEDY
+        )
+
+    if attestation.get("pre_cutover"):
+        return (
+            "the latest preflight attestation is a --pre-cutover GO, which "
+            "satisfies runbook Step 2 but never authorizes execution.  Set "
+            "LIVE_TRADING_ENABLED=true, then " + _ATTESTATION_REMEDY[0:1].lower()
+            + _ATTESTATION_REMEDY[1:]
+        )
+
+    if not attestation.get("go"):
+        return (
+            "the latest preflight attestation recorded NO-GO.  "
+            + _ATTESTATION_REMEDY
+        )
+
+    recorded_account = str(attestation.get("account_id") or "")
+    if not account_id or recorded_account != account_id:
+        return (
+            f"the latest preflight attestation is for account "
+            f"{recorded_account!r}, not the configured {account_id!r}.  "
+            + _ATTESTATION_REMEDY
+        )
+
+    raw = str(attestation.get("created_at") or "")
+    try:
+        created_at = datetime.fromisoformat(raw.rstrip("Z")).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return (
+            f"the latest preflight attestation has an unparseable timestamp "
+            f"({raw!r}).  " + _ATTESTATION_REMEDY
+        )
+
+    age = now - created_at
+    if age > ATTESTATION_MAX_AGE:
+        age_hours = age.total_seconds() / 3600.0
+        return (
+            f"the latest preflight attestation is {age_hours:.1f}h old "
+            f"(limit {ATTESTATION_MAX_AGE.total_seconds() / 3600.0:.0f}h).  "
+            + _ATTESTATION_REMEDY
+        )
+
+    return None
+
+
 def cmd_execute(args: argparse.Namespace) -> int:
     """Execute the ``fathom execute <candidate-ref>`` command.
 
@@ -1590,6 +1696,27 @@ def cmd_execute(args: argparse.Namespace) -> int:
     # always requires it; the [y/N] confirm below remains demo-only.
     # ------------------------------------------------------------------
     if settings.env == "live":
+        # (a0) WS0-T06 — persisted attestation.  The operator must have run
+        #      `fathom preflight --attest-track-record` and obtained a full GO
+        #      for THIS account within the last 24 hours.  Fail closed: any
+        #      missing / stale / non-attested / non-GO / pre-cutover /
+        #      account-mismatched record refuses before anything else runs.
+        store_at = Store(db_path)
+        try:
+            attestation = store_at.load_latest_preflight_attestation()
+        finally:
+            store_at.close()
+
+        attest_err = _live_attestation_error(
+            attestation, account_id=settings.oanda_account_id, now=run_dt
+        )
+        if attest_err is not None:
+            _log.warning("execute: live refused on attestation: %s", attest_err)
+            print(f"LIVE REFUSED: {attest_err}", file=sys.stderr)
+            return 1
+        assert attestation is not None  # narrowed by _live_attestation_error
+        persisted_attested = bool(attestation["attested"])
+
         # (a) run_preflight — any exception → refuse (never GO).  B-1.
         store_pf = Store(db_path)
         try:
@@ -1597,8 +1724,8 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 settings=settings,
                 store=store_pf,
                 client=client,
-                attested=True,  # operator runs `fathom preflight` separately;
-                # the live confirm + the gate are the deliberate operator act here.
+                # The operator's PERSISTED attestation, not a literal (WS0-T06).
+                attested=persisted_attested,
             )
         except Exception as exc:  # noqa: BLE001  — fail closed.
             _log.error("execute: live preflight raised, refusing: %s", exc)
@@ -2030,6 +2157,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     db_path = args.db_path
     attested: bool = args.attest_track_record
+    pre_cutover: bool = getattr(args, "pre_cutover", False)
 
     try:
         settings = Settings()
@@ -2038,6 +2166,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 1
 
     store = Store(db_path)
+    attestation_recorded = False
     try:
         # Build a real OandaClient for the reachability check.
         try:
@@ -2051,7 +2180,28 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             store=store,
             client=client,
             attested=attested,
+            pre_cutover=pre_cutover,
         )
+
+        # WS0-T06: persist the attestation.  This row — not a hardcoded
+        # literal — is what the live branch of `fathom execute` reads as
+        # evidence that the operator actually performed the INV-07 ceremony.
+        # Both GO and NO-GO runs are recorded (append-only audit trail).
+        # INV-08: the summary carries check names + PASS/FAIL only, never a
+        # detail string (which could echo config) and never the token.
+        summary = "; ".join(
+            f"{c.name}={'PASS' if c.ok else 'FAIL'}" for c in report.checks
+        )
+        store.write_preflight_attestation(
+            created_at=report.checked_at,
+            account_id=str(settings.oanda_account_id or ""),
+            env=str(settings.env),
+            attested=attested,
+            go=report.go,
+            pre_cutover=pre_cutover,
+            checks_summary=summary,
+        )
+        attestation_recorded = True
     except Exception as exc:  # noqa: BLE001
         _log.error("preflight: unexpected error: %s", exc)
         print(f"ERROR: preflight failed unexpectedly: {exc}", file=sys.stderr)
@@ -2069,6 +2219,15 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         print(f"{check.name:<35}  {status:<8}  {check.detail}")
 
     print()
+    if attestation_recorded:
+        kind = "pre-cutover " if pre_cutover else ""
+        print(
+            f"Attestation recorded in {db_path} (preflight_attestations): "
+            f"{kind}attested={attested}, go={report.go}.  "
+            "`fathom execute` on ENV=live reads the latest non-pre-cutover "
+            "attested GO from this table (valid for 24h)."
+        )
+        print()
     if report.go:
         print("OVERALL: GO — all checks passed.  System is mechanically ready.")
         _log.info("fathom preflight: GO at %s", report.checked_at.isoformat())

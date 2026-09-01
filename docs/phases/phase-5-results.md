@@ -80,9 +80,12 @@ Phase 4 T-06 acceptances closed, plumbing proven on fake money over a sustained 
 period) is **not yet met**.
 
 **When it is,** the operator follows `docs/go-live-runbook.md`: set the live token +
-`ENV=live` → `fathom preflight --attest-track-record` must be **GO** → **only then**
-set `LIVE_TRADING_ENABLED=true` (the flag is the attestation record — never set it
-before a passing attested preflight) → `fathom execute` one small candidate (typed
+`ENV=live` → `fathom preflight --attest-track-record --pre-cutover` must be **GO** →
+**only then** set `LIVE_TRADING_ENABLED=true` → re-run `fathom preflight
+--attest-track-record` (no `--pre-cutover`) for the full **GO** that `fathom execute`
+checks (WS0-T06: the persisted `preflight_attestations` row, valid 24h, is the
+attestation record — never set the flag before a passing attested preflight) →
+`fathom execute` one small candidate (typed
 account-id confirm) at 0.10% → confirm bracketed fill + monitor + reconcile → record
 the dated go/no-go decision. The agent never performs this.
 

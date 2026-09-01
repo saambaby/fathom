@@ -298,7 +298,12 @@ def test_env_live_no_account_id_no_go(mem_store: Store) -> None:
 
 
 def test_env_live_trading_disabled_no_go(mem_store: Store) -> None:
-    """ENV=live + live_trading_enabled=False → NO-GO."""
+    """ENV=live + live_trading_enabled=False, WITHOUT --pre-cutover → NO-GO.
+
+    Scoped pin (WS0-T06): this is the default (non-``pre_cutover``) behaviour.
+    The pre-cutover variant is pinned by
+    ``test_pre_cutover_flips_only_env_flag_check``.
+    """
     _make_store_with_state(mem_store)
     settings = _make_settings(env="live", live_trading_enabled=False)
     client = _make_stub_client()
@@ -308,6 +313,7 @@ def test_env_live_trading_disabled_no_go(mem_store: Store) -> None:
         store=mem_store,
         client=client,
         attested=True,
+        pre_cutover=False,
     )
     assert report.go is False
     ec = next(c for c in report.checks if c.name == "env_flag_token_consistency")
@@ -616,3 +622,129 @@ def test_single_failing_check_causes_no_go(
 
     report = run_preflight(settings=settings, store=mem_store, client=client, attested=True)
     assert report.go is False
+
+
+# ---------------------------------------------------------------------------
+# 13. WS0-T06: persisted attestation rows + --pre-cutover mode
+# ---------------------------------------------------------------------------
+
+
+def _cli_preflight(db_file: str, argv_extra: list[str], settings: MagicMock) -> int:
+    """Run ``fathom preflight`` against ``db_file`` with a stubbed client."""
+    with (
+        patch("cli.Settings", return_value=settings),
+        patch("cli.OandaClient", return_value=_make_stub_client(reachable=True)),
+    ):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return cli.main(["preflight", "--db-path", db_file] + argv_extra)
+
+
+def test_preflight_cli_persists_attestation_row(tmp_path: object) -> None:
+    """AC-1 (WS0-T06): cmd_preflight appends a preflight_attestations row."""
+    db_file = str(tmp_path / "attest.db")  # type: ignore[operator]
+    store = Store(db_file)
+    _make_store_with_state(store)
+    store.close()
+
+    settings = _make_settings(env="demo")
+    code = _cli_preflight(db_file, ["--attest-track-record"], settings)
+    assert code == 0
+
+    store = Store(db_file)
+    row = store.load_latest_preflight_attestation()
+    store.close()
+    assert row is not None
+    assert row["attested"] is True
+    assert row["go"] is True
+    assert row["pre_cutover"] is False
+    assert row["account_id"] == FAKE_ACCOUNT_ID
+    assert row["env"] == "demo"
+    assert isinstance(row["checks_summary"], str) and row["checks_summary"]
+    # INV-03: created_at is UTC RFC 3339.
+    assert str(row["created_at"]).endswith("Z")
+    # INV-08: the token never lands in the persisted row.
+    assert FAKE_TOKEN not in str(row["checks_summary"])
+
+
+def test_preflight_cli_persists_no_go_row(tmp_path: object) -> None:
+    """A NO-GO run is persisted too, with go=False (auditability)."""
+    db_file = str(tmp_path / "attest_nogo.db")  # type: ignore[operator]
+    store = Store(db_file)
+    _make_store_with_state(store)
+    store.close()
+
+    settings = _make_settings(env="demo")
+    code = _cli_preflight(db_file, [], settings)  # no --attest-track-record
+    assert code == 1
+
+    store = Store(db_file)
+    row = store.load_latest_preflight_attestation()
+    store.close()
+    assert row is not None
+    assert row["attested"] is False
+    assert row["go"] is False
+
+
+def test_pre_cutover_flips_only_env_flag_check(mem_store: Store) -> None:
+    """AC-2 (WS0-T06): --pre-cutover makes ENV=live + flag-off consistent, GO."""
+    _make_store_with_state(mem_store)
+    settings = _make_settings(env="live", live_trading_enabled=False)
+    client = _make_stub_client()
+
+    report = run_preflight(
+        settings=settings,
+        store=mem_store,
+        client=client,
+        attested=True,
+        pre_cutover=True,
+    )
+    ec = next(c for c in report.checks if c.name == "env_flag_token_consistency")
+    assert ec.ok is True
+    assert "pre-cutover" in ec.detail
+    assert report.go is True
+    # Only the env-flag check is affected: every other check keeps its identity.
+    assert {c.name for c in report.checks} == {
+        "account_reachable",
+        "kill_switch_armed",
+        "bracket_contract_inv04",
+        "env_flag_token_consistency",
+        "track_record_attested",
+    }
+
+
+def test_pre_cutover_does_not_mask_missing_token_or_account(mem_store: Store) -> None:
+    """--pre-cutover only excuses the flag — a missing token still NO-GOs."""
+    _make_store_with_state(mem_store)
+    settings = _make_settings(env="live", token="", live_trading_enabled=False)
+    report = run_preflight(
+        settings=settings,
+        store=mem_store,
+        client=_make_stub_client(),
+        attested=True,
+        pre_cutover=True,
+    )
+    assert report.go is False
+    ec = next(c for c in report.checks if c.name == "env_flag_token_consistency")
+    assert ec.ok is False
+
+
+def test_pre_cutover_row_is_marked(tmp_path: object) -> None:
+    """AC-2 (WS0-T06): a --pre-cutover GO is recorded with pre_cutover=True."""
+    db_file = str(tmp_path / "attest_pre.db")  # type: ignore[operator]
+    store = Store(db_file)
+    _make_store_with_state(store)
+    store.close()
+
+    settings = _make_settings(env="live", live_trading_enabled=False)
+    code = _cli_preflight(
+        db_file, ["--attest-track-record", "--pre-cutover"], settings
+    )
+    assert code == 0
+
+    store = Store(db_file)
+    row = store.load_latest_preflight_attestation()
+    store.close()
+    assert row is not None
+    assert row["pre_cutover"] is True
+    assert row["go"] is True
+    assert row["env"] == "live"

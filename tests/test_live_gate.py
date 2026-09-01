@@ -439,6 +439,7 @@ class TestLivePathGate:
         """N-3: live --yes STILL prompts; correct id → proceeds; B-2: 0.001."""
         db_path = str(tmp_path / "live_ok.db")
         _seed(db_path)
+        _write_attestation(db_path)  # WS0-T06: fresh persisted full-GO attestation
         live_settings, proceed = self._live_patches()
 
         captured: dict[str, object] = {}
@@ -473,6 +474,7 @@ class TestLivePathGate:
     ) -> None:
         db_path = str(tmp_path / "live_wrong.db")
         _seed(db_path)
+        _write_attestation(db_path)  # WS0-T06: fresh persisted full-GO attestation
         live_settings, proceed = self._live_patches()
 
         submit = MagicMock(name="submit_order")
@@ -501,6 +503,7 @@ class TestLivePathGate:
     def test_live_flag_false_refuses(self, tmp_path: Path) -> None:
         db_path = str(tmp_path / "live_flag.db")
         _seed(db_path)
+        _write_attestation(db_path)  # WS0-T06: fresh persisted full-GO attestation
         live_settings = _settings(
             env="live", live_trading_enabled=False, oanda_account_id="001-001-1234567-001"
         )
@@ -532,6 +535,7 @@ class TestLivePathGate:
         """B-1: a run_preflight EXCEPTION in the live path → refuse, no order."""
         db_path = str(tmp_path / "live_exc.db")
         _seed(db_path)
+        _write_attestation(db_path)  # WS0-T06: fresh persisted full-GO attestation
         live_settings, proceed = self._live_patches()
 
         submit = MagicMock(name="submit_order")
@@ -630,3 +634,135 @@ class TestINV09NoEnvBranchInMechanics:
 
         gate_src = (_P(cli.__file__).resolve().parent / "execution/live_gate.py").read_text()
         assert "settings.env" in gate_src
+
+
+# ---------------------------------------------------------------------------
+# 5. WS0-T06 — live execute reads a PERSISTED preflight attestation
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta  # noqa: E402
+
+_LIVE_ACCOUNT = "001-001-1234567-001"
+
+
+def _write_attestation(
+    db_path: str,
+    *,
+    account_id: str = _LIVE_ACCOUNT,
+    env: str = "live",
+    attested: bool = True,
+    go: bool = True,
+    pre_cutover: bool = False,
+    age_hours: float = 0.0,
+) -> None:
+    store = Store(db_path)
+    store.write_preflight_attestation(
+        created_at=datetime.now(tz=timezone.utc) - timedelta(hours=age_hours),
+        account_id=account_id,
+        env=env,
+        attested=attested,
+        go=go,
+        pre_cutover=pre_cutover,
+        checks_summary="all checks PASS",
+    )
+    store.close()
+
+
+class TestLiveRequiresPersistedAttestation:
+    """The live path must read a persisted operator attestation, not a literal."""
+
+    @pytest.mark.parametrize(
+        "case,kwargs",
+        [
+            ("missing", None),
+            ("stale", {"age_hours": 25.0}),
+            ("not_attested", {"attested": False}),
+            ("not_go", {"go": False}),
+            ("pre_cutover", {"pre_cutover": True}),
+            ("wrong_account", {"account_id": "001-001-9999999-001"}),
+        ],
+    )
+    def test_live_refuses_without_a_fresh_full_go_attestation(
+        self, tmp_path: Path, case: str, kwargs: "dict[str, object] | None"
+    ) -> None:
+        db_path = str(tmp_path / f"attest_{case}.db")
+        _seed(db_path)
+        if kwargs is not None:
+            _write_attestation(db_path, **kwargs)  # type: ignore[arg-type]
+
+        live_settings, proceed = self._patches()
+        submit = MagicMock(name="submit_order")
+        size = MagicMock(name="size_position")
+        pf = MagicMock(name="run_preflight")
+
+        with (
+            patch("cli.Settings", return_value=live_settings),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", return_value=_recon_report()),
+            patch("cli.run_preflight", pf),
+            patch("cli.pretrade_check", return_value=proceed),
+            patch("cli.size_position", size),
+            patch("cli.submit_order", submit),
+            patch("builtins.input", return_value=_LIVE_ACCOUNT) as mock_input,
+        ):
+            args = _namespace(db_path, yes=True, dry_run=False)
+            buf = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(buf):
+                code = cli.cmd_execute(args)
+
+        err = buf.getvalue()
+        assert code != 0
+        assert "LIVE REFUSED" in err
+        assert "fathom preflight --attest-track-record" in err
+        submit.assert_not_called()  # no order
+        size.assert_not_called()
+        pf.assert_not_called()  # refused before the in-process preflight
+        mock_input.assert_not_called()
+
+    def test_live_proceeds_past_attestation_with_fresh_full_go_row(
+        self, tmp_path: Path
+    ) -> None:
+        """A fresh, attested, non-pre-cutover GO row for this account clears the check.
+
+        run_preflight is then called with attested=<persisted value>, not a
+        hardcoded True.
+        """
+        db_path = str(tmp_path / "attest_ok.db")
+        _seed(db_path)
+        _write_attestation(db_path, age_hours=1.0)
+
+        live_settings, proceed = self._patches()
+        pf = MagicMock(name="run_preflight", return_value=_preflight(True))
+
+        def spy_size(candidate, equity, *, instrument_meta, rate=1.0, risk_fraction=DEFAULT_RISK_FRACTION):  # type: ignore[no-untyped-def]
+            return SizingResult(units=0, risk_amount=0.0, reason="spy stop")
+
+        with (
+            patch("cli.Settings", return_value=live_settings),
+            patch("cli.OandaClient"),
+            patch("cli.reconcile", return_value=_recon_report()),
+            patch("cli.run_preflight", pf),
+            patch("cli.pretrade_check", return_value=proceed),
+            patch("cli.size_position", side_effect=spy_size),
+            patch("builtins.input", return_value=_LIVE_ACCOUNT) as mock_input,
+        ):
+            args = _namespace(db_path, yes=True, dry_run=True)
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                cli.cmd_execute(args)
+
+        pf.assert_called_once()
+        assert pf.call_args.kwargs["attested"] is True
+        mock_input.assert_called_once()
+
+    def _patches(self) -> "tuple[Settings, object]":
+        from hermes_integration.pretrade_check import PretradeVerdict
+
+        return (
+            _settings(
+                env="live",
+                live_trading_enabled=True,
+                live_risk_fraction=0.001,
+                oanda_account_id=_LIVE_ACCOUNT,
+            ),
+            PretradeVerdict(decision="proceed", reason="ok"),
+        )

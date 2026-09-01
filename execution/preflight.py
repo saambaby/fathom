@@ -169,6 +169,7 @@ def run_preflight(
     store: "Store",
     client: "Optional[OandaClient]" = None,
     attested: bool = False,
+    pre_cutover: bool = False,
 ) -> PreflightReport:
     """Run the full mechanical preflight check and return a :class:`PreflightReport`.
 
@@ -203,6 +204,13 @@ def run_preflight(
         attested: ``True`` iff the operator has explicitly asserted the demo
             track record satisfies INV-07 (pass ``--attest-track-record`` in the
             CLI).  Defaults to ``False`` (safe).
+        pre_cutover: ``True`` iff the operator is running the runbook's Step-2
+            readiness check *before* setting ``LIVE_TRADING_ENABLED`` (pass
+            ``--pre-cutover``).  In this mode, and only when the token and
+            account id are both present, ``ENV=live`` with the flag still off
+            is reported as consistent instead of vetoing GO.  Defaults to
+            ``False`` (the strict behaviour).  A pre-cutover GO is recorded as
+            such and is rejected by the live ``fathom execute`` gate.
 
     Returns:
         A :class:`PreflightReport` with ``go=True`` only when all five checks
@@ -341,6 +349,27 @@ def run_preflight(
                     detail=(
                         "ENV=live but OANDA_ACCOUNT_ID is absent or empty.  "
                         "Set the live account ID in .env."
+                    ),
+                )
+            )
+        elif not live_trading_enabled and pre_cutover:
+            # WS0-T06 (runbook deadlock): the go-live runbook orders ENV=live
+            # (Step 1) → preflight GO (Step 2) → LIVE_TRADING_ENABLED=true
+            # (Step 3).  Without this mode Step 2 could never pass, because
+            # the flag is by construction still off.  --pre-cutover excuses
+            # ONLY the flag; a missing token or account id still NO-GOs above.
+            # A pre-cutover GO never authorizes an order: `fathom execute`
+            # requires a persisted NON-pre-cutover GO attestation.
+            checks.append(
+                CheckResult(
+                    name="env_flag_token_consistency",
+                    ok=True,
+                    detail=(
+                        "pre-cutover mode: flag intentionally off until GO "
+                        "(runbook Step 3).  ENV=live, token present, account ID "
+                        "present.  This GO does NOT authorize live execution — "
+                        "set LIVE_TRADING_ENABLED=true and re-run preflight "
+                        "without --pre-cutover."
                     ),
                 )
             )

@@ -374,6 +374,41 @@ class Store:
             (?, ?, ?)
     """
 
+    # ------------------------------------------------------------------
+    # preflight_attestations table (WS0-T06).
+    # Append-only audit trail of every ``fathom preflight`` run.  The live
+    # branch of ``fathom execute`` reads the LATEST row and refuses unless it
+    # is a fresh (<24h), attested, non-pre-cutover GO for the configured
+    # account — replacing the former hardcoded ``attested=True``.  All
+    # timestamps are UTC RFC 3339 (INV-03).  Booleans are INTEGER 0/1.
+    # INV-08: no token or secret is ever stored here.
+    # ------------------------------------------------------------------
+
+    #: SQL to create the ``preflight_attestations`` table if it does not exist.
+    #: Append-only: the autoincrement ``id`` is the only key, so history is
+    #: never clobbered and the newest row is simply ``MAX(id)``.
+    _CREATE_PREFLIGHT_ATTESTATIONS_SQL: str = """
+        CREATE TABLE IF NOT EXISTS preflight_attestations (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at     TEXT    NOT NULL,
+            account_id     TEXT    NOT NULL,
+            env            TEXT    NOT NULL,
+            attested       INTEGER NOT NULL,
+            go             INTEGER NOT NULL,
+            pre_cutover    INTEGER NOT NULL DEFAULT 0,
+            checks_summary TEXT    NOT NULL
+        )
+    """
+
+    #: Append one preflight attestation row.  Plain ``INSERT`` — the table is
+    #: append-only, so every preflight run (GO or NO-GO) accumulates history.
+    _INSERT_PREFLIGHT_ATTESTATION_SQL: str = """
+        INSERT INTO preflight_attestations
+            (created_at, account_id, env, attested, go, pre_cutover, checks_summary)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -439,6 +474,7 @@ class Store:
         self._conn.execute(self._CREATE_ACCOUNT_STATE_SQL)
         self._conn.execute(self._CREATE_DEVIATION_LOG_SQL)
         self._conn.execute(self._CREATE_EQUITY_SNAPSHOTS_SQL)
+        self._conn.execute(self._CREATE_PREFLIGHT_ATTESTATIONS_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -1501,6 +1537,92 @@ class Store:
                 }
             )
         return result
+
+    # ------------------------------------------------------------------
+    # preflight_attestations table (WS0-T06)
+    # ------------------------------------------------------------------
+
+    def write_preflight_attestation(
+        self,
+        *,
+        created_at: datetime,
+        account_id: str,
+        env: str,
+        attested: bool,
+        go: bool,
+        pre_cutover: bool,
+        checks_summary: str,
+    ) -> None:
+        """Append one ``preflight_attestations`` row (append-only audit trail).
+
+        Called by ``cli.cmd_preflight`` after every preflight run — GO and
+        NO-GO alike — so the record is a faithful history of the operator's
+        readiness ceremony rather than only its successes.
+
+        Args:
+            created_at: UTC-aware timestamp of the preflight run; persisted as
+                RFC 3339 (INV-03).
+            account_id: The ``OANDA_ACCOUNT_ID`` the check ran against.  The
+                live execute gate requires an exact match against the
+                configured account, so an attestation for one account can never
+                authorize an order on another.
+            env: ``"demo"`` or ``"live"`` at the time of the check.
+            attested: Whether ``--attest-track-record`` was passed (INV-07).
+            go: The report's overall go/no-go verdict.
+            pre_cutover: Whether ``--pre-cutover`` was passed.  A pre-cutover GO
+                satisfies the runbook's Step-2 ordering but NEVER authorizes a
+                live order — ``fathom execute`` requires a non-pre-cutover GO.
+            checks_summary: Short human-readable per-check summary.  Never
+                contains a token or any secret (INV-08).
+        """
+        self._conn.execute(
+            self._INSERT_PREFLIGHT_ATTESTATION_SQL,
+            (
+                _to_rfc3339(created_at),
+                str(account_id),
+                str(env),
+                1 if attested else 0,
+                1 if go else 0,
+                1 if pre_cutover else 0,
+                str(checks_summary),
+            ),
+        )
+        self._conn.commit()
+
+    def load_latest_preflight_attestation(self) -> "dict[str, object] | None":
+        """Return the most recent ``preflight_attestations`` row, or ``None``.
+
+        "Most recent" is by insertion order (``MAX(id)``), not by
+        ``created_at``: the table is append-only and the newest write is by
+        definition the operator's latest ceremony.
+
+        Returns:
+            A dict with keys ``created_at`` (RFC 3339 TEXT), ``account_id``,
+            ``env``, ``attested`` (bool), ``go`` (bool), ``pre_cutover``
+            (bool) and ``checks_summary``, or ``None`` when preflight has never
+            been run against this store.
+        """
+        cursor = self._conn.execute(
+            """
+            SELECT created_at, account_id, env, attested, go,
+                   pre_cutover, checks_summary
+            FROM   preflight_attestations
+            ORDER  BY id DESC
+            LIMIT  1
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "created_at": row[0],
+            "account_id": row[1],
+            "env": row[2],
+            "attested": bool(row[3]),
+            "go": bool(row[4]),
+            "pre_cutover": bool(row[5]),
+            "checks_summary": row[6],
+        }
 
     def load_fills(
         self,
