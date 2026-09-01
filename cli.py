@@ -212,6 +212,14 @@ WINDOW_CONFIG: dict[str, WindowConfig] = {
     "D": WindowConfig(train_months=24, test_months=6),
 }
 
+#: Bar length per timeframe, used for the candidate freshness TTL check
+#: (WS0-T04) in ``cmd_execute``. Keys must match ``Candidate.timeframe``.
+TIMEFRAME_BAR_LENGTH: dict[str, timedelta] = {
+    "H1": timedelta(hours=1),
+    "H4": timedelta(hours=4),
+    "D": timedelta(hours=24),
+}
+
 #: History to fetch/scan per timeframe must comfortably exceed the longest
 #: train+test span so at least one window forms. The default below (3 years)
 #: covers D (24m+6m = 30m) with margin; overridable via --history-years.
@@ -1415,6 +1423,48 @@ def _load_candidate(
     return (candidate, None)
 
 
+def _candidate_staleness_error(
+    candidate: object,
+    max_candidate_age_bars: float,
+    *,
+    now: datetime,
+) -> Optional[str]:
+    """Return a refusal message if ``candidate`` is stale, else ``None``.
+
+    WS0-T04: a candidate loaded from the watchlist carries an ``entry_ref``
+    (and derived stop/target) anchored to the signal bar's close time
+    (``generated_at``, INV-03 UTC). If too much time has elapsed since then,
+    that anchor is no longer representative and realized R:R drifts with
+    every hour of delay. Staleness is measured in units of the candidate's
+    OWN timeframe bar length (H1=1h, H4=4h, D=24h) so the limit scales
+    naturally across timeframes.
+    """
+    timeframe = candidate.timeframe  # type: ignore[attr-defined]
+    bar_length = TIMEFRAME_BAR_LENGTH.get(timeframe)
+    if bar_length is None:
+        # Unknown timeframe: nothing to compare against — let downstream
+        # gates handle it (should not happen for a watchlist-persisted ref).
+        return None
+
+    generated_at_raw = candidate.generated_at  # type: ignore[attr-defined]
+    s = str(generated_at_raw).rstrip("Z")
+    generated_at = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+
+    age = now - generated_at
+    limit = bar_length * max_candidate_age_bars
+    if age <= limit:
+        return None
+
+    age_hours = age.total_seconds() / 3600.0
+    limit_hours = limit.total_seconds() / 3600.0
+    ref = f"{candidate.instrument}:{timeframe}:{candidate.strategy_name}"  # type: ignore[attr-defined]
+    return (
+        f"STALE CANDIDATE REFUSED: {ref} is {age_hours:.1f}h old "
+        f"(limit {limit_hours:.1f}h = {max_candidate_age_bars:g} x {timeframe} bar). "
+        "Re-run fathom scan. No order placed."
+    )
+
+
 def cmd_execute(args: argparse.Namespace) -> int:
     """Execute the ``fathom execute <candidate-ref>`` command.
 
@@ -1466,11 +1516,31 @@ def cmd_execute(args: argparse.Namespace) -> int:
     )
 
     # ------------------------------------------------------------------
+    # Step 1.5: Candidate freshness TTL (WS0-T04). Refuse a stale watchlist
+    # entry BEFORE any downstream gate step (reconcile/pretrade/sizing/
+    # limits/submit) runs — a stale entry_ref must never reach an order.
+    # ------------------------------------------------------------------
+    settings = Settings()
+    try:
+        max_candidate_age_bars = float(settings.max_candidate_age_bars)
+    except (TypeError, ValueError, AttributeError):
+        # Defensive fallback (e.g. Settings mocked/faked without this
+        # attribute configured in tests) — the documented default.
+        max_candidate_age_bars = 1.0
+
+    staleness_error = _candidate_staleness_error(
+        candidate, max_candidate_age_bars, now=run_dt
+    )
+    if staleness_error is not None:
+        _log.error("execute: %s", staleness_error)
+        print(f"ERROR: {staleness_error}", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
     # Step 2: Fresh reconcile BEFORE limits (AMBIGUOUS-03).
     # Refresh account_state (day_pl, start_of_day_equity) and open
     # positions from the broker so the kill switch reads current data.
     # ------------------------------------------------------------------
-    settings = Settings()
     _log.info("execute: connecting to OANDA (env=%s).", settings.env)  # INV-08: no token
     client = OandaClient(settings)
     store = Store(db_path)

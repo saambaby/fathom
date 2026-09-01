@@ -309,6 +309,9 @@ def _utc(y: int, m: int, d: int, h: int = 0, mi: int = 0) -> datetime:
 
 
 def _make_candidate() -> Candidate:
+    # generated_at defaults to "just now" so this candidate is never refused
+    # by the WS0-T04 freshness TTL check in tests that aren't exercising it.
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return Candidate(
         instrument="EUR_USD",
         timeframe="H1",
@@ -323,7 +326,7 @@ def _make_candidate() -> Candidate:
         spread_ok=True,
         session_ok=True,
         news_flag=False,
-        generated_at="2026-04-10T12:00:00Z",
+        generated_at=generated_at,
     )
 
 
