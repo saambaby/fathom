@@ -27,9 +27,11 @@ must reuse the backtest engine's conservative fill rules, or the report is ficti
    version, model id, timestamp (UTC). Written on every verdict — proceed and block
    alike (proceeds are the baseline). Operator-declined rows ride along (cheap at the
    existing confirm abort; see phase scoping assumptions).
-2. **Counterfactual tracker** — `fathom veto-report --refresh`: for each ledger entry past
-   its trade horizon, replay the would-be bracket order over stored candles using the
-   backtest engine's fill/cost rules; persist outcome (target/stop/timeout, R-multiple).
+2. **Counterfactual tracker** — `fathom veto-report --refresh`: for each ledger
+   row with `generated_at < now` that is not already terminal, replay the
+   would-be bracket over stored candles using the engine fill/cost rules;
+   persist outcome (`stop`/`target`/`timeout`/`unknown`). Missing horizon bars
+   are `unknown`, not a skip.
 3. **`fathom veto-report`** — aggregate view: per-gate block rate, counterfactual win/loss
    of blocked trades, net R saved/cost, broken down by instrument/timeframe/strategy.
 4. **Execute-gate + analyze-pipeline recording hooks** — minimal, behind their own spec

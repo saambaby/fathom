@@ -88,8 +88,9 @@ Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cuto
 
 ## phase-09 — counterfactual veto ledger (spec sprint in progress)
 
-See [phase-09/phase.md](../phases/phase-09/phase.md). Recording layer ready; tracker + report still to spec.
+See [phase-09/phase.md](../phases/phase-09/phase.md). Recording + tracker ready; report still to spec.
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | veto-ledger | append-only news-risk / pretrade / operator-declined rows; failure-isolated demo-only hooks (INV-09 Phase-9) | [veto-ledger.md](veto-ledger.md) | ready |
+| counterfactual-tracker | replay ledger rows via engine fill rules; `veto-report --refresh`; sticky terminals | [counterfactual-tracker.md](counterfactual-tracker.md) | ready |
