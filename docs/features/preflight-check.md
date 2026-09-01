@@ -18,14 +18,15 @@ no orders and changes no state.
 
 ## User-facing behaviour
 
-- `execution/preflight.py` — `run_preflight(*, settings, store, client=None, attested: bool = False) -> PreflightReport`:
+- `execution/preflight.py` — `run_preflight(*, settings, store, client=None, attested: bool = False, pre_cutover: bool = False) -> PreflightReport`:
   - **Account reachable** — an account-summary read succeeds (uses the injected client; on demo this hits practice, never live unless the operator has already set ENV=live).
   - **Kill switch (B-3 — concrete shipped semantics):** there is no "armed" field on the shipped API. Preflight loads `store.load_account_state()` and calls `risk.limits.kill_switch_status(day_pl=…, start_of_day_equity=…, config=LimitsConfig(), now=…)`. **"Armed and healthy" ≡ `account_state is not None` AND its `as_of` is within the staleness window (default 10 min of `now`) AND `KillSwitchStatus.active is False` (not tripped).** NO-GO if `account_state` is missing, stale, or the switch is tripped (`active is True`). For single-source reuse (à la `book_risk_sum`, P4-T-02), extract a small **`kill_switch_armed(account_state, now, config) -> (bool, reason)`** into `risk/limits.py` and have preflight call it (coordinator-serialized edit to the shipped `risk/limits.py`).
   - **Brackets/INV-04** — confirms the execution path enforces SL+TP (a static check that `build_bracket`/order submission can't produce a naked order — e.g. config/contract assertion).
-  - **Env/flag/token consistency** — if `ENV=live`, a live-shaped token + `oanda_account_id` are present; `live_trading_enabled` state is reported; no demo/live mismatch.
+  - **Env/flag/token consistency** — if `ENV=live`, a live-shaped token + `oanda_account_id` are present; `live_trading_enabled` state is reported; no demo/live mismatch. **`pre_cutover=True` (WS0-T06)** relaxes exactly one branch: `ENV=live` with `live_trading_enabled=False` reports `ok=True` ("pre-cutover mode: flag intentionally off until GO (runbook Step 3)") instead of vetoing GO, so the runbook's Step-1→2→3 ordering is satisfiable. It excuses nothing else — a missing token or account id still NO-GOs — and the resulting GO is recorded as pre-cutover, which `fathom execute` rejects.
   - **Track-record attestation** — `attested` must be True (the operator asserts the demo track record per INV-07); preflight **does not** judge edge quality itself.
   - Returns a `PreflightReport` with an overall `go: bool` and a list of per-check `(name, ok, detail)`.
-- `fathom preflight [--db-path PATH] [--attest-track-record]` — runs it, prints each check + an overall **GO**/**NO-GO**, exits 0 on GO / non-zero on NO-GO. Read-only; places nothing.
+- `fathom preflight [--db-path PATH] [--attest-track-record] [--pre-cutover]` — runs it, prints each check + an overall **GO**/**NO-GO**, exits 0 on GO / non-zero on NO-GO. Places no order.
+- **Persisted attestation (WS0-T06).** Every run — GO and NO-GO alike — appends one row to the `preflight_attestations` table via `Store.write_preflight_attestation` (`created_at` UTC RFC 3339, `account_id`, `env`, `attested`, `go`, `pre_cutover`, `checks_summary`; no secrets, INV-08). `Store.load_latest_preflight_attestation()` reads the newest row. This row — not a hardcoded literal — is the evidence the live execute gate checks, so the `--attest-track-record` ceremony is enforced rather than assumed. `run_preflight` itself remains read-only; the write is the CLI's, at the operator boundary.
 
 ## Acceptance criteria
 
@@ -33,6 +34,8 @@ no orders and changes no state.
 - [ ] Track-record attestation is required: `attested=False` → NO-GO with a reason pointing at INV-07 (preflight never green-lights live on its own).
 - [ ] Kill-switch check is NO-GO when `account_state is None`, when its `as_of` is older than the staleness window (default 10 min), or when `kill_switch_status(...).active is True` (tripped); GO only when present + fresh + not tripped (`kill_switch_armed` returns True). A test pins each case.
 - [ ] Env/flag/token consistency: `ENV=live` without a token/account or with `live_trading_enabled=False` is reported clearly (NO-GO or a flagged warning per the rules); demo is always internally consistent.
+- [ ] **(WS0-T06)** `--pre-cutover` flips **only** the `env_flag_token_consistency` check for the `ENV=live` + flag-off case; a missing token/account still NO-GOs; without the flag the strict NO-GO behaviour is unchanged (a test pins both sides).
+- [ ] **(WS0-T06)** `fathom preflight` persists one `preflight_attestations` row per run carrying `attested`, `go`, `pre_cutover`, `account_id`, `env` and a UTC `created_at`, and prints a line noting the record. No secret appears in the row.
 - [ ] `fathom preflight` exits 0 on GO, non-zero on NO-GO; prints per-check status; **places no order and writes no state** (read-only — a test asserts no order/write capability).
 - [ ] No secret (token) is printed (INV-08); all timestamps UTC (INV-03).
 - [ ] Pure/deterministic core — `run_preflight` takes injected `settings`/`store`/`client`; unit-tested against a seeded store + stub client (no live HTTP).
@@ -82,8 +85,9 @@ taskgraph).
 **Resolved at cross-spec audit (2026-05-30):** B-3 — concrete `kill_switch_status`
 semantics + a defined 10-min staleness window + the `kill_switch_armed` extraction
 (no phantom "armed" API); N-1 — build order pinned, `getattr` hedge dropped.
-Attestation marker = the `--attest-track-record` CLI flag for Phase 5 (a persisted
-signed-off record later).
+Attestation marker = the `--attest-track-record` CLI flag for Phase 5. **Superseded by
+WS0-T06:** the persisted signed-off record now exists (`preflight_attestations`) and is
+what authorizes live execution.
 
 ## Out of scope
 

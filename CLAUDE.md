@@ -85,8 +85,10 @@ streamlit run panel/app.py    # launch the read-only Streamlit dashboard
 #   Refresh button → signals.scan.run_scan (order-free); never fathom execute
 
 # Phase 5 — go-live guardrails (P5-T-03) — go-live is operator-only + INV-07-blocked
-fathom preflight              # GO/NO-GO live-readiness check (read-only); NO-GO without --attest
-#   fathom preflight [--db-path PATH] [--attest-track-record]
+fathom preflight              # GO/NO-GO live-readiness check; NO-GO without --attest
+                              # persists a preflight_attestations row (live execute reads it)
+#   fathom preflight [--db-path PATH] [--attest-track-record] [--pre-cutover]
+#   --pre-cutover: runbook Step 2 (ENV=live, flag still off) — never authorizes an order
 #   Live cutover: see docs/go-live-runbook.md. ENV=live + LIVE_TRADING_ENABLED +
 #   preflight GO + typed account-id confirm all required; live sizes at LIVE_RISK_FRACTION (0.10%)
 

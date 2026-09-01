@@ -112,10 +112,15 @@ positive.** This is a judgment call, not a checkbox — see the honest caveat be
 
 Follow [`go-live-runbook.md`](go-live-runbook.md) exactly. The hard ordering:
 
-1. set the live token in `.env`; `ENV=live`.
-2. `fathom preflight --attest-track-record` → **must be GO**.
-3. **only after GO**, set `LIVE_TRADING_ENABLED=true`. *(The flag IS the attestation
-   record — never set it before a passing attested preflight.)*
+1. set the live token in `.env`; `ENV=live` (leave `LIVE_TRADING_ENABLED` unset).
+2. `fathom preflight --attest-track-record --pre-cutover` → **must be GO**.
+   *(`--pre-cutover` is what makes this step passable while the flag is still off;
+   such a GO is recorded as pre-cutover and never authorizes an order.)*
+3. **only after that GO**, set `LIVE_TRADING_ENABLED=true`.
+3b. re-run `fathom preflight --attest-track-record` (no `--pre-cutover`) → **must be
+   GO**. This writes the `preflight_attestations` row that `fathom execute` checks;
+   live execution is refused unless that row is an attested, non-pre-cutover GO for
+   the configured account and **less than 24h old** (re-run if it ages out).
 4. `fathom execute <instrument>:<timeframe>:<strategy_name>` — one small candidate,
    type the account id to confirm — sizes at `LIVE_RISK_FRACTION` (0.10%).
 5. confirm bracketed fill + `run_monitor.py` + `fathom reconcile`; record the dated
