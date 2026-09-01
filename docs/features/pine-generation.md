@@ -149,6 +149,9 @@ usability is the phase's riskiest assumption.
 - INV-10 — empty watchlist is a first-class, honest output (AC 3).
 - INV-13 — consumes the frozen `Candidate` contract read-only; no field added or
   reinterpreted.
+- INV-21 — staleness reuses the single freshness definition (setting + bar-length map);
+  pine's reaction is warn-only (promoted from this spec + execution-cli during the
+  sprint).
 
 ## Events
 

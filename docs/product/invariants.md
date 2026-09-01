@@ -168,3 +168,23 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 **Reason:** a crashed process or a missed fill must be recoverable, not silently wrong — the kill switch (INV-05 daily cap) and the deviation monitor both trust this state. Operational risk is real risk; reconciliation is a first-class feature.
 
 **Enforcement:** `execution/reconcile.py` applies broker-wins on startup and every N minutes; drift is logged at WARNING, never silently dropped. The kill switch reads `day_pl`/`start_of_day_equity` from the reconciled `account_state` row.
+
+## INV-17 – INV-19 · Reserved — phase-10 AI research loop
+
+Reserved ids, pre-referenced by [`docs/phases/phase-10/phase.md`](../phases/phase-10/phase.md) and [`docs/implementation-plan.md`](../implementation-plan.md): INV-17 (trial ledger — every engine run logged by construction), INV-18 (deflation-gated `approved_set` promotion), INV-19 (frozen evaluation config, agent-unreachable). Recorded here when phase-10.1/10.2 land their specs.
+
+## INV-20 · One LLM Adapter, One Offline Predicate — LLM Call Sites Fail Safe by Default
+
+**Rule:** all in-process LLM traffic goes through the single OpenAI-compatible adapter (`ai/llm_client.py::OpenAICompatClient` from phase-07; today `hermes_integration/pretrade_check.py`), governed solely by `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`. The offline predicate is uniform: a call site with no injected client and no `LLM_API_KEY` set returns its documented safe default with **zero network I/O** — veto-path sites take their INV-02 safe default (news-risk → `skip`, pretrade → abort), advisory sites take their deterministic fallback text. Where a measurement row is written (`analysis_log`, `veto_ledger`), the offline case records `model_id="offline"`; otherwise `model_id` is the `LLM_MODEL` in effect.
+
+**Reason:** promoted during the phase-07–10 spec sprint (2026-09-01): five features (pretrade-check, ai-package-migration, analyze-command, market-brief, veto-ledger) each restated this predicate; one drifting restatement would silently break the ledger's `model_id` join semantics or turn an offline run into a crash or a fabricated verdict.
+
+**Enforcement:** per-call-site offline tests assert the safe default with a socket guard or httpx mock (zero network); key-hygiene tests (INV-08) extend to every new call path; new LLM call sites must import the shared adapter, never construct their own HTTP client.
+
+## INV-21 · One Freshness Definition for Watchlist Candidates
+
+**Rule:** a watchlist candidate is **stale** when its `generated_at` is older than `max_candidate_age_bars` × its **own timeframe's** bar length — one settings field, one bar-length map (`cli.py` `TIMEFRAME_BAR_LENGTH`), shared by every consumer. Consumers differ only in reaction, never in definition: `fathom execute` Step 1.5 **refuses** stale candidates; `fathom pine` **warns** (per-candidate "(stale)" labels + STALE status cell); `fathom analyze` derives its `entry_window_utc` from the same bar-length map. No consumer may define its own TTL or bar lengths.
+
+**Reason:** promoted during the phase-07–10 spec sprint (2026-09-01): three features (execution-cli, pine-generation, analyze-command) depend on "stale" meaning the same thing; a second definition would let a candidate render as fresh on the chart the operator trades from while `fathom execute` refuses it — or worse, the reverse.
+
+**Enforcement:** the setting and the map have a single definition site each; staleness checks import them (no literal TTLs); pine's staleness fixture (stale-H1 + fresh-D) and execute's Step-1.5 tests pin the shared arithmetic.

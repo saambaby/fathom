@@ -118,6 +118,8 @@ ai/
 - INV-02 — both parse boundaries preserved; `news_risk_check` adds the same fail-closed
   wrapper `pretrade_check` has.
 - INV-08 — key privacy on all new call paths (AC 6).
+- INV-20 — this feature *creates* the invariant's single adapter (`ai/llm_client.py`)
+  and gives `news_risk_check`/`narrate` the uniform offline predicate.
 
 ## Events
 

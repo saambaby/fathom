@@ -163,6 +163,9 @@ sequenceDiagram
 - INV-10 — empty watchlist is honest and cheap (AC 3).
 - INV-13 — consumes frozen `Candidate` read-only.
 - INV-08 — no key in logs/output (inherited via `ai/llm_client`).
+- INV-20 — all LLM calls via the shared adapter; the offline predicate and
+  `model_id="offline"` rule are the invariant's, restated nowhere.
+- INV-21 — `entry_window_utc` derives from the single bar-length map.
 
 ## Events
 
