@@ -22,12 +22,16 @@ must reuse the backtest engine's conservative fill rules, or the report is ficti
 
 ## In scope
 
-1. **Veto ledger table** — append-only: verdict source (news-risk | pretrade), full
-   `Candidate` snapshot, verdict JSON, prompt/template version, model id, timestamp (UTC).
-   Written on every verdict — proceed and block alike (proceeds are the baseline).
-2. **Counterfactual tracker** — `fathom veto-report --refresh`: for each ledger entry past
-   its trade horizon, replay the would-be bracket order over stored candles using the
-   backtest engine's fill/cost rules; persist outcome (target/stop/timeout, R-multiple).
+1. **Veto ledger table** — append-only: verdict source (`news_risk` | `pretrade` |
+   `operator_declined`), full `Candidate` snapshot, verdict JSON, prompt/template
+   version, model id, timestamp (UTC). Written on every verdict — proceed and block
+   alike (proceeds are the baseline). Operator-declined rows ride along (cheap at the
+   existing confirm abort; see phase scoping assumptions).
+2. **Counterfactual tracker** — `fathom veto-report --refresh`: for each ledger
+   row with `generated_at < now` that is not already terminal, replay the
+   would-be bracket over stored candles using the engine fill/cost rules;
+   persist outcome (`stop`/`target`/`timeout`/`unknown`). Missing horizon bars
+   are `unknown`, not a skip.
 3. **`fathom veto-report`** — aggregate view: per-gate block rate, counterfactual win/loss
    of blocked trades, net R saved/cost, broken down by instrument/timeframe/strategy.
 4. **Execute-gate + analyze-pipeline recording hooks** — minimal, behind their own spec
@@ -60,7 +64,8 @@ must reuse the backtest engine's conservative fill rules, or the report is ficti
       operation, including the explicit `unknown` bucket.
 - [ ] Boundary review: fresh reviewer confirms the recording hooks cannot raise into, or
       change control flow of, either gate (a ledger write failure logs WARNING and the
-      trade path proceeds as if the ledger did not exist).
+      trade path proceeds as if the ledger did not exist). A hung/slow `INSERT` may
+      delay the path this phase (best-effort synchronous write, no timeout).
 - [ ] CI green; CLAUDE.md + feature INDEX updated.
 
 ## Architecture (this phase)

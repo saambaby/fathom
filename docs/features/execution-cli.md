@@ -110,6 +110,10 @@ Phase 1/2 runner scaffolding (`--db-path`, `--dry-run`, UTC logging). It is the
 command is pure orchestration — all logic lives in the risk/execution modules; the
 CLI wires them and handles exit codes + operator output. → sonnet.
 
+Phase-09 [[veto-ledger]] adds two **additive** recording calls in `cmd_execute`
+(after `pretrade_check` returns, before the `block` branch; on demo confirm abort).
+Those lines do not change gate order, exit codes, or order authority (INV-01).
+
 ## Non-goals
 
 - No new risk/execution logic — orchestration only.
