@@ -962,3 +962,37 @@ class TestGateOrdering:
 
         assert code != 0
         limits_mock.assert_not_called()  # check_limits must NOT be called after sizing reject
+
+
+# ---------------------------------------------------------------------------
+# _llm_client_from_settings — settings-driven LLM client construction
+# ---------------------------------------------------------------------------
+
+
+class TestLlmClientFromSettings:
+    """cmd_execute wires the pretrade veto's LLM client from Settings (.env-aware)."""
+
+    def _settings(self, **overrides: object) -> MagicMock:
+        s = MagicMock()
+        s.llm_api_key = None
+        s.llm_base_url = "https://api.openai.com/v1"
+        s.llm_model = "some-model"
+        for k, v in overrides.items():
+            setattr(s, k, v)
+        return s
+
+    def test_no_key_returns_none(self) -> None:
+        assert cli._llm_client_from_settings(self._settings()) is None
+
+    def test_key_builds_client_with_settings_values(self) -> None:
+        from pydantic import SecretStr
+
+        s = self._settings(
+            llm_api_key=SecretStr("sk-abc"),
+            llm_base_url="https://groq.example/openai/v1",
+            llm_model="llama-3.3-70b",
+        )
+        client = cli._llm_client_from_settings(s)
+        assert client is not None
+        assert client.base_url == "https://groq.example/openai/v1"
+        assert client.model == "llama-3.3-70b"

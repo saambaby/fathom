@@ -67,8 +67,9 @@ def _settings(
     """A duck-typed Settings stub — no live token, no I/O (INV-07/08).
 
     The gate only reads ``env`` / ``live_trading_enabled`` / ``live_risk_fraction``
-    / ``oanda_account_id``, so a ``SimpleNamespace`` with those attributes is a
-    faithful stand-in.  Cast to ``Settings`` so the call sites type-check without
+    / ``oanda_account_id`` (and ``cmd_execute`` additionally reads the ``llm_*``
+    fields to build the pre-trade veto client), so a ``SimpleNamespace`` with
+    those attributes is a faithful stand-in.  Cast to ``Settings`` so the call sites type-check without
     requiring a real (token-bearing) ``Settings`` instance.
     """
     return cast(
@@ -78,6 +79,10 @@ def _settings(
             live_trading_enabled=live_trading_enabled,
             live_risk_fraction=live_risk_fraction,
             oanda_account_id=oanda_account_id,
+            # Pre-trade veto LLM config: no key → cmd_execute injects no client.
+            llm_api_key=None,
+            llm_base_url="https://api.openai.com/v1",
+            llm_model="gpt-5-nano",
         ),
     )
 
