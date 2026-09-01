@@ -88,10 +88,18 @@ equity) is accepted — it perturbs the 0.25% cap by less than intraday rate dri
 **Amended (WS0-T02):** the rate is *required*, never defaulted. If no recent cached
 mid exists for the conversion pair, [[execution-cli]] refuses to size — it prints
 `SIZING REFUSED: no quote->account conversion rate for <pair>`, exits non-zero, and
-places no order (also under `--dry-run`). Assuming `rate = 1.0` for a JPY-quoted pair
-understates per-unit risk by the JPY mid (~150x), sizing the position ~150x the 0.25%
-intent, so guessing is never acceptable. The mid is derived from the cached
+places no order (also under `--dry-run`). Assuming `rate = 1.0` mis-sizes in both
+directions depending on the quote currency: for a JPY-quoted pair it *understates*
+per-unit risk by the JPY mid (~157x), under-sizing the position to ~1/157th of the
+0.25% intent; for a quote currency stronger than USD (e.g. GBP-quoted, ~27%) it
+*overstates* per-unit risk, over-sizing the position relative to the 0.25% cap. Either
+way guessing is never acceptable. The mid is derived from the cached
 `close_bid`/`close_ask` of the instrument's own timeframe within the last 3 days.
+
+For cross pairs (e.g. `EUR_JPY` on a USD account), the conversion is approximated
+using the instrument's own mid rather than a true cross-rate computation; this is a
+bounded approximation (~10% error) and is accepted as-is (no separate cross-rate
+lookup is performed).
 
 ## Out of scope
 

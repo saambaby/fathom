@@ -75,8 +75,8 @@ Full procedure: `hermes_integration/jobs/daily.md → Operator runbook`.
 # with LLM_API_KEY set (so the pre-trade veto can return proceed;
 # LLM_BASE_URL/LLM_MODEL default to https://api.openai.com/v1 + gpt-5-nano):
 fathom scan --db-path data/fathom.db            # refresh the watchlist
-fathom execute EUR_USD:D:BollingerReversion(20,2.0) --db-path data/fathom.db
-scripts/run_monitor.py --instruments EUR_USD --db-path data/fathom.db   # always-on, separate terminal
+fathom execute "EUR_USD:D:BollingerReversion(20,2.0)" --db-path data/fathom.db
+python scripts/run_monitor.py --instruments EUR_USD --db-path data/fathom.db   # always-on, separate terminal
 fathom reconcile --db-path data/fathom.db
 ```
 

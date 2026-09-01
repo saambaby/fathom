@@ -861,7 +861,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "candidate_ref",
         help=(
             "Candidate reference: instrument:timeframe:strategy_name, "
-            "e.g. EUR_USD:H1:macrossover_10_50_eur_usd_h1. "
+            "e.g. EUR_USD:D:BollingerReversion(20,2.0). "
             "Must be present on the latest persisted watchlist (INV-13)."
         ),
     )
@@ -1391,7 +1391,7 @@ def _load_candidate(
             (
                 f"Invalid candidate ref {candidate_ref!r}: expected "
                 "instrument:timeframe:strategy_name "
-                "(e.g. EUR_USD:H1:macrossover_10_50).",
+                "(e.g. EUR_USD:D:BollingerReversion(20,2.0)).",
                 2,
             ),
         )
@@ -1814,10 +1814,13 @@ def cmd_execute(args: argparse.Namespace) -> int:
     # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid,
     # derived from the latest cached close_mid in the candle store.
     #
-    # There is deliberately NO 1.0 fallback: for a JPY-quoted pair, rate = 1.0
-    # understates per-unit risk by the JPY mid (~150x), so the position would be
-    # sized ~150x the 0.25% risk intent (INV-05).  If the rate cannot be
-    # derived, we refuse to size and place no order — never guess (WS0-T02).
+    # There is deliberately NO 1.0 fallback: assuming rate = 1.0 mis-sizes in
+    # both directions depending on the quote currency. For a JPY-quoted pair
+    # it understates per-unit risk by the JPY mid (~157x), under-sizing the
+    # position; for a quote currency stronger than USD (e.g. GBP-quoted,
+    # ~27%) it overstates per-unit risk, over-sizing the position relative to
+    # the 0.25% risk intent (INV-05). If the rate cannot be derived, we
+    # refuse to size and place no order — never guess (WS0-T02).
     rate: float = 1.0
     if not candidate.instrument.endswith("_USD"):
         resolved_rate: Optional[float] = None
