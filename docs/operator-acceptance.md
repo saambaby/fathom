@@ -34,13 +34,15 @@ From the current `.env` (audited 2026-05-30):
 |---|---|---|
 | `OANDA_API_TOKEN` + `OANDA_ACCOUNT_ID` + `ENV=demo` | ✅ set | everything |
 | `data/fathom.db` (seeded approved-set + watchlist) | ✅ present | everything |
-| `ANTHROPIC_API_KEY` | ❌ **you add** | gate 1 (news-risk/narration), gate 2 (pre-trade veto) |
+| `ANTHROPIC_API_KEY` (Hermes-side jobs only) | ❌ **you add** | gate 1 (news-risk/narration, run inside Hermes) |
+| `LLM_API_KEY` (+ optional `LLM_BASE_URL` / `LLM_MODEL`) | ❌ **you add** | gate 2 (in-process pre-trade veto — any OpenAI-compatible provider) |
 | `DISCORD_WEBHOOK_URL` | ❌ **you add** | gate 1 (watchlist), gate 2 (deviation alerts) |
 | a running **Hermes** instance (cron + Discord gateway) | ❌ **you set up** | gate 1 (the scheduled job) |
 | `LIVE_TRADING_ENABLED` / `LIVE_RISK_FRACTION` / live token | ❌ **gate 4 only** | the cutover — leave unset until then |
 
-**One-time setup before gate 1:** stand up Hermes, and set `ANTHROPIC_API_KEY` +
-`DISCORD_WEBHOOK_URL` in the env. (Re-seed anytime with `fathom backtest` then
+**One-time setup before gate 1:** stand up Hermes, and set `ANTHROPIC_API_KEY`
+(Hermes-side jobs) + `DISCORD_WEBHOOK_URL` in the env.  Gate 2 additionally needs
+`LLM_API_KEY` for the in-process veto. (Re-seed anytime with `fathom backtest` then
 `fathom scan` if the DB goes stale.)
 
 ---
@@ -70,7 +72,8 @@ Full procedure: `hermes_integration/jobs/daily.md → Operator runbook`.
 *(This is the "Phase 3 testing" you deferred.)*
 
 ```bash
-# with ANTHROPIC_API_KEY set (so the pre-trade veto can return proceed):
+# with LLM_API_KEY set (so the pre-trade veto can return proceed;
+# LLM_BASE_URL/LLM_MODEL default to https://api.openai.com/v1 + gpt-5-nano):
 fathom scan --db-path data/fathom.db            # refresh the watchlist
 fathom execute EUR_USD:D:BollingerReversion(20,2.0) --db-path data/fathom.db
 scripts/run_monitor.py --instruments EUR_USD --db-path data/fathom.db   # always-on, separate terminal
