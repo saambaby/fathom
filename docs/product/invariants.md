@@ -188,3 +188,15 @@ Reserved ids, pre-referenced by [`docs/phases/phase-10/phase.md`](../phases/phas
 **Reason:** promoted during the phase-07–10 spec sprint (2026-09-01): three features (execution-cli, pine-generation, analyze-command) depend on "stale" meaning the same thing; a second definition would let a candidate render as fresh on the chart the operator trades from while `fathom execute` refuses it — or worse, the reverse.
 
 **Enforcement:** the setting and the map have a single definition site each; staleness checks import them (no literal TTLs); pine's staleness fixture (stale-H1 + fresh-D) and execute's Step-1.5 tests pin the shared arithmetic.
+
+## INV-22 · Measurement Tables Are Append-Only — Supersede, Never Edit
+
+**Rule:** measurement/audit tables (`analysis_log`, `veto_ledger`, the phase-10 trial ledger; any future table whose purpose is recording what happened) expose no UPDATE or DELETE path in the store API — plain `INSERT` only, never `INSERT OR REPLACE`. A wrong row is superseded by a new row from a new run; it is never corrected in place. (Outcome tables that track a designed lifecycle — e.g. `veto_ledger_outcomes`' idempotent refresh upsert — are lifecycle state, not measurement history, and pin their own write semantics in their spec.)
+
+**Reason:** promoted during the phase-07–10 spec sprint (2026-09-01): analyze-command and veto-ledger independently restated the same rule, and phase-10's trial ledger (INV-17, reserved) is built on it. An editable measurement trail cannot be trusted by the deflation gate, the veto-report, or any audit — the entire value of these tables is that they cannot be quietly repaired after the fact.
+
+**Enforcement:** store accessors for these tables are INSERT-only by construction (no update method exists to call); specs adding a measurement table must cite this invariant; reviewers reject any `INSERT OR REPLACE`/UPDATE on them.
+
+## INV-02 — scope note (added 2026-09-01, spec sprint)
+
+INV-02 governs LLM outputs that **feed an automated decision** (vetoes, gates, anything that changes what the system does). Outputs that are **advisory/display-only** (narration, market brief, regime tags, session verdict, companion commentary) take the opposite fallback: a deterministic, non-empty display fallback ("analysis unavailable" / `unavailable` values) — **never** a skip/veto default. Applying INV-02's fail-closed default to an advisory surface silently shrinks output (the failure mode `hermes_integration/narration.py`'s CRITICAL docstring warns about); applying the advisory fallback to a veto surface fails open. Every LLM call site must be classified as one or the other in its spec.
