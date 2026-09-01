@@ -9,9 +9,9 @@ The final in-process Claude veto before order submission.  Given an approved
   type) returns ``decision="block"`` and logs at WARNING.  It **never raises**
   and **never returns** ``decision="proceed"`` on a parse/validation failure.
 * ``pretrade_check(candidate, *, client=None) -> PretradeVerdict`` — builds the
-  prompt from ``prompts/pretrade.md``, calls Claude via an injectable ``client``
+  prompt from ``prompts/pretrade.md``, calls the LLM via an injectable ``client``
   adapter, and routes the raw response through ``parse_pretrade_verdict``.
-  With ``client=None`` and no ``ANTHROPIC_API_KEY`` set → returns the safe
+  With ``client=None`` and no ``LLM_API_KEY`` set → returns the safe
   default ``block`` (testable and safe offline).
 
 The asymmetry (INV-02):
@@ -21,10 +21,16 @@ The asymmetry (INV-02):
 
 INV-01: this module returns a verdict only.  No order, execution, or risk
     function is imported or callable from here.
-INV-08: the ``ANTHROPIC_API_KEY`` is never logged.  It is read from the
-    environment/``.env`` via the ``_LiveClient`` adapter only at call time.
+INV-08: the ``LLM_API_KEY`` is never logged.  ``OpenAICompatClient`` holds it
+    privately and excludes it from ``repr``.
 
-**Model constant (D-P3-E):** ``claude-haiku-4-5`` — small/fast Haiku-tier.
+Provider-agnostic: ``OpenAICompatClient`` speaks the OpenAI chat-completions
+    wire format, so any compatible endpoint works — OpenAI, Groq, NVIDIA NIM,
+    OpenRouter, Gemini's compat layer, or a local Ollama — selected via
+    ``LLM_BASE_URL`` + ``LLM_MODEL`` (or the ``Settings`` llm_* fields).
+
+**Model constant (D-P3-E):** ``gpt-5-nano`` — cheapest reliable structured-JSON
+    tier at the veto's call volume; override via ``LLM_MODEL``.
 
 Offline testability: inject a stub via the ``client`` parameter.  Tests do not
     need a real API key; the live adapter is only exercised at the acceptance gate.
@@ -36,8 +42,9 @@ import json
 import logging
 import os
 import pathlib
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Optional, Protocol
 
+import httpx
 from pydantic import BaseModel, ValidationError
 
 from signals.ranker import Candidate
@@ -45,10 +52,18 @@ from signals.ranker import Candidate
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module constant (D-P3-E) — pinned small/fast model for the pre-trade veto
+# Module constants (D-P3-E) — pinned defaults for the pre-trade veto LLM
 # ---------------------------------------------------------------------------
 
-MODEL: str = "claude-haiku-4-5"
+MODEL: str = "gpt-5-nano"
+
+#: Default OpenAI-compatible endpoint; any compatible provider works via
+#: ``LLM_BASE_URL`` (e.g. https://api.groq.com/openai/v1, http://localhost:11434/v1).
+DEFAULT_BASE_URL: str = "https://api.openai.com/v1"
+
+#: HTTP timeout for the veto call — generous but bounded; a hang must not
+#: stall the execute gate (the caller's except → block covers a timeout).
+_HTTP_TIMEOUT_S: float = 30.0
 
 # ---------------------------------------------------------------------------
 # Prompt template path
