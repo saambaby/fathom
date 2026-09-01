@@ -40,3 +40,16 @@ at startup, making a ramp typo impossible to deploy accidentally.
 Added `docs/go-live-runbook.md` to the Documentation table in CLAUDE.md.
 
 ### No new dependencies, no new CLI commands.
+
+## Spec sprint phases 07–10 (2026-09-01)
+
+Recovered Claude Code worktree `claude/phase-7-10-spec-sprint-1acfe9` (7
+commits: phase-07 five specs ready + INV-20/21/22) onto `main`. Closed the
+sprint: `review-command` promoted; `journal`, `ask-command`, `veto-report`
+authored. Phase-10 Layer-4 specs remain deferred to epic kickoff. INV-09
+telemetry skip now includes `operator_journal`; INV-21 lists `fathom ask`
+disclose-stale as a consumer.
+
+Next Layer 5: `/halfcycle:taskgraph` per phase, starting pine-generation
+(phase-07 riskiest-assumption first).
+

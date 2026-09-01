@@ -18,10 +18,12 @@ hit-rate is fiction: a `block` that would have been a stop-out is a save, a
 ## User-facing behaviour
 
 - `fathom veto-report --refresh [--db-path PATH]` walks ledger rows as in
-  Component design and prints one JSON object (keys pinned in Wire-format).
-  Without `--refresh`, the command exits 2 with stderr
-  `veto-report aggregate printer is not in this spec; pass --refresh`
-  until [[veto-report]] ships.
+  Component design. The **aggregate printer** is [[veto-report]] (this
+  command’s default path). `--refresh` only runs `refresh_counterfactuals`;
+  stdout of counts is owned by [[veto-report]] (`refresh` JSON field).
+  Standalone `--refresh` JSON from this spec is used only in tracker unit
+  tests / as the `RefreshCounts` return value — the CLI handler after
+  [[veto-report]] lands must not exit 2 when `--refresh` is omitted.
 - No OANDA fetch. Missing candles → `outcome="unknown"`, never a live pull.
 - `--refresh` is idempotent: a second run with the same candle set leaves
   terminal rows unchanged; `unknown` may upgrade to a terminal outcome when
@@ -114,7 +116,7 @@ sequenceDiagram
             end
         end
     end
-    CLI-->>Op: JSON counts
+    CLI-->>Op: (no stdout from tracker; RefreshCounts to caller)
 ```
 
 ## Component design
@@ -184,8 +186,10 @@ Do not also skip on “entry bar still in the future.” `eval/` does not read
 UPSERT on `ledger_id`. Terminal statuses are sticky (AC 3). `unknown` is
 overwriteable.
 
-**CLI:** extend `cli.py` subparsers (`cli.py:708`) with `veto-report`. `--refresh`
-calls `refresh_counterfactuals`. Without `--refresh`: exit 2 (User-facing).
+**CLI (owned by [[veto-report]] after that spec lands):** this module exposes
+`refresh_counterfactuals` → `RefreshCounts`. It does **not** print operator
+stdout. Tracker unit tests assert the return value; smoke that used to look
+for `resolved>=1` on stdout now asserts `RefreshCounts.resolved >= 1`.
 
 **`eval*`** already queued in [[veto-ledger]] Approach for `pyproject.toml`.
 
@@ -283,7 +287,7 @@ disjoint except `refreshed = resolved + unknown`:
    `load_veto_ledger_outcomes(*, ledger_id: int | None = None) -> list[VetoLedgerOutcomeRow]`
    (`ledger_id=` filters to one row).
 3. `refresh_counterfactuals` skip-terminal / retry-unknown / per-row WARNING.
-4. CLI `--refresh` + JSON counts.
+4. Python API `RefreshCounts`; CLI registration is [[veto-report]].
 5. Do not implement the aggregate printer.
 
 ## Grounded claims
@@ -319,8 +323,8 @@ disjoint except `refreshed = resolved + unknown`:
 ## Smoke checklist hooks
 
 - Seed a demo DB with one ledger row + **20** candles from the entry bar that
-  hit target on `k=2`; `fathom veto-report --refresh` prints `resolved>=1`;
-  second run `unchanged_terminal>=1`.
+  hit target on `k=2`; `refresh_counterfactuals(...)` returns
+  `resolved>=1`; second run `unchanged_terminal>=1`.
 - Delete those candles; a **new** ledger id (not the sticky terminal one)
   resolves `unknown`.
 

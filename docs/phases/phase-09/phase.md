@@ -44,8 +44,9 @@ must reuse the backtest engine's conservative fill rules, or the report is ficti
   interpretation stays with the operator until phase-10 Phase E's champion-challenger
   machinery.
 - Changing either veto's behavior, prompts, or safe defaults — measurement only.
-- Counterfactuals for trades the *operator* declined at the confirm prompt — scoping
-  assumption below; if cheap, it rides along, else deferred to phase-10 Phase E.
+- Counterfactuals for operator-declined confirm aborts **are in scope** (cheap
+  at the existing prompt; [[counterfactual-tracker]] + [[veto-report]] treat
+  them as `source="operator_declined"`). They are not mixed into AI `net_r`.
 - Live-account anything — demo/dry-run verdicts only until INV-07 clears.
 - New market-data capture — the tracker uses candles the store already fetches; if a
   candidate's timeframe candles lapse, the outcome is recorded `unknown`, not fetched ad hoc.

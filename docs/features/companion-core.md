@@ -48,9 +48,11 @@ None directly. `ai/companion.py` exposes a library surface the other three specs
    JSON returns `fallback`, not a partially-populated model and not an exception.
 5. An AST boundary test (extending the pattern in
    `tests/test_admin_panel.py:56-110`) asserts `ai/companion.py` contains no import of
-   `execution.orders`, `execution.models.build_bracket`, `risk.sizing`, or
-   `risk.limits`, and does not import `cli` — proving the module that all four
-   companion commands share cannot reach order authority even transitively.
+   `execution.orders`, `execution.models.build_bracket`, `execution.reconcile`,
+   `risk.sizing`, or `risk.limits`, and does not import `cli` — proving the module
+   that all four companion commands share cannot reach order authority even
+   transitively. Callers (`ai/review.py`, journal, ask) add their own AST files
+   with at least this set.
 6. `ContextPack.sources` is populated for every call (never empty when the pack has
    any data) so a downstream refusal (`ask-command`) can name what was actually
    grounded.
@@ -179,7 +181,8 @@ modules).
 ## Constraint blast radius
 
 - New constraint: the AST boundary test forbids `ai/companion.py` (and its callers)
-  from importing `execution.orders`, `execution.models.build_bracket`, `risk.sizing`,
+  from importing `execution.orders`, `execution.models.build_bracket`,
+  `execution.reconcile`, `risk.sizing`,
   `risk.limits`, or `cli`. What it protects: INV-01 — no companion command can gain
   transitive order authority. What it blocks (legitimate-looking but disallowed): a
   future companion feature that wants to show "what would sizing produce for this
@@ -225,14 +228,7 @@ If phase-07 lands with a different `OpenAICompatClient` call signature than what
 anchored here, `run_companion_call`'s adapter call needs a matching update — flag at
 the taskgraph stage, not assumed away here.
 
-**Invariant-promotion candidate:** INV-02 currently reads "any Claude output that
-feeds an *automated decision*" — the phase-08 companion commands are explicitly
-advisory-text-only (never feed an automated decision per the phase doc's Purpose), so
-strictly they sit outside INV-02's letter. This spec applies the INV-02 *pattern*
-(structured parse, safe default on failure) anyway, because "fails to a wrong action"
-and "fails to a fabricated advisory answer that reads as authoritative" are both real
-failure modes even without order authority — worth an invariants.md amendment making
-explicit that INV-02's structured-parse-with-safe-default discipline is the baseline
-for *every* LLM call in the codebase, automated-decision or advisory, so companion
-commands aren't left to each independently decide whether they're "safe enough" to
-skip validation.
+**INV-02 / INV-20:** the 2026-09-01 INV-02 scope note plus INV-20 already
+classify advisory LLM sites (structured parse, `"analysis unavailable"` /
+deterministic fallback, never skip). This spec follows that; it is not a new
+promotion candidate.

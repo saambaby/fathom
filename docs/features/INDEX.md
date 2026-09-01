@@ -86,7 +86,7 @@ Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cuto
 | live-trading-gate | defense-in-depth live gate (ENV=live + `live_trading_enabled` + preflight pass + typed confirm) + reduced `live_risk_fraction` (0.10%); pure, default-refuse | [live-trading-gate.md](live-trading-gate.md) | ready |
 | go-live-runbook | the deliberate reviewed cutover procedure (INV-07 prerequisite, gate sequence, small-size start, rollback) — doc/config artifact | [go-live-runbook.md](go-live-runbook.md) | ready |
 
-## phase-07 — standalone platform: de-Hermes, analyze, Pine (spec sprint in progress)
+## phase-07 — standalone platform: de-Hermes, analyze, Pine (specs ready)
 
 See [phase-07/phase.md](../phases/phase-07/phase.md). Pine generation is the
 riskiest-assumption probe and implements first.
@@ -99,21 +99,39 @@ riskiest-assumption probe and implements first.
 | market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | ready |
 | hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | ready |
 
-## phase-08 — trader companion commands (spec sprint in progress)
+## phase-08 — trader companion commands (specs ready)
 
-See [phase-08/phase.md](../phases/phase-08/phase.md). All commands are INV-01-safe
-read-only analysis; LLM outage degrades to "analysis unavailable", never a wrong action.
+See [phase-08/phase.md](../phases/phase-08/phase.md). Companion commands are INV-01-safe
+read-only **except** journal's execute-side UPSERT (demo-only, INV-09). LLM outage
+degrades to "analysis unavailable", never a wrong action.
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | companion-core | context-pack builder + shared call shape + offline fallbacks + AST boundary test | [companion-core.md](companion-core.md) | ready |
-| review-command | positions/reconcile/deviation context → anomaly flags; deviation explainer | [review-command.md](review-command.md) | draft |
+| review-command | positions + last `account_state` + local calendar + deviation log → anomaly flags; `--deviations` explainer | [review-command.md](review-command.md) | ready |
+| journal | `operator_journal` UPSERT on `client_order_id`; `show`/`summarize`; demo execute hook | [journal.md](journal.md) | ready |
+| ask-command | store-grounded Q&A with visible `REFUSED:`; fixed source pack; INV-21 stale stamp | [ask-command.md](ask-command.md) | ready |
 
-## phase-09 — counterfactual veto ledger (spec sprint in progress)
+## phase-09 — counterfactual veto ledger (specs ready)
 
-See [phase-09/phase.md](../phases/phase-09/phase.md). Recording + tracker ready; report still to spec.
+See [phase-09/phase.md](../phases/phase-09/phase.md). Recording, tracker, and report ready.
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | veto-ledger | append-only news-risk / pretrade / operator-declined rows; failure-isolated demo-only hooks (INV-09 Phase-9) | [veto-ledger.md](veto-ledger.md) | ready |
-| counterfactual-tracker | replay ledger rows via engine fill rules; `veto-report --refresh`; sticky terminals | [counterfactual-tracker.md](counterfactual-tracker.md) | ready |
+| counterfactual-tracker | replay ledger rows via engine fill rules; `refresh_counterfactuals`; sticky terminals | [counterfactual-tracker.md](counterfactual-tracker.md) | ready |
+| veto-report | `fathom veto-report` aggregate + JSON; `--refresh` then print; explicit `unknown` | [veto-report.md](veto-report.md) | ready |
+
+## phase-10 — AI quant research loop (specs deferred)
+
+See [phase-10/phase.md](../phases/phase-10/phase.md). Layer-4 specs are **per-epic at
+kickoff**, not in this 07–09 sprint (`phase.md` Anticipated specs: “authored at
+each epic's kickoff, not now”). INV-17–19 remain reserved.
+
+| Epic | Spec seeds | Status |
+|---|---|---|
+| phase-10.1 | trial-ledger + `run_trial()` | deferred — epic kickoff |
+| phase-10.2 | deflation / `fathom verify` | deferred — epic kickoff |
+| phase-10.3 | StrategySpec DSL + research MCP | deferred — epic kickoff |
+| phase-10.4 | research agent + contamination controls | deferred — epic kickoff |
+| phase-10.5 | autonomy ladder + champion-challenger | deferred — epic kickoff |

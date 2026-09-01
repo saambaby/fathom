@@ -111,7 +111,9 @@ graph TD
 
 ## Anticipated specs
 
-Per-epic; authored at each epic's kickoff, not now (Layer 4 details only the current phase):
+Per-epic; authored at each epic's kickoff, not in the phase-07–09 spec sprint
+(2026-09-01): the sprint closed with this deferral explicit in
+[`docs/features/INDEX.md`](../../features/INDEX.md).
 
 | Epic | Spec seeds |
 |---|---|

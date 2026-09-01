@@ -1,6 +1,6 @@
 # Feature: review-command
 
-**Status:** draft
+**Status:** ready
 **Phase:** phase-08
 **Owner:** saambaby
 **Last updated:** 2026-09-01
@@ -33,45 +33,79 @@ fathom review [--db-path PATH] [--deviations] [--limit N]
    `review`'s anomaly pass can cross-reference a position against its own deviation
    history even without `--deviations`.
 4. For each open position's instrument, derive the ISO 4217 currency pair
-   (`instrument.split("_")`) and query
-   `FairEconomyCalendar(db_path).upcoming_events(currencies, window=timedelta(hours=48))`
-   — a **local-DB-only** read (no HTTP fetch; see Grounded claims) — for medium/high
-   impact events in the next 48h.
-5. Build a `ContextPack` (`companion-core.md`) of kind `"review"` from the above, and
-   call `run_companion_call(prompt, response_model=ReviewResponse, fallback=_offline_review(...))`.
-6. Print each `ReviewFinding` (subject, `worth_investigating` flag, note) as a table;
-   if `--deviations`, also print `ReviewFinding`s for each loaded deviation-log row
-   (`subject="deviation:<event_id>"`).
-7. With `LLM_API_KEY` unset (or any call/parse failure), print the deterministic
-   fallback: the raw positions/account-state/deviation tables with **no** LLM
-   commentary and the line `"analysis unavailable — showing raw data only"`; exit 0.
+   (`instrument.split("_")`) and call **`Store.load_calendar_events`** (new
+   read-only SELECT on `calendar_events`; **do not** construct
+   `FairEconomyCalendar` — its `__init__` runs `CREATE TABLE IF NOT EXISTS` +
+   `commit` and mutates the SQLite file, `data/calendar.py:273-275`). If the
+   `calendar_events` table is missing (`sqlite3.OperationalError` whose message
+   contains `no such table` / `calendar_events`), return `[]` — treat as empty,
+   never crash, never `CREATE`. Re-raise other `OperationalError`s (locked DB).
+   returned rows in `ai/review.py` to `impact in {medium, high}` (`Impact.low`
+   includes holidays, `data/calendar.py:17-22`; `upcoming_events` itself has no
+   impact predicate, `data/calendar.py:310-365`). Window: injected UTC `now`
+   plus 48h. Non-`BASE_QUOTE` instrument ids (no single `_`): skip calendar
+   lookup for that position (no currencies derived).
+5. Build a `ContextPack` via `build_context_pack(kind="review", ...)` so
+   `ContextPack.sources` is populated (e.g. `positions:N`, `account_state:1|0`,
+   `deviation_log:N`, `calendar_events:N` after the medium/high filter).
+   Call `run_companion_call(prompt, response_model=ReviewResponse, fallback=_offline_review(...))`.
+6.    **Print path:** if there is nothing to show (AC1 empty case), print
+   `"nothing to review"` and stop — no raw tables, no LLM. Otherwise print
+   raw tables first: always the positions table (may be empty when
+   deviation-only); `account_state` or `account_state: (none — never
+   reconciled)`; the raw deviation **table** only when `--deviations`.
+   Then print `ReviewFinding`s after a **display filter**: keep
+   `subject="position:<broker_trade_id>"` only when that id is in the loaded
+   open positions; keep `subject="deviation:<event_id>"` only when `--deviations`
+   **and** that `event_id` is in the loaded log. Drop any other LLM subjects.
+7. Offline / no key / parse failure (`run_companion_call` returns `fallback`
+   unchanged — `companion-core.md` AC2/AC4, no live-vs-fallback discriminator):
+   print the raw tables, then `_offline_review`'s **rule-check** findings
+   (labeled in `note` with the prefix `[rules]` so they are not read as LLM
+   commentary), then a line containing the canonical substring
+   `"analysis unavailable"` (suffix `" — showing raw data only"` is allowed);
+   exit 0. AC3's "never fabricates a flag" means never an LLM-invented flag;
+   deterministic `[rules]` flags are in-scope.
 
 ## Acceptance criteria
 
-1. `fathom review` with no open positions and an empty deviation log prints "nothing
-   to review" and exits 0 without calling the LLM (no context pack worth sending —
-   avoids a wasted call and a hallucinated "no findings" narrative built from nothing).
-2. `fathom review` with ≥1 open position and `LLM_API_KEY` set (or an injected stub
-   client in tests) prints a non-empty finding per position, each tagged
-   `worth_investigating: true|false` with a `note`.
-3. `fathom review` with `LLM_API_KEY` unset prints the deterministic fallback (raw
-   tables + "analysis unavailable") and exits 0 — never crashes, never fabricates a
-   flag (mirrors `companion-core.md` AC2).
-4. `fathom review --deviations` includes one `ReviewFinding` per loaded deviation-log
-   row in addition to the position findings; `fathom review` (no flag) does not print
-   deviation-log findings even though it still loads the log for cross-referencing
-   (AC1's data load vs. AC4's display are independently verified).
-5. A position whose instrument has a medium/high-impact calendar event in the next 48h
-   (from `upcoming_events`, local DB only) surfaces that event in the context pack
-   passed to the LLM — verified by asserting the built prompt/context contains the
-   event's `event_name`, without asserting on the LLM's own judgement of it.
-6. An AST boundary test (extending `companion-core.md`'s pattern) asserts
-   `ai/review.py` imports no order/risk-placement module and does not call
-   `execution.reconcile.reconcile` or open a live `OandaClient` — `review` reads the
-   store (and the calendar module's local-DB-only query) exclusively.
-7. `fathom review` never modifies `positions`, `account_state`, or `deviation_log` —
-   verified by asserting the store's mtime/row-counts are unchanged across a run
-   (read-only in practice, not just by import-graph proof).
+1. `fathom review` with no open positions **and** an empty deviation log prints
+   "nothing to review" and exits 0 without calling the LLM. Deviation-only
+   (zero positions, ≥1 log row, `--deviations`): still calls the LLM (or
+   fallback) and prints deviation findings only. Deviation-only without
+   `--deviations`: "nothing to review" (log is loaded for cross-ref but not
+   displayed; no position subjects exist).
+2. With ≥1 open position and an injected stub client returning a valid
+   `ReviewResponse` that includes one `subject="position:<id>"` per open
+   `broker_trade_id`, those findings print. If the parsed list is missing any
+   open-position subject,    `run_review` **discards** the whole parsed response and uses `_offline_review`
+   (post-validate; `extra="forbid"` does not catch a short list). The same
+   post-validate applies when `--deviations`: every loaded `event_id` must have
+   `subject="deviation:<event_id>"` or the parse is discarded for
+   `_offline_review`. When `--deviations` is set, `_offline_review` emits one
+   `[rules]` row per loaded `event_id`; it does not emit `deviation:*` findings
+   when the flag is off.
+3. With `LLM_API_KEY` unset (and no client), print raw tables + `[rules]`
+   findings + a line containing `"analysis unavailable"`; exit 0; zero network
+   I/O (INV-20). Never crash. Never print an LLM flag.
+4. Display filter: `--deviations` prints one finding per loaded log `event_id`
+   (LLM or `[rules]` explainer note); without the flag, drop all
+   `deviation:*` subjects even if the model emitted them. Raw log rows stay
+   in the context pack either way.
+5. After the in-process medium/high filter, the context pack's
+   `calendar_events` contains only those impacts; a fixture with a low-impact
+   holiday plus a high-impact event in the 48h window (frozen `now`) asserts
+   the pack contains the high `event_name` and not the holiday.
+6. AST test (same forbidden set as `companion-core.md` AC5, plus
+   `execution.reconcile`): `ai/review.py` must not import `execution.orders`,
+   `execution.models.build_bracket`, `execution.reconcile`, `risk.sizing`,
+   `risk.limits`, `cli`, or `data.calendar.FairEconomyCalendar`, and must not
+   construct `OandaClient`. `from execution.models import Position` is allowed
+   (INV-14 frozen read model returned by `Store.load_open_positions`).
+7. `positions` / `account_state` / `deviation_log` **row counts** are unchanged
+   across a run (not SQLite mtime — a `FairEconomyCalendar` construct would
+   bump mtime; this spec forbids that constructor). Calendar reads go through
+   `Store.load_calendar_events`.
 
 ## Sequence diagram
 
@@ -86,21 +120,34 @@ a new `ai/review.py`:
   `"deviation:<event_id>"`), `worth_investigating: bool`, `note: str`.
 - `ReviewResponse` (pydantic, `extra="forbid"`): `findings: list[ReviewFinding]`,
   `summary: str`.
-- `_offline_review(positions, account_state, deviation_rows) -> ReviewResponse` — the
-  `companion-core.md` `fallback` argument: a deterministic, LLM-free
-  `ReviewResponse` built purely from rule checks already computable in Python
-  (see below), so "analysis unavailable" still carries *some* signal rather than an
-  empty list.
-- Two cheap deterministic rule checks run **before** the LLM call and are folded into
-  the context pack (not gated on the LLM being available — they also populate
-  `_offline_review`'s findings):
-  - **Unusual stop distance:** for each position, `rr_actual = abs(take_profit_price - entry_price) / abs(entry_price - stop_loss_price)`; flag if `rr_actual` deviates from the INV-11 default `rr_ratio` (1.5) by more than a configurable fraction (default 30%). Self-contained on the `positions` row — no watchlist join needed (candidate_ref's `instrument:timeframe:strategy_name` shape doesn't carry the originating `run_timestamp`, so a precise watchlist-row join is ambiguous across repeated runs — see Grounded claims).
-  - **Calendar proximity:** a position whose instrument's currency pair has a
-    medium/high-impact event in the next 48h (step 4 above) is flagged
-    `worth_investigating: true` by the offline path unconditionally; the LLM path may
-    additionally reason about direction/relevance.
-- `--deviations` is a pure display-time filter over already-loaded deviation rows —
-  it does not change what is queried from the store (AC4's split).
+- `_offline_review(...)` — `companion-core.md` `fallback`: deterministic
+  `ReviewFinding`s from the two rule checks below. Each `note` starts with
+  `[rules]`. This is the same object printed on the offline path after the raw
+  tables (User-facing §7); it is **not** LLM commentary.
+- Two cheap deterministic rule checks run **before** the LLM call, folded into
+  the context pack, and used by `_offline_review`:
+  - **Unusual stop distance:** skip the position (no flag, no div/0) when
+    `entry_price == stop_loss_price`. Else
+    `rr_actual = abs(take_profit_price - entry_price) / abs(entry_price - stop_loss_price)`
+    using live bracket **prices** on the `Position` row (not INV-11 ATR
+    distances). Flag iff `abs(rr_actual - 1.5) / 1.5 > 0.30`.
+    `candidate_ref` cannot join a unique watchlist row (Grounded claims).
+  - **Calendar proximity:** after the medium/high filter, a position whose
+    currencies have ≥1 remaining event in the 48h window is flagged
+    `worth_investigating: true` on the `[rules]` path; the LLM may add
+    direction/relevance in its own notes.
+- `--deviations` is a **display-time** filter over already-loaded deviation
+  rows (AC4). When the flag is on, `_offline_review` adds one finding per
+  loaded `event_id` with `note` prefixed `[rules]` that restates `detail`
+  (no independent arithmetic — see Notes).
+- `Store.load_calendar_events(currencies, start, end) -> list[dict]` — new
+  read-only method; SELECT only; `now`/`end` injected by `run_review` (so
+  AC5 can freeze time). Does not create tables. Missing table → catch
+  `sqlite3.OperationalError` with `no such table`/`calendar_events` in the
+  message and return `[]`; re-raise other OperationalErrors. After a successful
+  SELECT, `run_review` post-validates LLM findings (AC2): missing
+  `position:<id>` or, when `--deviations`, missing `deviation:<event_id>` →
+  discard parse, use `_offline_review`.
 
 ## User flow
 
@@ -123,47 +170,45 @@ Skip — see Artefact verdicts.
 
 - No fresh reconcile pass and no live OANDA read — `review` reads whatever
   `account_state`/`positions` the **last** `fathom execute` or `fathom reconcile` run
-  left behind. It is explicitly a **stale-tolerant** view, not a live one; the
-  printed `account_state.as_of` timestamp is how the operator judges staleness. See
-  Grounded claims for why the phase doc's "latest reconcile report" framing needed
-  correcting.
+  left behind. Stale-tolerant: if `load_account_state()` is `None`, print
+  `account_state: (none — never reconciled)` and still exit 0 (do not
+  dereference `as_of`). When a row exists, print `as_of` so the operator
+  judges freshness. Phase-08 in-scope item 1 is amended to this substitute
+  (no persisted `ReconcileReport` / `drift_flags`).
 - No write path to broker, risk, or execution modules (phase doc, Out of scope) —
   `review` never calls `execution.reconcile.reconcile`, `risk.sizing`, or
   `execution.orders`.
 - No historical trend/pattern analysis across many reviews — that is `journal show|summarize`'s job (`journal.md`), not `review`'s.
-- No live calendar fetch — `upcoming_events` is a local-DB read only; if the operator
-  hasn't run whatever refreshes `calendar_events` recently, the calendar-proximity
-  check silently sees a stale/empty table (same staleness posture as
-  `account_state`).
+- No live calendar fetch — `Store.load_calendar_events` is a local SELECT
+  only (do not call `FairEconomyCalendar.upcoming_events`, which uses
+  wall-clock `now` at `data/calendar.py:324`). Missing table → empty list.
 
 ## Touches
 
-- INV-01 — read-only: store + local-DB calendar reads only, no broker write, no
-  execution/risk import (AST boundary test, AC6).
-- INV-02 — applies the discipline by extension via `companion-core.md`'s
-  `run_companion_call` (advisory-only, see `companion-core.md` Notes).
-- INV-03 — all timestamps read/displayed (`account_state.as_of`,
-  `deviation_log.created_at`, calendar `time`) are already-UTC-RFC-3339 per their
-  owning tables; `review` does no timestamp math of its own beyond the 48h window.
-- INV-11 — the unusual-stop-distance rule check's baseline (`rr_ratio` default 1.5) is
-  the same constant INV-11 pins for signal generation; `review` reads it as a
-  reference, does not enforce or alter it.
-- INV-16 — `review` surfaces `account_state`/`positions` as **broker-truth-as-of-last-reconcile**, consistent with INV-16's "broker is truth" framing, but explicitly does not re-assert that truth itself (no live read).
+- INV-01 — read-only store/calendar; AST set in AC6 (INV-01 Phase-4 list plus
+  `execution.reconcile` / no `OandaClient`).
+- INV-02 — **does not apply** (advisory display, not an automated decision).
+  Fail-soft is INV-20 + the 2026-09-01 INV-02 scope note, not skip/veto.
+- INV-03 — displayed timestamps stay UTC RFC-3339; 48h window uses injected UTC `now`.
+- INV-08 — never logs `LLM_API_KEY`.
+- INV-11 — RR **reference constant only** (`:116`); live prices, not ATR stops.
+- INV-16 — surfaces last-reconcile broker-truth; does not re-read the broker.
+- INV-20 — LLM traffic only via `run_companion_call` → `OpenAICompatClient`;
+  offline predicate is zero I/O + `"analysis unavailable"` (plus `[rules]`).
 
 ## Events
 
 - Written: none.
-- Consumed: `positions`, `account_state`, `deviation_log` (store reads), local
-  `calendar_events` (via `data/calendar.py`'s `upcoming_events`, store read).
+- Consumed: `positions`, `account_state`, `deviation_log`, `calendar_events`
+  (all via `Store` reads).
 
 ## Environment variables
 
 | Var | Purpose | Arg type (build-arg / runtime) | Where set |
 |---|---|---|---|
-| `LLM_API_KEY` | Enables the live review LLM call; unset → deterministic fallback | runtime | `.env` (existing, reused via `companion-core.md`) |
-
-No new env vars beyond the three `companion-core.md` already documents (`LLM_MODEL`,
-`LLM_BASE_URL` are used identically, omitted here to avoid re-listing).
+| `LLM_API_KEY` | Offline predicate (unset → fallback, zero I/O) | runtime secret | `.env` (existing) |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint | runtime | `.env` (existing) |
+| `LLM_MODEL` | Model id when a call is made | runtime | `.env` (existing) |
 
 ## Wire-format contract
 
@@ -171,19 +216,22 @@ Request: `run_companion_call`'s prompt embeds the `ContextPack.data` for kind
 `"review"` — `positions: list[dict]` (the `Position` fields, INV-14 shape),
 `account_state: dict | None`, `deviation_log: list[dict]` (`deviation_log` column
 shape, see Grounded claims), `calendar_events: list[dict]` (`currency`,
-`event_name`, `time`, `impact`). Response: JSON parsed against `ReviewResponse`
-(`findings: [{subject, worth_investigating, note}]`, `summary: str`) — malformed
-JSON, an extra field (`extra="forbid"`), or a non-bool `worth_investigating` all fall
-through to `_offline_review`'s fallback per `companion-core.md`'s parse boundary.
+`event_name`, `time`, `impact`) **after** the medium/high filter. Response: JSON
+parsed against `ReviewResponse`; malformed JSON, extra fields, bad types,
+missing a `position:<id>` for an open position, **or** (when `--deviations`)
+missing a `deviation:<event_id>` for a loaded log row all use `_offline_review`.
+Datetimes in the pack (Position `opened_at`, calendar `time`, `account_state.as_of`)
+are serialized as UTC RFC-3339 strings (`model_dump(mode="json")` / already-TEXT
+store columns) — never naive ISO without `Z`.
 
 ## Depends on
 
-- `companion-core.md` (`run_companion_call`, `ContextPack`).
-- `data/store.py`'s `load_open_positions`, `load_account_state`, `load_deviation_log`
-  (all shipped, Phase 3/3 — see Grounded claims).
-- `data/calendar.py`'s `FairEconomyCalendar.upcoming_events` (shipped, Phase 1B —
-  see Grounded claims); phase-08's Out-of-scope explicitly says "no new data
-  capture" — this reuses the existing local read, adds no fetch.
+- `companion-core.md` — `build_context_pack`, `run_companion_call`, `ContextPack.sources`.
+- `order-model-and-brackets.md` / INV-14 — `Position` field table.
+- `reconciliation.md` — `account_state` keys; no persisted `ReconcileReport`.
+- `monitor-alerts.md` / `deviation-monitor.md` — `deviation_log` / `DeviationEvent.detail`.
+- `economic-calendar.md` — `CalendarEvent` / `Impact`; consumers filter impact.
+- `execution-cli.md` — `fathom reconcile` remains the broker-read command.
 
 ## Approach
 
@@ -202,21 +250,19 @@ client exactly as `companion-core.md` prescribes.
 | `load_account_state` returns `{start_of_day_equity, day_pl, as_of}` or `None`; no separate persisted "reconcile report" table exists anywhere in the store | `data/store.py:1309-1328`, plus a full grep of `data/store.py` `CREATE TABLE` statements (lines 106-401) shows no `reconcile_report`/`reconcile_log` table — only `candles`, `instruments`, `approved_set`, `watchlist`, `orders`, `fills`, `positions`, `account_state`, `deviation_log`, `equity_snapshots`, `preflight_attestations` | Opened file, read method + grepped `CREATE TABLE` |
 | `ReconcileReport` (`adopted`/`closed`/`matched`/`drift_flags`) is a plain in-memory `@dataclass` returned by `reconcile()`, never written to the store — `execution/reconcile.py` has no `store.write_*` call for a reconcile-report row; `drift_flags` is only appended in-memory and logged at WARNING | `execution/reconcile.py:161-176` (dataclass def), and the `reconcile()` body at `execution/reconcile.py:444-560` (store writes only touch `positions`/`account_state`/`equity_snapshots`) | Opened file, read dataclass + function body, grepped `store.write` calls |
 | `load_deviation_log` column shape: `event_id, instrument, deviation_type, detail, broker_trade_id, severity, created_at, delivered` | `data/store.py:1403-1459` | Opened file, read method |
-| `FairEconomyCalendar.upcoming_events(currencies, window)` queries only the local `calendar_events` table (`SELECT ... FROM calendar_events WHERE ...`), performing no HTTP call | `data/calendar.py:310-365` | Opened file, read method body — no `self._fetch`/`httpx` call in this method (contrast with `fetch_and_persist`-style methods that do call `self._fetch` at line ~289) |
-| `candidate_ref` on `positions`/`orders` is `f"{instrument}:{timeframe}:{strategy_name}"` with no `run_timestamp` component, so it cannot be joined back to one specific watchlist row when the same (instrument, timeframe, strategy) combination has appeared across multiple watchlist runs | `execution/models.py:125,138,403-415`; `docs/features/order-model-and-brackets.md:48` | Opened file, read field + docstring; cross-checked spec |
-| INV-11's default `rr_ratio` is 1.5 | `docs/product/invariants.md:114` | Opened file, read invariant text |
-| The phase doc frames `review-command`'s input as "positions + **latest reconcile report** + deviation log" | `docs/phases/phase-08/phase.md` line 24-26 (In scope, item 1) | Opened file, read scope item |
+| `FairEconomyCalendar.upcoming_events` is local SELECT only (no HTTP) and has **no** impact filter | `data/calendar.py:310-365` | Read method; holidays stored as `Impact.low` at `:17-22` |
+| `FairEconomyCalendar.__init__` mutates the DB (`CREATE TABLE` + `commit`) | `data/calendar.py:273-275` | Read constructor — why this spec uses `Store.load_calendar_events` instead |
+| `Position.candidate_ref` is `instrument:timeframe:strategy_name` (no run timestamp) | `execution/models.py:241` (Position); Order field `execution/models.py:138` | Read field docs |
+| INV-11 default `rr_ratio` is 1.5 (reference only) | `docs/product/invariants.md:116` | Read rule sentence |
+| Phase-08 in-scope item 1 originally asked for a persisted reconcile report | `docs/phases/phase-08/phase.md` In scope item 1 (amended this sprint) | Cross-check: no `CREATE TABLE` for reconcile reports in `data/store.py:106-401` |
 
 ## Constraint blast radius
 
-- New constraint: `review` may not trigger `execution.reconcile.reconcile` or open a
-  live `OandaClient` (AC6/AC7). What it protects: INV-01's read-only boundary for
-  always-on/operator-facing surfaces — an LLM-driven advisory command is exactly the
-  kind of surface that invariant's Phase 4 enforcement clause anticipates extending to.
-  What it blocks (legitimate-looking but disallowed): an operator wanting `fathom
-  review` to force a fresh broker read for a truly up-to-the-second view — that
-  remains `fathom reconcile` (a separate, already-shipped, explicitly-broker-reading
-  command) followed by `fathom review`, not a flag on `review` itself.
+- New constraint: `review` must not call `reconcile()`, construct `OandaClient`,
+  or instantiate `FairEconomyCalendar`. Protects: INV-01 read-only operator
+  surface + AC7 row-count stability. Blocks: `fathom review --live` that would
+  refresh the broker or calendar HTTP feed — that stays `fathom reconcile` /
+  calendar refresh, then `review`.
 
 ## Smoke checklist hooks
 
@@ -264,14 +310,7 @@ narration of what already-human-readable text says) and does not block this spec
 it means the explainer cannot do its own independent arithmetic check on the
 deviation — it can only rephrase/contextualize what the watcher already computed.
 
-**Separately, the phase doc's premise for this spec ("positions + latest reconcile
-report + deviation log") needed correction, not just verification:** no
-`ReconcileReport` is ever persisted (see Grounded claims) — `review` cannot read "the
-latest reconcile report" because it does not exist as a store artifact once
-`reconcile()` returns. The functional equivalent available to a read-only command is
-`account_state` (which reconcile writes) plus `positions` (which reconcile's
-adopt/close/refresh actions already updated) — both already broker-truth as of the
-last reconcile pass, just without the `drift_flags` list itself (which only ever hit
-the log, not the DB). This spec's design (step 2 above) uses that substitute and
-surfaces `as_of` so the operator can judge freshness explicitly rather than the
-command silently pretending the data is live.
+**Phase-08 in-scope item 1** is amended in `phase.md` this sprint: `drift_flags`
+stay out (in-memory only). Do not persist a reconcile-report table just to feed
+`review`. INV-01's Phase-4 surface list is not extended in invariants.md this
+slice — the AST set in AC6 / companion-core is the enforcement.
