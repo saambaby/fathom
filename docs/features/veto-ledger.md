@@ -320,8 +320,13 @@ requirement (which *does* need upserts, just not on this table).
    the env guard. Recorders take `db_path` + pinned `reason`; both execute call sites
    pass `now=run_dt` (`cli.py:1585`).
 5. Define `prompt_version` as a module-level constant per prompt file (`PRETRADE_PROMPT_VERSION = "v1"` in `pretrade_check.py`, `NEWS_RISK_PROMPT_VERSION = "v1"` in `news_risk.py`) — no versioning convention exists today; this spec introduces the minimal one needed for the ledger to be meaningful across future prompt edits.
-6. News-risk hook **call site** is implemented in [[analyze-command]]'s `run_analysis`
-   (this spec's "done" is the ledger module + table + execute call sites).
+6. News-risk hook **call site**: [[analyze-command]] ships in phase-07 *without* the
+   hook (`eval/` does not exist yet) but pins the insertion point (after
+   `news_risk_check` returns, before `narrate`). A phase-09 task from *this* spec
+   retrofits the `record_news_risk_verdict` call into `run_analysis` per that pinned
+   contract — so this spec's "done" is the ledger module + table + execute call sites
+   + the analyze retrofit; analyze-command's AC 1 marks the ledger clauses as
+   phase-09-accepted.
 
 ## Grounded claims
 

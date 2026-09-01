@@ -183,7 +183,7 @@ Reserved ids, pre-referenced by [`docs/phases/phase-10/phase.md`](../phases/phas
 
 ## INV-21 · One Freshness Definition for Watchlist Candidates
 
-**Rule:** a watchlist candidate is **stale** when its `generated_at` is older than `max_candidate_age_bars` × its **own timeframe's** bar length — one settings field, one bar-length map (`cli.py` `TIMEFRAME_BAR_LENGTH`), shared by every consumer. Consumers differ only in reaction, never in definition: `fathom execute` Step 1.5 **refuses** stale candidates; `fathom pine` **warns** (per-candidate "(stale)" labels + STALE status cell); `fathom analyze` derives its `entry_window_utc` from the same bar-length map. No consumer may define its own TTL or bar lengths.
+**Rule:** a watchlist candidate is **stale** when its `generated_at` is older than `max_candidate_age_bars` × its **own timeframe's** bar length — one settings field, one bar-length map (`TIMEFRAME_BAR_LENGTH`; today defined in `cli.py`, relocated by phase-07's analyze-command to the leaf module `signals/timeframes.py` so non-CLI surfaces can import it without touching `cli`), shared by every consumer. Consumers differ only in reaction, never in definition: `fathom execute` Step 1.5 **refuses** stale candidates; `fathom pine` **warns** (per-candidate "(stale)" labels + STALE status cell); `fathom analyze` derives its `entry_window_utc` from the same bar-length map. No consumer may define its own TTL or bar lengths.
 
 **Reason:** promoted during the phase-07–10 spec sprint (2026-09-01): three features (execution-cli, pine-generation, analyze-command) depend on "stale" meaning the same thing; a second definition would let a candidate render as fresh on the chart the operator trades from while `fathom execute` refuses it — or worse, the reverse.
 

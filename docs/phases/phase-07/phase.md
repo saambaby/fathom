@@ -35,9 +35,10 @@ practice, the presentation thesis fails — so Pine generation is built and oper
    ([pretrade_check.py:231](../../../hermes_integration/pretrade_check.py)); the INV-02
    parse boundaries (`parse_news_risk`, `parse_pretrade_verdict`) and safe defaults are
    unchanged.
-3. **`fathom analyze`** — the on-demand trade-time pipeline: scan → per-candidate LLM
-   news-risk veto (INV-02 skip default) → regime tag → market brief → session
-   ("skip-the-day") verdict → narration → Pine generation. All advisory output is text to
+3. **`fathom analyze`** — the on-demand trade-time pipeline: scan → regime tags +
+   market brief + session ("skip-the-day") verdict (over the full watchlist) →
+   per-candidate LLM news-risk veto (INV-02 skip default) → narration (survivors) →
+   Pine generation. All advisory output is text to
    the terminal; the LLM vetoes/flags/explains and never picks entries, sizes, or targets
    (INV-01/INV-02 unchanged).
 4. **Hermes/Discord teardown** — delete `hermes_integration/jobs/daily.md`, the `fathom
@@ -111,8 +112,8 @@ graph TD
         STORE["store.py\nSQLite + Parquet"]
     end
 
-    CLI --> RANKER --> PORTFOLIO --> NEWSRISK
-    NEWSRISK --> BRIEF --> NARRATE
+    CLI --> RANKER --> PORTFOLIO --> BRIEF
+    BRIEF --> NEWSRISK --> NARRATE
     CLI -- "verdicts → analysis_log" --> STORE
     CLI --> PINE
     STORE --> PINE

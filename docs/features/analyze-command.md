@@ -1,6 +1,6 @@
 # Feature: analyze-command
 
-**Status:** draft
+**Status:** ready
 **Phase:** phase-07
 **Owner:** operator + Claude
 **Last updated:** 2026-09-01
@@ -8,9 +8,12 @@
 ## Summary
 
 `fathom analyze` is the on-demand trade-time pipeline (ADR-004) that replaces the retired
-Hermes daily job: one command runs scan → per-candidate LLM news-risk veto → regime tag +
-market brief + session verdict → narration → Pine script, prints the annotated watchlist
-to the terminal, and persists every verdict to a new append-only `analysis_log` table.
+Hermes daily job: one command runs scan → regime tags + market brief + session verdict
+(computed once, over the **full watchlist** — session context is independent of
+per-candidate vetoes, and vetoed candidates still get real regime tags) → per-candidate
+LLM news-risk veto → narration (survivors only) → Pine script, prints the annotated
+watchlist to the terminal, and persists every verdict to a new append-only
+`analysis_log` table.
 It orchestrates only: signals produce candidates, `ai/` produces verdicts/text, `pine`
 renders — analyze wires them and owns the terminal presentation. It is order-free
 (INV-01): the trade itself still goes through `fathom execute`.
@@ -18,7 +21,9 @@ renders — analyze wires them and owns the terminal presentation. It is order-f
 ## User-facing behaviour
 
 - `fathom analyze [--db-path PATH] [--instruments ALL|…] [--timeframes H1,H4,D]
-  [--history-years N] [--dry-run] [--no-pine] [--yes-llm-cost]`… prints, in order:
+  [--history-years N] [--dry-run] [--no-pine]` prints, in order (no cost-confirmation
+  gate: the command is operator-invoked on demand and LLM spend per run is a handful of
+  small calls):
   1. **Session block** — market brief + regime summary + skip-the-day verdict
      (market-brief feature's models; deterministic "analysis unavailable" fallback offline).
   2. **Watchlist block** — surviving candidates ranked, each with narration line, regime
@@ -26,8 +31,10 @@ renders — analyze wires them and owns the terminal presentation. It is order-f
   3. **Vetoed block** — candidates removed by a `skip` verdict, each with its reason
      (including the INV-02 safe-default reason when the LLM was unreachable) — vetoes are
      visible, never silent.
-  4. **Pine block** — the generated script (clipboard + stdout via pine-generation),
-     containing survivors only, unless `--no-pine`.
+  4. **Pine block** — the generated script, containing survivors only, unless
+     `--no-pine`. `render_pine` (pine-generation) produces the text; analyze's own CLI
+     handler prints it and performs the clipboard copy, reusing pine's CLI helper
+     (`render_pine` itself is pure — no clipboard).
 - Empty scan → the INV-10 "no candidates" message; no LLM call is made; exit 0.
 - Offline / no `LLM_API_KEY`: every candidate lands in the vetoed block with the INV-02
   safe-default reason; the session block prints its deterministic fallback; exit 0. The
@@ -42,21 +49,25 @@ renders — analyze wires them and owns the terminal presentation. It is order-f
    yields: per-candidate verdict calls with all six `news_risk.md` placeholders filled
    (calendar events rendered from the store's calendar for that instrument's currencies),
    survivors/vetoed split per `suggest_action`, `reduce_size` flags carried through to
-   terminal and Pine label, one `analysis_log` row per candidate, and one
-   `veto_ledger` row (`source="news_risk"`) recorded **immediately after**
-   `news_risk_check` returns and **before** `narrate` (phase-09 hook; a ledger
+   terminal and Pine label, and one `analysis_log` row per candidate. *(Phase-07
+   acceptance stops here; the `veto_ledger` clauses below are the phase-09 retrofit —
+   see "Veto ledger" in Component design — and are accepted with phase-09, not this
+   phase: one `veto_ledger` row **per candidate** (`source="news_risk"`) recorded
+   **immediately after** `news_risk_check` returns and **before** `narrate`; a ledger
    write failure logs WARNING and does not change the verdict, the loop, or the
-   `analysis_log` write). On `settings.env == "live"` the same pipeline writes
-   `analysis_log` rows and **zero** `veto_ledger` rows (INV-09 Phase-9 skip).
+   `analysis_log` write; on `settings.env == "live"` the same pipeline writes
+   `analysis_log` rows and **zero** `veto_ledger` rows — INV-09 Phase-9 skip.)*
 2. Offline path: with `LLM_API_KEY` unset and no client, all candidates are vetoed with
-   the safe-default reason, zero network I/O occurs (asserted via a socket-guard or
-   httpx-mock test), session block prints fallback text, exit 0.
+   the safe-default reason, and zero network I/O occurs **in the LLM/annotation
+   pipeline** — the test fixture reaches it via `run_scan(dry_run=True)` or stubbed
+   candidates (the scan's own candle refresh is out of this AC's scope), then asserts
+   via a socket-guard or httpx-mock; session block prints fallback text, exit 0.
 3. Empty watchlist: INV-10 message, zero LLM calls, no `analysis_log` rows, exit 0.
 4. `analysis_log` rows match the wire-format table below exactly; timestamps are UTC
    RFC-3339 (INV-03); rows are append-only (no UPDATE path in the store API).
-5. Order-free boundary: `signals/analyze.py` (and the CLI handler) import no
-   `execution.*`, `risk.*`, or order-capable module — AST test in the
-   `test_admin_panel.py` pattern (INV-01).
+5. Order-free boundary: `signals/analyze.py` imports none of `execution.*`, `risk.*`,
+   or `cli` (the CLI module carries order imports at module level — INV-01 Phase-4
+   transitive clause) — AST test in the `test_admin_panel.py` pattern (INV-01).
 6. `--dry-run` reaches `run_scan(dry_run=True)` (no candle refresh) and still runs the
    LLM/annotation pipeline on the resulting candidates.
 7. The emitted Pine (absent `--no-pine`) contains exactly the survivor set — a `skip`
@@ -74,7 +85,7 @@ sequenceDiagram
     participant CAL as data.calendar
     participant AI as ai/ (LLM via OpenAICompatClient)
     participant ST as store (analysis_log)
-    participant LEDGER as eval.veto_ledger
+    participant LEDGER as eval.veto_ledger (phase-09 retrofit)
     participant PINE as signals.pine
 
     Op->>CLI: fathom analyze
@@ -111,7 +122,22 @@ sequenceDiagram
   (UTC time · currency · impact · title) for the `{{calendar_events}}` slot; empty
   calendar renders `"(no calendar events in window)"` — never blocks the call.
   `entry_window_utc` = next bar-open → +1 bar of the candidate's timeframe, from the
-  same bar-length map the freshness TTL uses.
+  INV-21 bar-length map. **Map relocation (this feature):** `TIMEFRAME_BAR_LENGTH`
+  moves from `cli.py` to a new leaf module `signals/timeframes.py` (stdlib-only
+  imports); `cli.py` and `signals/analyze.py` both import it from there, so the library
+  layer never imports `cli` (AC 5 / INV-01) and INV-21's single-definition-site rule
+  holds (its definition-site parenthetical is updated in the same change).
+- **Market-stats + candidates-summary rendering (market-brief's inputs):**
+  `run_analysis` computes `market_stats` from stored candles for **every watchlist
+  instrument** (the session call runs before the veto loop) and renders
+  `candidates_summary` from the full ranked list; the session call's third input,
+  `calendar_events`, is rendered by the same `_render_events` helper over
+  `upcoming_events` for **all watchlist currencies** with a fixed next-24h UTC window
+  (the per-candidate fetch inside the loop stays per-instrument/entry-window). All
+  three are plain strings passed into market-brief's call functions (market-brief pins
+  only the placeholder names — the stat formulas, illustratively last close / ATR(14) /
+  position-in-range / realized-vol-vs-30-day-median, are this spec's choice). The
+  candle read is store-only (no OANDA fetch beyond what `run_scan` already did).
 - **Store** — `append_analysis(rows)` + `load_latest_analysis(watchlist_run) -> rows`.
   `load_latest_analysis` is pinned as: select the latest `analysis_log` run (max
   `run_ts`), return its rows **iff** that run's `watchlist_ts` equals the
@@ -120,9 +146,12 @@ sequenceDiagram
   it obtains `watchlist_run` via `latest_watchlist_run_ts()` (a scalar accessor owned
   by pine-generation) and takes `[]` as its no-join path (see pine-generation's
   wire-format contract).
-- **Veto ledger (phase-09 contract)** — `run_analysis` owns the
-  `record_news_risk_verdict` call. Insertion point is the line after
-  `news_risk_check(...)` returns, **before** `narrate`. The same `run_ts` written
+- **Veto ledger (phase-09 retrofit contract)** — the hook is **not built in phase-07**:
+  `eval/veto_ledger.py` does not exist yet, and phase-09's veto-ledger task adds the
+  call into `run_analysis` (veto-ledger.md Approach step 6). Phase-07 ships the loop
+  with the insertion point pinned here so the retrofit is a one-line-plus-tests change.
+  `run_analysis` owns the `record_news_risk_verdict` call. Insertion point is the line
+  after `news_risk_check(...)` returns, **before** `narrate`. The same `run_ts` written
   to `analysis_log.run_ts` is passed as `analyze_run_ts` on the ledger row (join
   key). `model_id` uses the same predicate as [[veto-ledger]]: `"offline"` iff
   `client is None and not os.environ.get("LLM_API_KEY")`; otherwise
@@ -163,16 +192,22 @@ sequenceDiagram
 - INV-10 — empty watchlist is honest and cheap (AC 3).
 - INV-13 — consumes frozen `Candidate` read-only.
 - INV-08 — no key in logs/output (inherited via `ai/llm_client`).
-- INV-20 — all LLM calls via the shared adapter; the offline predicate and
-  `model_id="offline"` rule are the invariant's, restated nowhere.
-- INV-21 — `entry_window_utc` derives from the single bar-length map.
+- INV-09 — implements the Phase-9 measurement-write skip at this orchestration call
+  site (`veto_ledger` writes skipped when `settings.env == "live"`; `eval/` and the
+  store never read `settings.env`).
+- INV-20 — all LLM calls via the shared adapter; the Component-design restatement of
+  the offline predicate is semantically identical to the invariant's wording (kept
+  inline because the `model_id` join depends on it).
+- INV-21 — `entry_window_utc` derives from the single bar-length map (relocated to
+  `signals/timeframes.py` by this feature — see Component design).
 
 ## Events
 
-- Written: `analysis_log` rows (one per candidate per run); `veto_ledger` rows
-  (`source="news_risk"`, one per candidate per run, via [[veto-ledger]]).
-- Consumed: `watchlist` (via `run_scan` return), `calendar` events, approved-set
-  (indirectly via scan).
+- Written: `analysis_log` rows (one per candidate per run); from phase-09's retrofit
+  onward, `veto_ledger` rows (`source="news_risk"`, one per candidate per run, via
+  [[veto-ledger]] — only when `settings.env != "live"`, INV-09 Phase-9 skip).
+- Consumed: `watchlist` (via `run_scan` return), `calendar` events, `candles`
+  (store-only read for `market_stats`), approved-set (indirectly via scan).
 
 ## Environment variables
 
@@ -198,7 +233,7 @@ candidate identity triple inside `candidate_snapshot` — not by `created_at`.
 | `reason` | TEXT | verbatim verdict reason (incl. safe-default reason) |
 | `narration` | TEXT | final line shown (model or fallback); NULL for vetoed |
 | `narration_source` | TEXT | `model\|fallback\|none` |
-| `regime` | TEXT | market-brief's regime enum for the instrument; `unavailable` offline |
+| `regime` | TEXT | market-brief's regime enum for the instrument; `unavailable` on any market-brief fallback (parse failure, out-of-enum, missing map entry, offline) |
 | `model_id` | TEXT | `LLM_MODEL` in effect; `offline` when no LLM client was used (same predicate as [[veto-ledger]]) |
 
 Primary key `(run_ts, instrument, timeframe, strategy_name)`; append-only (INSERT only —
