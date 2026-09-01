@@ -99,6 +99,7 @@ from typing import Callable, Optional
 
 from backtest.costs import CostParams
 from backtest.engine import BacktestEngine
+from backtest.metrics import periods_per_year_for
 from backtest.walkforward import ApprovedSetEntry, WalkForwardValidator
 from data.store import Store
 from strategies.base import Strategy
@@ -386,6 +387,11 @@ def _run_combo(spec: ComboSpec) -> Optional[ApprovedSetEntry]:
             end=end,
             train_months=spec.train_months,
             test_months=spec.test_months,
+            # WS0-T03: annualise this combo's per-bar returns for ITS timeframe
+            # (D=252, H4=1512, H1=6048) so oos_sharpe_mean is comparable across
+            # timeframes in the ranker. Passed explicitly rather than relying on
+            # the validator's granularity lookup so the choice is auditable here.
+            periods_per_year=periods_per_year_for(spec.timeframe),
         )
         return result.approved_set_entry
     except Exception:  # noqa: BLE001 — one bad combo must not kill the run

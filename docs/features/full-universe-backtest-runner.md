@@ -56,6 +56,8 @@ New `cli.py` with a `backtest` subcommand (argparse or click — see Open questi
 - [INV-06] — all results swap-aware (depends on [[swap-cost-model]]).
 - [INV-10] — owns the approved-set table that gates Phase 2 signals.
 - [INV-11] — consumes strategy Signals whose ATR/RR stops make OOS Sharpe comparable across strategies.
+
+**Annualisation (WS0-T03).** Metrics are computed from **per-bar** returns, so each combo is annualised with `√periods_per_year` for **its own timeframe** — `backtest.metrics.PERIODS_PER_YEAR` = D 252, H4 1512, H1 6048 (FX trades ~24h on weekdays). `_run_combo` passes this explicitly to `WalkForwardValidator.run`. Annualising every timeframe with √252 (the pre-WS0-T03 behaviour) understated H4 Sharpes by √6 and H1 by √24, biasing the ranker toward daily combos. `oos_sharpe_mean` rows persisted before this fix are **stale** and require a full `fathom backtest` re-run.
 - [INV-12] — single-writer, parent-serialized approved-set writes.
 - [INV-03] — UTC timestamps. [INV-08] — no logged secrets. [INV-09] — account-scoped via `settings.env`.
 

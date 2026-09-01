@@ -4,14 +4,23 @@ Computes performance metrics from a :class:`~backtest.engine.BacktestResult`.
 All metrics operate on *net* PnL (after costs) — gross figures are available
 on individual :class:`~backtest.engine.Trade` objects but are not used here.
 
-Annualisation note
-------------------
-The Sharpe and Sortino ratios are annualised by multiplying the per-period
-ratio by ``√252``.  252 is the conventional number of *trading days* per year
-for FX (five-day week, no holidays modelled).  The alternative is 365 (calendar
-days).  This divisor is a known source of silent variation between
-implementations; it is documented here so any downstream comparison can account
-for it.
+Annualisation note (WS0-T03)
+----------------------------
+Returns are computed **per bar** (``equity.diff()``), so the annualisation
+factor must match the bar length, not the calendar day.  Sharpe and Sortino are
+annualised by multiplying the per-bar ratio by ``√periods_per_year``.
+
+252 is the conventional number of *trading days* per year for FX (five-day
+week, no holidays modelled); the alternative is 365 (calendar days), not used
+here.  FX trades ~24h on weekdays, so a trading "day" contains 6 H4 bars or 24
+H1 bars — hence :data:`PERIODS_PER_YEAR` (D=252, H4=1512, H1=6048).
+
+Annualising every timeframe with √252 (the pre-WS0-T03 behaviour) understated
+H4 Sharpes by √6 ≈ 2.45× and H1 Sharpes by √24 ≈ 4.90×, which biased the
+cross-timeframe ranking in :mod:`signals.ranker` (its primary sort key is
+``oos_sharpe_mean``) toward daily combos.  ``compute_metrics`` defaults to
+252.0 so direct callers are unchanged; the walk-forward path passes the
+granularity's value.
 """
 
 from __future__ import annotations
@@ -25,6 +34,26 @@ from pydantic import BaseModel
 
 from backtest.engine import BacktestResult, Trade
 
+#: Bars per year, per timeframe, for annualising **per-bar** returns.
+#: FX trades ~24h on weekdays → 252 trading days × bars-per-day.
+PERIODS_PER_YEAR: dict[str, float] = {
+    "D": 252.0,
+    "H4": 252.0 * 6,
+    "H1": 252.0 * 24,
+}
+
+#: Fallback for timeframes absent from :data:`PERIODS_PER_YEAR`.
+DEFAULT_PERIODS_PER_YEAR: float = 252.0
+
+
+def periods_per_year_for(granularity: str) -> float:
+    """Bars per year for ``granularity`` (falls back to daily, 252.0).
+
+    The fallback is deliberate: an unrecognised granularity keeps the historical
+    √252 behaviour rather than raising inside a per-combo walk-forward worker.
+    """
+    return PERIODS_PER_YEAR.get(granularity, DEFAULT_PERIODS_PER_YEAR)
+
 
 class Metrics(BaseModel):
     """Performance metrics for a single backtest window.
@@ -34,11 +63,11 @@ class Metrics(BaseModel):
     Attributes
     ----------
     sharpe_ratio:
-        Annualised Sharpe ratio (mean net return / std × √252).  ``NaN`` when
-        std is zero (e.g. flat equity curve).
+        Annualised Sharpe ratio (mean net bar return / std × √periods_per_year).
+        ``NaN`` when std is zero (e.g. flat equity curve).
     sortino_ratio:
-        Annualised Sortino ratio (mean / downside-std × √252).  ``NaN`` when
-        there are no negative-return bars.
+        Annualised Sortino ratio (mean / downside-std × √periods_per_year).
+        ``NaN`` when there are no negative-return bars.
     max_drawdown_pct:
         Largest peak-to-trough drawdown expressed as a percentage of peak
         cumulative equity (negative → 0 % when equity never falls below its
@@ -81,7 +110,9 @@ class Metrics(BaseModel):
 
 
 def compute_metrics(
-    result: BacktestResult, risk_free_rate: float = 0.0
+    result: BacktestResult,
+    risk_free_rate: float = 0.0,
+    periods_per_year: float = DEFAULT_PERIODS_PER_YEAR,
 ) -> Metrics:
     """Compute :class:`Metrics` from a completed :class:`BacktestResult`.
 
@@ -93,6 +124,11 @@ def compute_metrics(
         Per-period (bar) risk-free rate used in the Sharpe / Sortino
         denominators.  Defaults to 0.0 (standard for forex strategies where
         the cash leg earns no yield in the model).
+    periods_per_year:
+        Number of **bars** per year for this result's timeframe, used as the
+        Sharpe / Sortino annualisation factor ``√periods_per_year``.  Defaults
+        to 252.0 (daily bars).  Callers evaluating intraday data must pass the
+        timeframe's value — see :func:`periods_per_year_for`.
 
     Returns
     -------
@@ -127,8 +163,9 @@ def compute_metrics(
     else:
         returns = pd.Series([], dtype="float64")
 
-    sharpe = _sharpe(returns, risk_free_rate)
-    sortino = _sortino(returns, risk_free_rate)
+    annualise = math.sqrt(periods_per_year)
+    sharpe = _sharpe(returns, risk_free_rate, annualise)
+    sortino = _sortino(returns, risk_free_rate, annualise)
     max_dd_pct, max_dd_bars = _max_drawdown(equity)
 
     wins = [t for t in trades if t.pnl_net_pips > 0]
@@ -176,14 +213,12 @@ def compute_metrics(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_ANNUALISE = math.sqrt(252)
-# Annualisation factor for per-bar (daily) returns → annual.
-# 252 = conventional trading days per year for FX (5-day week, no holidays).
-# Alternative: 365 (calendar days) — not used here to match the PoC spec.
+def _sharpe(
+    returns: pd.Series, risk_free_rate: float, annualise: float
+) -> float:
+    """Annualised Sharpe ratio = (mean excess return / std) × ``annualise``.
 
-
-def _sharpe(returns: pd.Series, risk_free_rate: float) -> float:
-    """Annualised Sharpe ratio = (mean excess return / std) × √252.
+    ``annualise`` is ``√periods_per_year`` for the result's timeframe.
 
     Returns ``float('nan')`` when the standard deviation is zero (no
     variation in returns — flat equity curve).
@@ -195,12 +230,16 @@ def _sharpe(returns: pd.Series, risk_free_rate: float) -> float:
     std = float(excess.std(ddof=1)) if len(excess) > 1 else 0.0
     if std == 0.0:
         return float("nan")
-    # Annualise: per-period ratio × √252  (252 trading days per year, FX)
-    return (mean / std) * _ANNUALISE
+    # Annualise: per-bar ratio × √periods_per_year (bars per year, this timeframe)
+    return (mean / std) * annualise
 
 
-def _sortino(returns: pd.Series, risk_free_rate: float) -> float:
-    """Annualised Sortino ratio = (mean excess return / downside-std) × √252.
+def _sortino(
+    returns: pd.Series, risk_free_rate: float, annualise: float
+) -> float:
+    """Annualised Sortino = (mean excess / downside-std) × ``annualise``.
+
+    ``annualise`` is ``√periods_per_year`` for the result's timeframe.
 
     Downside std uses only negative excess returns.  Returns ``float('nan')``
     when there are no negative returns (no downside variation).
@@ -215,8 +254,8 @@ def _sortino(returns: pd.Series, risk_free_rate: float) -> float:
     downside_std = float((downside**2).mean() ** 0.5)  # root-mean-square of losses
     if downside_std == 0.0:
         return float("nan")
-    # Annualise: per-period ratio × √252  (252 trading days per year, FX)
-    return (mean / downside_std) * _ANNUALISE
+    # Annualise: per-bar ratio × √periods_per_year (bars per year, this timeframe)
+    return (mean / downside_std) * annualise
 
 
 def _max_drawdown(equity: pd.Series) -> tuple[float, int]:

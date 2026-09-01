@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
@@ -419,6 +420,35 @@ def test_rank_primary_by_oos_sharpe_descending() -> None:
     result = make_ranker(approved, spec).rank(NOW)
     assert [c.oos_sharpe_mean for c in result] == [2.0, 1.0, 0.5]
     assert [c.rank for c in result] == [1, 2, 3]
+
+
+def test_rank_mixes_timeframes_on_the_stored_sharpe_value() -> None:
+    """Mixed D/H4 approved set ranks purely on the stored ``oos_sharpe_mean``.
+
+    Regression pin for WS0-T03.  The ranker code is unchanged — what changed is
+    that the stored values are now *comparable across timeframes*: walk-forward
+    annualises per-bar returns with √(periods_per_year) for the combo's own
+    granularity (D=252, H4=1512, H1=6048) instead of √252 for everything.
+
+    Before the fix an H4 combo whose per-bar edge annualises to 1.96 was stored
+    as 0.80 (understated by √6) and lost to the D combo at 1.20.  With correct
+    annualisation the same H4 combo stores 1.96 and ranks first.  This test pins
+    the post-fix ordering so a regression in the annualisation is visible here,
+    not only in metrics unit tests.
+    """
+    approved = [
+        _row("daily_combo", "EUR_USD", "D", 1.20),
+        _row("h4_combo", "GBP_USD", "H4", 0.80 * math.sqrt(6.0)),
+    ]
+    spec = {
+        ("daily_combo", "EUR_USD", "D"): (Direction.LONG, 0.5),
+        ("h4_combo", "GBP_USD", "H4"): (Direction.LONG, 0.5),
+    }
+    result = make_ranker(approved, spec).rank(NOW)
+    assert [(c.strategy_name, c.rank) for c in result] == [
+        ("h4_combo", 1),
+        ("daily_combo", 2),
+    ]
 
 
 def test_quality_score_breaks_sharpe_ties() -> None:

@@ -12,7 +12,12 @@ walk-forward validation engine.
 
 from backtest.costs import CostParams, CostResult, apply_costs
 from backtest.engine import BacktestEngine, BacktestResult, Trade
-from backtest.metrics import Metrics, compute_metrics
+from backtest.metrics import (
+    PERIODS_PER_YEAR,
+    Metrics,
+    compute_metrics,
+    periods_per_year_for,
+)
 from backtest.walkforward import (
     ApprovedSetEntry,
     WalkForwardResult,
@@ -29,6 +34,8 @@ __all__ = [
     "Trade",
     "Metrics",
     "compute_metrics",
+    "PERIODS_PER_YEAR",
+    "periods_per_year_for",
     "ApprovedSetEntry",
     "WalkForwardResult",
     "WalkForwardValidator",
