@@ -103,7 +103,10 @@ sequenceDiagram
   role for the panel; the CLI handler is a thin printer around it). `AnalysisResult`
   (pydantic, not frozen — internal, not a wire contract): session fields + per-candidate
   `CandidateAnalysis {candidate, verdict, narration, narration_source, regime}` split
-  into `survivors`/`vetoed`.
+  into `survivors`/`vetoed`. `narration`/`narration_source` come straight from
+  ai-package-migration's `narrate(...) -> NarrationResult {text, source: model|fallback}`
+  for survivors; vetoed candidates are never narrated and get `narration=NULL`,
+  `narration_source="none"` (the third enum value is minted here, not in `narrate`).
 - **Calendar rendering** — `_render_events(events) -> str`: compact plain-text list
   (UTC time · currency · impact · title) for the `{{calendar_events}}` slot; empty
   calendar renders `"(no calendar events in window)"` — never blocks the call.

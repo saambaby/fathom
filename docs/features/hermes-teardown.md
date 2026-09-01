@@ -64,6 +64,7 @@ Deletion manifest (the spec's core artifact — the taskgraph executes it verbat
 |---|---|---|
 | `hermes_integration/jobs/daily.md` | delete | tests/test_hermes_job.py, tests/test_docs_lint.py:20-21 (both updated/deleted here) |
 | `tests/test_hermes_job.py` | delete | lint test over the deleted doc |
+| `tests/test_execution_cli.py::TestInv01Boundary::test_daily_md_allowlist_unchanged` (:966-982) | delete | asserts the deleted doc's allow-list; already `pytest.skip`s when the file is absent — deleted here so no zombie skip survives. (The class's sibling test that rglobs `hermes_integration/` is **kept** and retargeted to `ai/` by ai-package-migration's import sweep.) |
 | `signals/charts.py` | delete | cli.py only (+ its own test) |
 | `tests/test_charts.py` | delete | — |
 | `cli.py` chart subparser (:815-845) + `cmd_chart` (:1264-…) | delete | argparse wiring only |

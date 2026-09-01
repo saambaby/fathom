@@ -113,14 +113,14 @@ graph TD
 
     CLI --> RANKER --> PORTFOLIO --> NEWSRISK
     NEWSRISK --> BRIEF --> NARRATE
-    NEWSRISK -- "verdicts" --> STORE
+    CLI -- "verdicts → analysis_log" --> STORE
     CLI --> PINE
     STORE --> PINE
     PINE -. "clipboard paste (human)" .-> TV
     NEWSRISK & BRIEF & NARRATE & PRETRADE --> LLM_API
     RANKER --> STORE
     CLI --> OANDA
-    CALENDAR --> NEWSRISK
+    CALENDAR --> CLI
 ```
 
 ## Anticipated specs

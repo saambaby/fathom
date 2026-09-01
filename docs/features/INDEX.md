@@ -94,7 +94,7 @@ riskiest-assumption probe and implements first.
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | pine-generation | watchlist → Pine v6 indicator (level lines + labels, `syminfo.ticker` scoped); clipboard/stdout; deterministic, no LLM | [pine-generation.md](pine-generation.md) | ready |
-| ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | draft |
+| ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | ready |
 | analyze-command | `fathom analyze` on-demand pipeline: scan → veto → brief → narration → Pine; `analysis_log` table; offline fail-safe | [analyze-command.md](analyze-command.md) | draft |
 | market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | draft |
 | hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | draft |

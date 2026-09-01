@@ -1,6 +1,6 @@
 # Feature: ai-package-migration
 
-**Status:** draft
+**Status:** ready
 **Phase:** phase-07
 **Owner:** operator + Claude
 **Last updated:** 2026-09-01
@@ -25,8 +25,13 @@ it, no Fathom capability requires an external orchestrator.
   - `ai.news_risk.news_risk_check(candidate, calendar_events, entry_window_utc, *,
     client=None) -> NewsRiskVerdict` — both strings caller-supplied (the `Candidate`
     carries no entry-window field; analyze-command computes it)
-  - `ai.narration.narrate(candidate, *, client=None) -> str` (returns the model's line
-    or `fallback_narration` output; never raises, never empty)
+  - `ai.narration.narrate(candidate, *, client=None) -> NarrationResult` where
+    `NarrationResult` is a small frozen pydantic model
+    `{text: str, source: Literal["model", "fallback"]}` — `text` is the model's line or
+    `fallback_narration` output (never empty), `source` tells the caller which it was
+    (analyze-command persists it as `narration_source`; its third value `none` is
+    analyze's own, for vetoed candidates that were never narrated). `narrate` never
+    raises.
 
 ## Acceptance criteria
 
@@ -35,17 +40,21 @@ it, no Fathom capability requires an external orchestrator.
    in the same change).
 2. `ai/llm_client.py` owns `OpenAICompatClient` + the `_ClientAdapter` protocol;
    `ai/pretrade_check.py` imports them from there and its public API
-   (`pretrade_check`, `parse_pretrade_verdict`, `PretradeVerdict`, `MODEL`) is unchanged —
+   (`pretrade_check`, `parse_pretrade_verdict`, `PretradeVerdict`, `MODEL`,
+   re-exported `OpenAICompatClient` — the full existing import surface, per the
+   re-export list in Component design; `cli.py:131` imports the adapter from here) is
+   unchanged —
    proven by the existing pretrade test suite passing with only import-path edits.
 3. `news_risk_check` follows the exact `pretrade_check` algorithm: no client + no
    `LLM_API_KEY` → safe default `skip` verdict without network I/O; injected stub client
    → prompt built from `ai/prompts/news_risk.md` with all six placeholders substituted;
    any transport/parse failure → `parse_news_risk` safe default (INV-02). Offline tests
    cover all three paths.
-4. `narrate` returns the model's line when `should_use_fallback` says usable, else
-   `fallback_narration(candidate)`; with no key/client it returns the fallback without
-   network I/O; it never raises and never returns empty (NOT INV-02 — cosmetic contract
-   preserved).
+4. `narrate` returns `NarrationResult(text=<model line>, source="model")` when
+   `should_use_fallback` says usable, else
+   `NarrationResult(text=fallback_narration(candidate), source="fallback")`; with no
+   key/client it returns the fallback result without network I/O; it never raises and
+   `text` is never empty (NOT INV-02 — cosmetic contract preserved).
 5. `parse_news_risk`, `parse_pretrade_verdict`, both pydantic verdict models, and all
    three prompt template files are moved byte-identical (templates) / behavior-identical
    (parsers — existing parser tests pass unmodified except import paths).
@@ -61,7 +70,7 @@ ai/
                      # _HTTP_TIMEOUT_S — extracted verbatim from pretrade_check.py
   pretrade_check.py  # verdict model + parser + pretrade_check(); imports adapter
   news_risk.py       # existing model + parser  ➕ _build_prompt() + news_risk_check()
-  narration.py       # existing fallback + usability check  ➕ narrate()
+  narration.py       # existing fallback + usability check  ➕ narrate() + NarrationResult
   prompts/           # pretrade.md, news_risk.md, narration.md — moved unchanged
 ```
 
@@ -151,8 +160,9 @@ Unchanged and already pinned by the moved modules (this spec freezes that they m
    packages list); suite green — commit 1.
 2. Add `news_risk_check` + `_build_prompt` (TDD: offline/no-key path, stub-client happy
    path, six-placeholder substitution, failure→skip) — commit 2.
-3. Add `narrate` (TDD: usable response, fallback response, no-key path) — commit 3.
-4. Extend AST boundary + key-hygiene tests to the package — commit 3.
+3. Add `narrate` + `NarrationResult` (TDD: usable response, fallback response, no-key
+   path, source values) — commit 3.
+4. Extend AST boundary + key-hygiene tests to the package — commit 4.
 
 ## Grounded claims
 
@@ -165,7 +175,7 @@ Unchanged and already pinned by the moved modules (this spec freezes that they m
 | The six news-risk placeholders come from the Hermes job's substitution table | hermes_integration/jobs/daily.md:93-100 | read table incl. `{{calendar_events}}` on line 100; template file exists at prompts/news_risk.md |
 | The only non-test production import site is cli.py | cli.py:131 (`from hermes_integration.pretrade_check import …`) | repo-wide grep: cli.py + tests + a settings comment (config/settings.py:98) only |
 | pyproject must be edited: package list names `hermes_integration*` | pyproject.toml:41 | read include list |
-| Test files needing updates: test_pretrade_check, test_news_risk (imports at :20 **and** logger-name string assertions at :416-436), test_narration, test_config, test_live_gate, test_execution_cli, test_cli_commands, test_docs_lint (path strings) — test_hermes_job is deleted by teardown first | grep hits, e.g. tests/test_pretrade_check.py:26, tests/test_news_risk.py:20, tests/test_config.py:245, tests/test_live_gate.py:391 | repo-wide grep for `hermes` in tests/ |
+| Test files needing updates: test_pretrade_check, test_news_risk (imports at :20 **and** logger-name string assertions at :416-436), test_narration, test_config, test_live_gate, test_execution_cli, test_cli_commands, test_docs_lint (path strings) — test_hermes_job **and** test_execution_cli's daily.md allow-list test (tests/test_execution_cli.py:966-982) are deleted by teardown first (named in its manifest); this feature retargets the surviving `TestInv01Boundary` directory-scan test (tests/test_execution_cli.py:938-964, rglobs `hermes_integration/`, would pass vacuously after the rename) to `ai/`, plus import-path edits | grep hits, e.g. tests/test_pretrade_check.py:26, tests/test_news_risk.py:20, tests/test_config.py:245, tests/test_live_gate.py:391 | repo-wide grep for `hermes` in tests/ |
 | `llm_*` settings fields exist; comment points at the model constant's home | config/settings.py:98 | read comment ("hermes_integration.pretrade_check.MODEL") — must be updated to `ai.llm_client.MODEL` |
 
 ## Constraint blast radius
@@ -196,3 +206,8 @@ the job doc (tests/test_hermes_job.py:1,27,46) and is deleted by hermes-teardown
 
 Second spec of the phase-07 sprint; analyze-command and market-brief build directly on
 the two new call functions.
+
+Implementer note: this spec's boundary is authoritative over the phase-07 diagram's
+shorthand — `ai/` modules know nothing about the store or the calendar: verdict
+persistence (`analysis_log`) and calendar fetching/rendering are analyze-command's
+call-site concerns (the diagram's `CALENDAR --> CLI` edge reflects this).
