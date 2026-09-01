@@ -56,7 +56,7 @@ test. The process caught them, but always at the end.
 **Where it is genuinely efficient:**
 - **Resumability across context loss.** This is the killer feature for AI-driven
   work. The build spanned many sessions and at least one full context compaction; I
-  rebuilt state from `PLAYBOOK.md` + `invariants.md` + `code-map.md` + the phase
+  rebuilt state from `PLAYBOOK.md` (since retired) + `invariants.md` + `code-map.md` + the phase
   results docs and resumed without losing the thread. The 7.7k lines of "overhead"
   markdown are what *made* a multi-session AI build tractable — they are the memory
   the model doesn't have.
@@ -204,6 +204,6 @@ does not support.**
 
 ## See also
 
-- [`PLAYBOOK.md`](playbook.md) — phase status + the reproducible method.
+- `PLAYBOOK.md` — retired 2026-09-01; phase status now lives in [`phases-manifest.json`](../phases/phases-manifest.json) and the method in the `halfcycle` plugin.
 - [`operator-acceptance.md`](../operator-acceptance.md) — the remaining human gates (the work the method left to judgment).
 - Per-phase audit reports (`phases/phase-N-spec-audit-*.md`) — the raw evidence behind Root Causes A/B.

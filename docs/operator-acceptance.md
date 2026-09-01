@@ -6,7 +6,7 @@ human/operator acceptance gates** that no code can close — they require extern
 services and judgment. This doc threads them into one ordered checklist with the
 exact commands and prerequisites, so you can pick up cold.
 
-> Status snapshot: see [`PLAYBOOK.md`](reference/playbook.md) Part 1. Method retrospective:
+> Status snapshot: see [`phases-manifest.json`](phases/phases-manifest.json). Method retrospective:
 > see [`half-cycle-verdict.md`](reference/half-cycle-verdict.md).
 
 ---
@@ -149,7 +149,7 @@ Root Cause D.)
 
 ## If you're an AI resuming this project
 
-Read, in order: this file → [`PLAYBOOK.md`](reference/playbook.md) (status + method) →
+Read, in order: this file → [`phases-manifest.json`](phases/phases-manifest.json) (status) →
 [`invariants.md`](product/invariants.md) (INV-01…16) → [`architecture-overview.md`](product/architecture.md).
 Engineering is complete; do **not** write go-live/live-token code or flip any live
 switch — gate 4 is operator-only and INV-07-blocked. If asked to "continue the

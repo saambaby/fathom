@@ -21,7 +21,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area, grouped by the phase that shipped it |
 | [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Master implementation plan (2026-08-31)** — audit fixes, LLM provider swap, TradingView posture, capture/breadth work, AI research loop (trial ledger + deflation gate), consolidated sequencing |
 | [`docs/go-live-runbook.md`](docs/go-live-runbook.md) | **Go-live runbook** — deliberate operator cutover procedure (INV-07 hard gate, cutover sequence, small-size start + ramp, rollback, monitoring, go/no-go decision record) |
-| [`docs/reference/`](docs/reference/) | Archived: the original [design narrative](docs/reference/forex-algo-trading-plan.md), the [half-cycle verdict](docs/reference/half-cycle-verdict.md) retrospective, and the superseded [build playbook](docs/reference/playbook.md) (the method now lives in the halfcycle plugin; status lives in the manifest) |
+| [`docs/reference/`](docs/reference/) | Archived: the original [design narrative](docs/reference/forex-algo-trading-plan.md) and the [half-cycle verdict](docs/reference/half-cycle-verdict.md) retrospective. (The build method now lives in the `halfcycle` plugin; phase status lives in the manifest.) |
 
 **Phases** — canonical ids, zero-padded so folder order is execution order. Status below mirrors
 [`phases-manifest.json`](docs/phases/phases-manifest.json); the manifest wins if they disagree.

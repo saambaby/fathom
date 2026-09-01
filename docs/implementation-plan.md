@@ -1,6 +1,6 @@
 # Fathom Master Implementation Plan
 
-> **For any coding agent (Claude Code, Cursor, Copilot, or a human):** execute this plan task-by-task — one task = one test-first change cycle = one PR, reviewed by someone (or some agent) who did not write it. Steps use checkbox (`- [ ]`) syntax for tracking. Workstreams 2.1 and 3–4 require a written feature spec (per the Layer-4 process in [`docs/reference/playbook.md`](reference/playbook.md), templates beside [`docs/features/INDEX.md`](features/INDEX.md)) before their tasks are executable — do not improvise those. *Claude Code users only:* the superpowers subagent-driven-development / executing-plans skills and the `halfcycle:*` commands automate this loop, but nothing in this plan depends on them.
+> **For any coding agent (Claude Code, Cursor, Copilot, or a human):** execute this plan task-by-task — one task = one test-first change cycle = one PR, reviewed by someone (or some agent) who did not write it. Steps use checkbox (`- [ ]`) syntax for tracking. Workstreams 2.1 and 3–4 require a written feature spec (per the Layer-4 process in the `halfcycle` plugin — `/halfcycle:write-spec`, templates beside [`docs/features/INDEX.md`](features/INDEX.md)) before their tasks are executable — do not improvise those. *Claude Code users only:* the superpowers subagent-driven-development / executing-plans skills and the `halfcycle:*` commands automate this loop, but nothing in this plan depends on them.
 
 **Date:** 2026-08-31
 **Goal:** Take Fathom from "code-complete but idle, with known correctness bugs and an uncapturable edge" to a provider-agnostic, capture-capable trading system with an AI-agent research loop that is statistically honest by construction.
@@ -9,7 +9,7 @@
 
 **Tech Stack:** Python 3.11, pydantic v2 (+pydantic-settings), httpx, pandas, SQLite, pytest/mypy(strict)/responses/hypothesis, OANDA v20 REST, MCP (research API), any OpenAI-compatible LLM endpoint.
 
-**Sources:** this plan is self-contained — every task carries its own rationale, file targets, and acceptance criteria, and the repo docs ([`docs/product/invariants.md`](product/invariants.md), [`docs/reference/playbook.md`](reference/playbook.md), [`docs/operator-acceptance.md`](operator-acceptance.md)) are the authoritative ground truth. Three supplementary write-ups from the 2026-08-31 audit/research session (*Fathom Audit*, *Fathom Edge Roadmap*, *Fathom AI Research Loop*) exist as private Claude artifacts with fuller evidence and citations; they are background reading, and no task below requires access to them.
+**Sources:** this plan is self-contained — every task carries its own rationale, file targets, and acceptance criteria, and the repo docs ([`docs/product/invariants.md`](product/invariants.md), [`docs/phases/phases-manifest.json`](phases/phases-manifest.json), [`docs/operator-acceptance.md`](operator-acceptance.md)) are the authoritative ground truth. Three supplementary write-ups from the 2026-08-31 audit/research session (*Fathom Audit*, *Fathom Edge Roadmap*, *Fathom AI Research Loop*) exist as private Claude artifacts with fuller evidence and citations; they are background reading, and no task below requires access to them.
 
 ## Global Constraints
 
@@ -17,7 +17,7 @@
 - **INV-02:** every LLM output crossing into automation is typed JSON with a fail-closed safe default (veto → `block`).
 - **INV-05:** per-trade risk ≤ 0.25% (demo) / `live_risk_fraction` ≤ 0.25%, validated at Settings construction.
 - **INV-07:** no live trading without a demo track record; this plan gives it quantitative teeth (MinTRL) but never weakens it.
-- **Merge gate:** whole-repo `mypy .` clean + full `pytest` green before every merge; merge via `gh pr merge` (squash), per PLAYBOOK standing hygiene.
+- **Merge gate:** whole-repo `mypy .` clean + full `pytest` green before every merge; merge via `gh pr merge` (squash) — standing hygiene.
 - **TDD:** every behavior change lands test-first (RED verified before implementation).
 - **No-mocks evidence rule:** nothing counts as evidence a strategy works unless it came from real recorded market data through the real engine with full costs, or from real demo fills — see the Strategy Verification Protocol section. Mocks/stubs are permitted only for external-HTTP plumbing tests, never anywhere in a run cited as strategy evidence.
 - **Commits:** plain conventional-commit messages; no AI-attribution trailers, footers, or co-author sign-offs of any kind.
@@ -368,7 +368,7 @@ Operator gates T-08/T-11/T-06 (#59/#86/#109) become runnable once rows 1–2 lan
 
 ## Method integration
 
-Run each workstream through the project's documented build method (see [`docs/reference/playbook.md`](reference/playbook.md) Part 2, which any tool can follow manually): author feature specs → compile a dependency-ordered task graph and get human approval → implement tasks in isolated branches/worktrees with a fresh reviewer per PR and squash merges → an adversarial acceptance walk on the deployed result → end-of-phase docs/context sync. Claude Code users can drive each step with the corresponding `halfcycle:*` command; other tools follow the same steps by hand. Workstream 0 is small enough to skip spec-writing and run directly off this plan's task list.
+Run each workstream through the project's documented build method (the half-cycle layers, which any tool can follow manually): author feature specs → compile a dependency-ordered task graph and get human approval → implement tasks in isolated branches/worktrees with a fresh reviewer per PR and squash merges → an adversarial acceptance walk on the deployed result → end-of-phase docs/context sync. Claude Code users can drive each step with the corresponding `halfcycle:*` command; other tools follow the same steps by hand. Workstream 0 is small enough to skip spec-writing and run directly off this plan's task list.
 
 ## Out of scope (evidence-based, deliberate)
 
