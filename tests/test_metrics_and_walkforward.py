@@ -22,7 +22,12 @@ import pandas as pd
 import pytest
 
 from backtest.engine import BacktestResult, Trade
-from backtest.metrics import Metrics, _ANNUALISE, compute_metrics
+from backtest.metrics import (
+    PERIODS_PER_YEAR,
+    Metrics,
+    compute_metrics,
+    periods_per_year_for,
+)
 from backtest.walkforward import (
     ApprovedSetEntry,
     WalkForwardResult,
@@ -176,9 +181,125 @@ class TestSharpeFormula:
         assert math.isnan(metrics.sharpe_ratio)
 
     def test_sharpe_annualisation_factor(self) -> None:
-        """The annualisation factor must be √252 (not 365 or 260)."""
-        assert abs(_ANNUALISE - math.sqrt(252)) < 1e-12, (
-            f"Expected √252 = {math.sqrt(252)}, got {_ANNUALISE}"
+        """The default annualisation factor must be √252 (not 365 or 260)."""
+        default = PERIODS_PER_YEAR["D"]
+        assert abs(math.sqrt(default) - math.sqrt(252)) < 1e-12, (
+            f"Expected √252 = {math.sqrt(252)}, got {math.sqrt(default)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 1b. Per-timeframe annualisation (WS0-T03) — cross-timeframe comparability
+# ---------------------------------------------------------------------------
+
+def _mixed_return_result() -> BacktestResult:
+    """A result whose per-bar returns have a non-zero mean and non-zero std."""
+    returns = [1.0, 2.0, -1.0, 3.0, -2.0, 4.0, 0.5, -0.5, 2.5, 1.5]
+    cumulative = [sum(returns[: i + 1]) for i in range(len(returns))]
+    return _make_result(
+        trades=[_make_trade(r) for r in returns],
+        equity_values=[0.0] + cumulative,
+    )
+
+
+class TestPerTimeframeAnnualisation:
+    """`periods_per_year` must scale Sharpe/Sortino by √(periods_per_year)."""
+
+    def test_h4_sharpe_is_sqrt6_times_daily_sharpe(self) -> None:
+        """Identical bar returns annualised as H4 (1512) → D-Sharpe × √6."""
+        result = _mixed_return_result()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            daily = compute_metrics(result, periods_per_year=252.0)
+            h4 = compute_metrics(result, periods_per_year=1512.0)
+        assert h4.sharpe_ratio == pytest.approx(
+            daily.sharpe_ratio * math.sqrt(6.0), rel=1e-12
+        )
+
+    def test_h4_sortino_is_sqrt6_times_daily_sortino(self) -> None:
+        """The same √6 relation must hold for Sortino."""
+        result = _mixed_return_result()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            daily = compute_metrics(result, periods_per_year=252.0)
+            h4 = compute_metrics(result, periods_per_year=1512.0)
+        assert h4.sortino_ratio == pytest.approx(
+            daily.sortino_ratio * math.sqrt(6.0), rel=1e-12
+        )
+
+    def test_default_periods_per_year_is_252(self) -> None:
+        """Direct callers that pass nothing keep the historical √252 behaviour."""
+        result = _mixed_return_result()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            default = compute_metrics(result)
+            explicit = compute_metrics(result, periods_per_year=252.0)
+        assert default.sharpe_ratio == pytest.approx(explicit.sharpe_ratio, rel=1e-12)
+
+    def test_periods_per_year_table_values(self) -> None:
+        """FX trades ~24h on weekdays: D=252, H4=252×6, H1=252×24."""
+        assert PERIODS_PER_YEAR == {"D": 252.0, "H4": 1512.0, "H1": 6048.0}
+
+    def test_periods_per_year_for_lookup_and_fallback(self) -> None:
+        """Lookup resolves known timeframes; unknown ones fall back to daily."""
+        assert periods_per_year_for("H4") == 1512.0
+        assert periods_per_year_for("H1") == 6048.0
+        assert periods_per_year_for("D") == 252.0
+        assert periods_per_year_for("M15") == 252.0
+
+
+class TestWalkForwardAnnualisationThreading:
+    """The walk-forward path must annualise with its granularity's factor."""
+
+    def test_h4_window_sharpe_is_sqrt6_times_d_window_sharpe(self) -> None:
+        """Same synthetic bars, run as H4 vs D → window Sharpes differ by √6."""
+        result_obj = _mixed_return_result()
+        engine = MagicMock()
+        engine.run.return_value = result_obj
+        strategy = MagicMock()
+        strategy.name = "test_strategy"
+        validator = WalkForwardValidator(engine=engine, strategy=strategy)
+
+        kwargs: dict[str, Any] = dict(
+            instrument="EUR_USD",
+            start=_utc(2024, 1, 1),
+            end=_utc(2026, 1, 1),
+            train_months=12,
+            test_months=3,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            d_run = validator.run(granularity="D", **kwargs)
+            h4_run = validator.run(granularity="H4", **kwargs)
+
+        d_sharpe = d_run.windows[0].out_of_sample_metrics.sharpe_ratio
+        h4_sharpe = h4_run.windows[0].out_of_sample_metrics.sharpe_ratio
+        assert h4_sharpe == pytest.approx(d_sharpe * math.sqrt(6.0), rel=1e-12)
+
+    def test_explicit_periods_per_year_overrides_granularity(self) -> None:
+        """An explicit periods_per_year argument wins over the lookup."""
+        result_obj = _mixed_return_result()
+        engine = MagicMock()
+        engine.run.return_value = result_obj
+        strategy = MagicMock()
+        strategy.name = "test_strategy"
+        validator = WalkForwardValidator(engine=engine, strategy=strategy)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            run = validator.run(
+                instrument="EUR_USD",
+                granularity="D",
+                start=_utc(2024, 1, 1),
+                end=_utc(2026, 1, 1),
+                train_months=12,
+                test_months=3,
+                periods_per_year=6048.0,
+            )
+            daily = compute_metrics(result_obj, periods_per_year=252.0)
+
+        assert run.windows[0].out_of_sample_metrics.sharpe_ratio == pytest.approx(
+            daily.sharpe_ratio * math.sqrt(24.0), rel=1e-12
         )
 
 
