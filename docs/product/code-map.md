@@ -30,9 +30,9 @@ Edits to these go through the **coordinator branch** or are **serialized** — n
 - `pyproject.toml` — any new dependency
 - `CLAUDE.md` — stack/commands/doc-map
 - `.gitignore`
-- `docs/invariants.md`
+- `docs/product/invariants.md`
 - `docs/features/INDEX.md`
-- `docs/code-map.md` (this file)
+- `docs/product/code-map.md` (this file)
 
 **Dispatch rule:** a worker that needs a new dependency declares it; the coordinator applies the `pyproject.toml` + `CLAUDE.md` edits on the coordinator branch (or serializes them), and feature workers rebase onto it.
 

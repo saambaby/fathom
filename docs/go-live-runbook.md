@@ -38,7 +38,7 @@ cutover is a manual, reviewed, single-operator action.
 ## Section 1 — Prerequisites (INV-07 Hard Gate)
 
 The live cutover is **blocked** until every item below is ticked. These are not
-suggestions; they are the INV-07 prerequisite (see `docs/invariants.md`).
+suggestions; they are the INV-07 prerequisite (see `docs/product/invariants.md`).
 
 ### 1.1 Demo track record requirements
 

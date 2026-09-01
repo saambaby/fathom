@@ -1,9 +1,12 @@
-# Fathom — PoC
+# phase-00 — PoC: MA crossover, 3 pairs x {H1,D}
 
-**Status:** ✅ COMPLETE (2026-05-29) — pipeline shipped & validated; approved-set empty (honest negative for MA-crossover-alone). See [poc-results.md](poc-results.md).
+**Status:** completed (2026-05-28)
+**Commitment level:** PoC — validates the thesis, may be throwaway; the pipeline it built was kept.
+**Time horizon:** 2026-05-27 -> 2026-05-28
 **Depends on:** nothing — this is the foundation
-**Unlocks:** [Phase 1](phase-1.md) — proceeding (decision: accept negative, seek edge across broader strategy set)
-**Spec layer:** [product-spec.md](../product-spec.md) · [architecture-overview.md](../architecture-overview.md) · [invariants.md](../invariants.md)
+**Unlocks:** [`phase-01.1`](../phase-01.1/phase.md) — proceeding (decision: accept the negative, seek edge across a broader strategy set)
+**Product layer:** [spec](../../product/spec.md) · [architecture](../../product/architecture.md) · [invariants](../../product/invariants.md)
+**Results:** [results.md](results.md) — **0/36 approved** (honest negative for MA-crossover alone)
 
 ---
 

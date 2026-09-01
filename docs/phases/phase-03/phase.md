@@ -1,10 +1,13 @@
-# Fathom — Phase 3: Risk, Execution & Monitoring (demo only)
+# phase-03 — Risk, Execution & Monitoring (demo only)
 
-**Status:** Carved — planning. No code yet.
-**Depends on:** [Phase 2](phase-2.md) — the `Candidate` watchlist contract (INV-13) shipped and stable.
-**Unlocks:** Phase 4 (Admin Panel & Hardening — `panel/`, equity curve, blotter, deviation log).
-**Spec layer:** [product-spec.md](../product-spec.md) (its "Phase 4 — Risk, Execution & Monitoring") · [architecture-overview.md](../architecture-overview.md) ("Trade Execution" data flow + Risk Gate boundary) · [invariants.md](../invariants.md)
-**Maps to:** product-spec **Phase 4**. (The implemented track compressed spec-Phases 1+2 → impl-Phase 1 and spec-Phase 3 → impl-Phase 2; this is the next slice.)
+**Status:** in_progress — all 10 code/config units merged (#75, #87-96); operator acceptance gate P3-T-11 (#86) still open
+**Commitment level:** Phase N — ships to the operator
+**Time horizon:** 2026-05-29 -> code merged 2026-05-30; gate open
+**Depends on:** [`phase-02`](../phase-02/phase.md) — the `Candidate` watchlist contract (INV-13) shipped and stable
+**Unlocks:** [`phase-04`](../phase-04/phase.md) — admin panel over the execution store
+**Product layer:** [spec](../../product/spec.md) ("Phase 4 — Risk, Execution & Monitoring") · [architecture](../../product/architecture.md) · [invariants](../../product/invariants.md)
+**Maps to:** product-spec **Phase 4**. (The implemented track compressed spec-Phases 1+2 -> `phase-01`, and spec-Phase 3 -> `phase-02`.)
+**Results:** [results.md](results.md) · **Open gate:** [operator-acceptance.md](../../operator-acceptance.md)
 
 > **Numbering note.** "Phase 3" here = the product spec's *Phase 4 — Risk, Execution & Monitoring*. The admin panel (spec Phase 5) becomes impl-Phase 4; go-live (spec Phase 6) becomes impl-Phase 5.
 
@@ -18,13 +21,13 @@ Hermes can never invoke — and watch the resulting position with an always-on
 monitor that alerts on deviation.
 
 This is the first phase where Fathom holds **order authority**. That authority
-lives entirely on the deterministic side of the [INV-01](../invariants.md#inv-01--hermes-must-not-place-orders)
+lives entirely on the deterministic side of the [INV-01](../../product/invariants.md#inv-01--hermes-must-not-place-orders)
 boundary: a human approves a candidate, a deterministic command sizes and
 risk-checks it, and only then is a bracketed order submitted. Hermes produces
 suggestions; it never pulls the trigger.
 
 **Demo only.** No live (non-practice) endpoint is touched in this phase — that is
-[INV-07](../invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record),
+[INV-07](../../product/invariants.md#inv-07--demo-first--no-live-trading-without-a-track-record),
 deferred to impl-Phase 5.
 
 ---
@@ -220,7 +223,7 @@ of the wall:
 **Invariant promotions — DONE (cross-spec audit, 2026-05-29):** the three candidates
 were promoted to **INV-14** (frozen Order/Fill/Position), **INV-15** (client-order-id
 idempotency), and **INV-16** (broker is source of truth). See
-[phase-3-spec-audit-2026-05-29.md](phase-3-spec-audit-2026-05-29.md).
+[phase-3-spec-audit-2026-05-29.md](spec-audit-2026-05-29.md).
 
 ---
 

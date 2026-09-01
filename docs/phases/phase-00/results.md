@@ -3,7 +3,7 @@
 **Run date:** 2026-05-29 (live OANDA demo account, `ENV=demo`)
 **Verdict:** ❌ **0 of 36 combinations approved** — empty approved-set
 **Decision:** Accepted as an honest negative for MA-crossover-alone. Per-window gate kept strict. **Proceed to Phase 1.**
-**Exit status:** 0 (empty approved-set is a valid PoC result, not a failure — see [poc.md](poc.md))
+**Exit status:** 0 (empty approved-set is a valid PoC result, not a failure — see [poc.md](phase.md))
 
 ---
 
@@ -52,7 +52,7 @@ Per-window OOS trade counts and Sharpe (cost params: spread 1.0 pip, slippage 0.
 
 2. **The daily timeframe is structurally starved** (~0–2 trades/window) — slow MAs can't form on ~65 daily bars per test window. Daily was never going to clear a ≥5-trades/window bar at these params.
 
-3. **One near-miss:** `fast=20/slow=200` on H1 is positive in 3 of 4 windows (mean OOS Sharpe ≈ +0.23) with only the final window at −0.11. Under the per-window ruling ("every window must be positive"), the one negative window rejects it. This is the single case where a majority/aggregate criterion would have differed. Judgement: 3-of-4 positive with small magnitudes is *suggestive but not robust*; loosening the gate to force a pass would risk the overfitting trap the project's own caveats warn against ([product-spec.md](../product-spec.md) §5). Gate kept strict.
+3. **One near-miss:** `fast=20/slow=200` on H1 is positive in 3 of 4 windows (mean OOS Sharpe ≈ +0.23) with only the final window at −0.11. Under the per-window ruling ("every window must be positive"), the one negative window rejects it. This is the single case where a majority/aggregate criterion would have differed. Judgement: 3-of-4 positive with small magnitudes is *suggestive but not robust*; loosening the gate to force a pass would risk the overfitting trap the project's own caveats warn against ([product-spec.md](../../product/spec.md) §5). Gate kept strict.
 
 ## What the PoC proved (independent of the edge result)
 
@@ -62,4 +62,4 @@ The PoC's primary deliverable — the **research pipeline** — works end-to-end
 
 **Accepted negative → proceed to Phase 1.** MA-crossover alone is insufficient; Phase 1's broader strategy set (Donchian, Bollinger/z-score, RSI, ROC momentum, session/range breakout) across the full pair universe is where genuine edge is more likely to surface. The approval criteria stay strict — Phase 1 seeks *robust* edge, not a manufactured pass.
 
-See [phase-1.md](phase-1.md). Before Phase 1 can be orchestrated, the deferred planning artefacts are: per-feature specs under `docs/features/`, `docs/code-map.md`, then a Phase 1 taskgraph (per the half-cycle Layer 4 → Layer 5 loop).
+See [phase-1.md](../phase-01.1/phase.md). Before Phase 1 can be orchestrated, the deferred planning artefacts are: per-feature specs under `docs/features/`, `docs/product/code-map.md`, then a Phase 1 taskgraph (per the half-cycle Layer 4 → Layer 5 loop).

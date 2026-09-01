@@ -6,31 +6,40 @@ Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated b
 
 ## Documentation
 
+Layout follows the halfcycle 0.2.0 doc contract: `docs/product/` is the durable product layer,
+`docs/features/` is cross-phase, `docs/phases/<phase-NN>/` holds everything for one execution
+unit, `docs/reference/` is imported-but-unmaintained.
+
 | Doc | What's in it |
 |---|---|
-| [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md) | **Start here.** Phase status (what's done / what's next) + the reproducible build method: kickoff prompt, half-cycle layers, runbook flow, orchestration pattern, copy-paste prompts |
+| [`docs/phases/phases-manifest.json`](docs/phases/phases-manifest.json) | **Start here.** Canonical phase index — id, status, outcome, open gate. The single source of truth for "where are we". |
 | [`docs/operator-acceptance.md`](docs/operator-acceptance.md) | **Resume here.** The 4 remaining operator gates (T-08 → T-11 → T-06 → T-05) as one ordered checklist with exact commands + the credentials you must supply |
-| [`docs/half-cycle-verdict.md`](docs/half-cycle-verdict.md) | Deep retrospective/verdict on the half-cycle method (efficiency, root-cause failure modes, what worked, improvements) — Fathom as the case study |
-| [`docs/product-spec.md`](docs/product-spec.md) | Scope, confirmed decisions, build phases, honest caveats |
-| [`docs/architecture-overview.md`](docs/architecture-overview.md) | Container diagram, key boundaries, data flows, repo layout, stack |
-| [`docs/invariants.md`](docs/invariants.md) | 16 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, approved-set gate, frozen `Candidate` + `Order`/`Fill`/`Position` contracts, client-order-id idempotency, broker-is-truth, …) |
-| [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area with phase and status |
-| [`docs/forex-algo-trading-plan.md`](docs/forex-algo-trading-plan.md) | Original design narrative (full rationale and deep-dives) |
+| [`docs/product/spec.md`](docs/product/spec.md) | Scope, confirmed decisions, build phases, honest caveats |
+| [`docs/product/architecture.md`](docs/product/architecture.md) | Container diagram, key boundaries, data flows, repo layout, stack |
+| [`docs/product/invariants.md`](docs/product/invariants.md) | 16 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, approved-set gate, frozen `Candidate` + `Order`/`Fill`/`Position` contracts, client-order-id idempotency, broker-is-truth, …) |
+| [`docs/product/code-map.md`](docs/product/code-map.md) | Area → path → safe-parallel rules |
+| [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area, grouped by the phase that shipped it |
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Master implementation plan (2026-08-31)** — audit fixes, LLM provider swap, TradingView posture, capture/breadth work, AI research loop (trial ledger + deflation gate), consolidated sequencing |
 | [`docs/go-live-runbook.md`](docs/go-live-runbook.md) | **Go-live runbook** — deliberate operator cutover procedure (INV-07 hard gate, cutover sequence, small-size start + ramp, rollback, monitoring, go/no-go decision record) |
-| [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Master implementation plan (2026-08-31)** — audit fixes, LLM provider swap (in progress), TradingView posture, capture/breadth work, AI research loop (trial ledger + deflation gate), consolidated sequencing |
+| [`docs/reference/`](docs/reference/) | Archived: the original [design narrative](docs/reference/forex-algo-trading-plan.md) and the [half-cycle verdict](docs/reference/half-cycle-verdict.md) retrospective. (The build method now lives in the `halfcycle` plugin; phase status lives in the manifest.) |
 
-**Phase docs (current scope):** — full status table in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)
+**Phases** — canonical ids, zero-padded so folder order is execution order. Status below mirrors
+[`phases-manifest.json`](docs/phases/phases-manifest.json); the manifest wins if they disagree.
 
 | Phase | Doc | Status |
 |---|---|---|
-| PoC | [`docs/phases/poc.md`](docs/phases/poc.md) | ✅ Done — 0/36 approved (honest negative) |
-| Phase 1 | [`docs/phases/phase-1.md`](docs/phases/phase-1.md) | ✅ Done — 1A 10/72 approved + 1B live stream/calendar |
-| Phase 2 | [`docs/phases/phase-2.md`](docs/phases/phase-2.md) | ✅ Code merged · ⏳ T-08 live-Discord acceptance is an operator gate |
-| Phase 3 | [`docs/phases/phase-3.md`](docs/phases/phase-3.md) | ✅ Code merged (10/10 units) · ⏳ T-11 live demo-loop acceptance is an operator gate |
-| Phase 4 | [`docs/phases/phase-4.md`](docs/phases/phase-4.md) | ✅ Code merged (5/5 units) · ⏳ T-06 panel acceptance is an operator gate |
-| Phase 5 | [`docs/phases/phase-5.md`](docs/phases/phase-5.md) | ✅ Code merged (4/4 guardrail units) · ⛔ T-05 live cutover is operator-only + **INV-07-blocked** (no demo track record yet) |
+| `phase-00` | [PoC](docs/phases/phase-00/phase.md) | ✅ completed — 0/36 approved (honest negative) |
+| `phase-01.1` | [research engine](docs/phases/phase-01.1/phase.md) | ✅ completed — 10/72 approved |
+| `phase-01.2` | [live-data groundwork](docs/phases/phase-01.2/phase.md) | ✅ completed — stream + calendar accepted live |
+| `phase-02` | [watchlist → Discord](docs/phases/phase-02/phase.md) | 🔵 in_progress — code merged · ⏳ T-08 operator gate |
+| `phase-03` | [risk, execution & monitoring](docs/phases/phase-03/phase.md) | 🔵 in_progress — 10/10 units merged · ⏳ T-11 operator gate |
+| `phase-04` | [admin panel](docs/phases/phase-04/phase.md) | 🔵 in_progress — 5/5 units merged · ⏳ T-06 operator gate |
+| `phase-05` | [go-live decision](docs/phases/phase-05/phase.md) | ⛔ blocked — guardrails merged · T-05 operator-only + **INV-07-blocked** |
+| `phase-06` | [WS0: audit fixes, portability, CI](docs/phases/phase-06/phase.md) | 🔵 in_progress — 10/11 merged · open: #143 (blocked on human) |
 
-**Read before starting any session:** `docs/PLAYBOOK.md` (status + method) + `docs/architecture-overview.md` (boundaries) + `docs/invariants.md` (rules) + the active phase doc.
+**Read before starting any session:** [`phases-manifest.json`](docs/phases/phases-manifest.json)
+(status) + [`docs/product/architecture.md`](docs/product/architecture.md) (boundaries) +
+[`docs/product/invariants.md`](docs/product/invariants.md) (rules) + the active phase doc.
 
 ---
 
@@ -106,7 +115,7 @@ Three surfaces — route updates to the right one:
 
 - **`CLAUDE.md`** (this file, in git): commands, stack, doc map
 - **`.claude/context/`** (in git): architecture changes, new patterns, gotchas the team needs
-- **`~/.claude/projects/-home-sam-baby-development-fathom/memory/`** (local only): account names, deploy URLs, API tokens by name, debugging stories
+- **`~/.claude/projects/-Users-sambaby-Development--saam-baby-arp-fathom/memory/`** (local only): account names, deploy URLs, API tokens by name, debugging stories
 
 ### Trigger table
 
@@ -115,7 +124,9 @@ Three surfaces — route updates to the right one:
 | `pyproject.toml` dep added/removed | CLAUDE.md → Stack |
 | New CLI command | CLAUDE.md → Commands |
 | New doc file | CLAUDE.md → Documentation table |
-| Invariant added or changed | `docs/invariants.md` |
+| Invariant added or changed | `docs/product/invariants.md` |
 | New feature area | `docs/features/INDEX.md` |
-| Architectural decision | `docs/architecture-overview.md` |
+| Architectural decision | `docs/product/architecture.md` |
+| Phase status / outcome / gate change | `docs/phases/phases-manifest.json` (then mirror in the CLAUDE.md phase table) |
+| New phase carved | `docs/phases/phase-NN/phase.md` + manifest entry (canonical zero-padded id) |
 | Secret / account name / URL | memory folder only |

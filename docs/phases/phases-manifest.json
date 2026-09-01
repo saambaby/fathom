@@ -1,0 +1,87 @@
+{
+  "phases": [
+    {
+      "id": "phase-00",
+      "name": "PoC — MA crossover, 3 pairs x {H1,D}, walk-forward + costs",
+      "commitment": "PoC",
+      "status": "completed",
+      "completed_at": "2026-05-28",
+      "doc": "phase-00/phase.md",
+      "results": "phase-00/results.md",
+      "outcome": "0/36 approved — honest negative; the strict per-window gate validated."
+    },
+    {
+      "id": "phase-01.1",
+      "name": "Research engine — 6 strategies x 3 pairs x {H1,H4,D}, swap costs, fathom backtest",
+      "commitment": "Phase N",
+      "status": "completed",
+      "completed_at": "2026-05-29",
+      "doc": "phase-01.1/phase.md",
+      "results": "phase-01.1/results.md",
+      "outcome": "10/72 approved — genuine but thin OOS edge. Engine 30 min -> 22 s."
+    },
+    {
+      "id": "phase-01.2",
+      "name": "Live-data groundwork — pricing stream + economic calendar",
+      "commitment": "Phase N",
+      "status": "completed",
+      "completed_at": "2026-05-29",
+      "doc": "phase-01.2/phase.md",
+      "results": "phase-01.2/results.md",
+      "outcome": "Live demo ticks received; 97 calendar events stored. Two leaks caught at the acceptance gate."
+    },
+    {
+      "id": "phase-02",
+      "name": "Signal ranker -> watchlist, portfolio limits, charts, news-risk, narration, Hermes jobs",
+      "commitment": "Phase N",
+      "status": "in_progress",
+      "doc": "phase-02/phase.md",
+      "results": "phase-02/results.md",
+      "outcome": "All 7 code/config tasks merged; Candidate pinned as INV-13.",
+      "open_gate": "P2-T-08 (#59) live Discord acceptance — operator gate, see ../operator-acceptance.md"
+    },
+    {
+      "id": "phase-03",
+      "name": "Risk + execution + monitoring (demo) — sizing, limits, brackets, reconcile, fathom execute",
+      "commitment": "Phase N",
+      "status": "in_progress",
+      "doc": "phase-03/phase.md",
+      "results": "phase-03/results.md",
+      "outcome": "All 10 units merged (#75, #87-96). Promoted INV-14/15/16.",
+      "open_gate": "P3-T-11 (#86) live demo-loop acceptance — operator gate"
+    },
+    {
+      "id": "phase-04",
+      "name": "Admin panel & hardening — read-only Streamlit dashboard over the store",
+      "commitment": "Phase N",
+      "status": "in_progress",
+      "doc": "phase-04/phase.md",
+      "results": "phase-04/results.md",
+      "outcome": "All 5 units merged (#103, #110-114). Read-only; INV-01 import boundary enforced.",
+      "open_gate": "P4-T-06 (#109) panel acceptance — operator gate"
+    },
+    {
+      "id": "phase-05",
+      "name": "Go-live safety guardrails — defense-in-depth gate, reduced live risk, cutover runbook",
+      "commitment": "Phase N",
+      "status": "blocked",
+      "doc": "phase-05/phase.md",
+      "results": "phase-05/results.md",
+      "outcome": "All 4 guardrail units merged (#125-128). Default-refuse; nothing connects live.",
+      "open_gate": "P5-T-05 (#123) live cutover — operator-only and INV-07-blocked until phase-02/03/04 gates close positive"
+    },
+    {
+      "id": "phase-06",
+      "name": "Workstream 0 — audit fixes, portability, CI",
+      "commitment": "Phase N",
+      "status": "in_progress",
+      "doc": "phase-06/phase.md",
+      "brief": "phase-06/coordinator-brief.md",
+      "state": "phase-06/orchestration-state.json",
+      "outcome": "10 of 11 items merged via reviewed, CI-gated squash PRs (#144-#151, #153, #154 + WS1 #147).",
+      "open_items": [
+        "#143 real-OANDA-data fixture — blocked on human (OANDA practice token or candle-db export)"
+      ]
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 # Fathom — Feature Index
 
-One row per feature. Scannable in a single read — the cross-feature-consistency anchor. Phases follow the carved scheme: **PoC** (shipped) → **Phase 1** (research engine) → **Phase 2** (watchlist→Discord) → later. Spec files live beside this one under `docs/features/`.
+One row per feature. Scannable in a single read — the cross-feature-consistency anchor. A spec belongs to the product, not to the phase that shipped it — the section headings carry the phase linkage, keyed by canonical id (`phase-00`, `phase-01.1`, …; see [`docs/phases/phases-manifest.json`](../phases/phases-manifest.json)). Spec files live beside this one under `docs/features/`.
 
-## PoC — shipped
+## phase-00 — PoC (shipped)
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -16,9 +16,9 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | walk-forward | rolling train/test, per-window approved-set gate | _(taskgraph)_ | shipped |
 | poc-runner | end-to-end PoC runner | _(taskgraph)_ | shipped |
 
-## Phase 1 — research engine (specs ready; cross-spec audit passed 2026-05-29)
+## phase-01 — research engine (specs ready; cross-spec audit passed 2026-05-29)
 
-**Epic 1A (research engine → approved-set):**
+**`phase-01.1` (research engine → approved-set):**
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -31,14 +31,14 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | session-range-breakout | session / rolling-range breakout (UTC sessions) | [session-range-breakout.md](session-range-breakout.md) | ready |
 | full-universe-backtest-runner | `fathom backtest` CLI, scaled walk-forward, persisted approved-set | [full-universe-backtest-runner.md](full-universe-backtest-runner.md) | ready |
 
-**Epic 1B (live-data groundwork — off the critical path to the approved-set):**
+**`phase-01.2` (live-data groundwork — off the critical path to the approved-set):**
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | live-streaming | OANDA pricing stream, reconnect/backoff/gap | [live-streaming.md](live-streaming.md) | ready |
 | economic-calendar | calendar/news pull, currency+impact tags | [economic-calendar.md](economic-calendar.md) | draft — blocked on provider choice |
 
-## Phase 2 — watchlist → Discord (specs ready; cross-spec audit passed 2026-05-29)
+## phase-02 — watchlist → Discord (specs ready; cross-spec audit passed 2026-05-29)
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -50,9 +50,9 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools; the Hermes boundary) | [cli-commands.md](cli-commands.md) | ready |
 | hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | ready |
 
-## Phase 3 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
+## phase-03 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
-Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-3.md).
+Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-03/phase.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -66,9 +66,9 @@ Maps to product-spec Phase 4. The phase where Fathom gains order authority — k
 | monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
 | execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | ready |
 
-## Phase 4 — admin panel & hardening, demo only (specs ready; cross-spec audit passed 2026-05-29)
+## phase-04 — admin panel & hardening, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
-Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the existing store + TradingView Lightweight Charts; the only action is a scan-refresh (no order/execute — INV-01, transitive-import enforced; execution stays the CLI). See [phase-4.md](../phases/phase-4.md) + [phase-4-spec-audit-2026-05-29.md](../phases/phase-4-spec-audit-2026-05-29.md). Two coordinator pre-step extractions surfaced: `signals/scan.py::run_scan` (order-free scan) and `risk/limits.py::book_risk_sum`/`book_risk_budget`.
+Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the existing store + TradingView Lightweight Charts; the only action is a scan-refresh (no order/execute — INV-01, transitive-import enforced; execution stays the CLI). See [phase-4.md](../phases/phase-04/phase.md) + [phase-4-spec-audit-2026-05-29.md](../phases/phase-04/spec-audit-2026-05-29.md). Two coordinator pre-step extractions surfaced: `signals/scan.py::run_scan` (order-free scan) and `risk/limits.py::book_risk_sum`/`book_risk_budget`.
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -76,9 +76,9 @@ Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the exist
 | panel-data-layer | `panel/data.py` read-only accessors + view models (blotter incl. risk-in-use, equity series + drawdown, watchlist, deviation log, chart data); the tested seam | [panel-data-layer.md](panel-data-layer.md) | ready |
 | admin-panel | Streamlit app: 5 views + Lightweight Charts overlays + scan-refresh button; INV-01 transitive read-only boundary | [admin-panel.md](admin-panel.md) | ready |
 
-## Phase 5 — go-live decision, real money (specs ready; cross-spec audit passed 2026-05-30)
+## phase-05 — go-live decision, real money (specs ready; cross-spec audit passed 2026-05-30)
 
-Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cutover is INV-07-blocked** (no demo track record yet) and operator-only; nothing here flips live or wires the live token. See [phase-5.md](../phases/phase-5.md).
+Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cutover is INV-07-blocked** (no demo track record yet) and operator-only; nothing here flips live or wires the live token. See [phase-5.md](../phases/phase-05/phase.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|

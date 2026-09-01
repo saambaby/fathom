@@ -1,6 +1,6 @@
 # Fathom PoC — Task Graph
 
-> ✅ **PoC COMPLETE (2026-05-29)** — all 8 tasks done incl. T-08 live acceptance. Result: empty approved-set (honest negative for MA-crossover-alone); see [poc-results.md](poc-results.md). Decision: proceed to Phase 1.
+> ✅ **PoC COMPLETE (2026-05-29)** — all 8 tasks done incl. T-08 live acceptance. Result: empty approved-set (honest negative for MA-crossover-alone); see [poc-results.md](results.md). Decision: proceed to Phase 1.
 > Orchestration kickoff ran 2026-05-28. All 7 code tasks merged to `main` via PR with fresh-reviewer gates. Decisions D-01/02/03 resolved.
 >
 > **Issue → PR map:** T-01 #2→PR#10 · T-02 #3→PR#12 · T-03 #4→PR#13 · T-04 #5→PR#11 · T-05 #6→PR#14 · T-06 #7→PR#15 · T-07 #8→PR#16 · T-08 #9 = **manual gate, open**
@@ -21,9 +21,9 @@
 
 Two expected inputs were absent; proceeding with substitutions noted:
 
-1. **No individual feature spec files.** `docs/features/` contains only `INDEX.md`. The PoC taskgraph was generated from `docs/phases/poc.md`'s "Components in Scope" table, which contains sufficient detail to decompose. Before a Phase 1 taskgraph is generated, individual feature specs (`docs/features/data-layer.md`, etc.) should be written first per Layer 4.
+1. **No individual feature spec files.** `docs/features/` contains only `INDEX.md`. The PoC taskgraph was generated from `docs/phases/phase-00/phase.md`'s "Components in Scope" table, which contains sufficient detail to decompose. Before a Phase 1 taskgraph is generated, individual feature specs (`docs/features/data-layer.md`, etc.) should be written first per Layer 4.
 
-2. **No `docs/code-map.md`.** The area map was reasoned from the repo layout in `docs/architecture-overview.md`. `code-map.md` should be created before Phase 1 orchestration. For the PoC (single developer, no parallel worktree conflicts), this is not blocking.
+2. **No `docs/product/code-map.md`.** The area map was reasoned from the repo layout in `docs/product/architecture.md`. `code-map.md` should be created before Phase 1 orchestration. For the PoC (single developer, no parallel worktree conflicts), this is not blocking.
 
 ---
 
@@ -101,7 +101,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-01 |
 | **title** | Repo scaffold, pyproject.toml, pydantic config, .env setup |
 | **area** | infra |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `config/settings.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `config/settings.py` |
 | **surface** | backend |
 | **depends_on** | *(none)* |
 | **model** | sonnet — mechanical scaffolding with no logic; tight spec |
@@ -134,7 +134,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-02 |
 | **title** | OANDA v20 REST client — candle endpoint only |
 | **area** | data |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `data/oanda_client.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `data/oanda_client.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-01 |
 | **model** | sonnet — REST boilerplate, well-specified |
@@ -167,7 +167,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-03 |
 | **title** | Candle fetch/cache logic and SQLite persistence |
 | **area** | data |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `data/candles.py`, `data/store.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `data/candles.py`, `data/store.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-02 |
 | **model** | sonnet — storage/cache logic with clear spec |
@@ -201,7 +201,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-04 |
 | **title** | `Strategy` ABC, `Signal` pydantic model, `MACrossover` implementation |
 | **area** | strategies |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `strategies/base.py`, `strategies/trend.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `strategies/base.py`, `strategies/trend.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-01 |
 | **model** | sonnet — typed interface + one strategy; well-specified fields |
@@ -237,7 +237,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-05 |
 | **title** | Event-driven backtester with cost model — the thesis-proving component |
 | **area** | backtest |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `backtest/engine.py`, `backtest/costs.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `backtest/engine.py`, `backtest/costs.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-03, POC-T-04 |
 | **model** | **opus** — invariant-heavy; a look-ahead leak or zero-cost bug silently invalidates every backtest result produced by this project; the correctness standard here is higher than any test suite can fully guarantee |
@@ -274,7 +274,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-06 |
 | **title** | Walk-forward validation engine and metrics calculator |
 | **area** | backtest |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `backtest/walkforward.py`, `backtest/metrics.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `backtest/walkforward.py`, `backtest/metrics.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-05 |
 | **model** | sonnet — algorithmic but well-defined; formulae are standard and testable |
@@ -310,7 +310,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-07 |
 | **title** | End-to-end PoC runner script and integration test |
 | **area** | runner |
-| **feature_spec** | `docs/phases/poc.md` — Components in Scope: `scripts/poc_run.py` |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Components in Scope: `scripts/poc_run.py` |
 | **surface** | backend |
 | **depends_on** | POC-T-06 |
 | **model** | sonnet — wiring code connecting already-tested components |
@@ -344,7 +344,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 | **id** | POC-T-08 |
 | **title** | Acceptance smoke — run against real OANDA demo, review approved-set table |
 | **area** | runner |
-| **feature_spec** | `docs/phases/poc.md` — Done When checklist |
+| **feature_spec** | `docs/phases/phase-00/phase.md` — Done When checklist |
 | **surface** | backend |
 | **depends_on** | POC-T-07 |
 | **model** | n/a — human execution and review |
@@ -367,7 +367,7 @@ T-05 `costs.py` implements spread + slippage only. `swap_pips=0.0`. Every `Metri
 **notes:**
 - This is the stack-assembly verification task required for any phase that delivers a runnable stack
 - Human approval of this task = PoC complete. The approved-set table produced here is the input the Phase 1 strategy expansion builds on.
-- Save the approved-set table output (copy to `docs/phases/poc-results.md`) before starting Phase 1 — it is the out-of-sample evidence that justified proceeding
+- Save the approved-set table output (copy to `docs/phases/phase-00/results.md`) before starting Phase 1 — it is the out-of-sample evidence that justified proceeding
 
 ---
 
@@ -398,4 +398,4 @@ Once the human has reviewed and signed off this graph:
 3. Dispatch workers per **runbook-orchestration-kickoff**: start T-01, then T-02 ∥ T-04, then T-03 (after T-02), then T-05 (after T-03 + T-04) — hold T-05 at the front of the queue and do not advance past it until its tests pass
 4. T-08 requires human execution — schedule it as the phase gate, not an automated step
 
-The task graph for Phase 1 should not be generated until T-08 is complete and `docs/phases/poc-results.md` exists.
+The task graph for Phase 1 should not be generated until T-08 is complete and `docs/phases/phase-00/results.md` exists.

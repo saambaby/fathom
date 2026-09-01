@@ -103,7 +103,7 @@ Only if Phases 2 and 4 produced stable positive edge and reliable execution on d
 
 ## 6. Cross-References
 
-- Architecture and component deep-dives: [`docs/architecture-overview.md`](architecture-overview.md)
-- Non-negotiable rules and invariants: [`docs/invariants.md`](invariants.md)
-- Feature index: [`docs/features/INDEX.md`](features/INDEX.md)
-- Original design narrative: [`docs/forex-algo-trading-plan.md`](forex-algo-trading-plan.md)
+- Architecture and component deep-dives: [`docs/product/architecture.md`](architecture.md)
+- Non-negotiable rules and invariants: [`docs/product/invariants.md`](invariants.md)
+- Feature index: [`docs/features/INDEX.md`](../features/INDEX.md)
+- Original design narrative: [`docs/reference/forex-algo-trading-plan.md`](../reference/forex-algo-trading-plan.md)

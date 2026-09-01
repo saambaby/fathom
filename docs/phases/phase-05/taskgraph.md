@@ -2,7 +2,7 @@
 
 > **Status: awaiting human approval. Do NOT dispatch to workers until this graph is reviewed and signed off.** (Generated per `runbook-taskgraph-generation`; the session that generated it is not the gate.)
 
-Maps to product-spec Phase 6. Source specs: the 3 `ready` Phase 5 specs (cross-spec audit passed 2026-05-30). See [phase-5.md](phase-5.md), [phase-5-spec-audit-2026-05-30.md](phase-5-spec-audit-2026-05-30.md).
+Maps to product-spec Phase 6. Source specs: the 3 `ready` Phase 5 specs (cross-spec audit passed 2026-05-30). See [phase-5.md](phase.md), [phase-5-spec-audit-2026-05-30.md](spec-audit-2026-05-30.md).
 
 ## ⚠️ INV-07 — nothing in this graph goes live
 
@@ -103,7 +103,7 @@ flowchart TD
 | Field | Value |
 |---|---|
 | area | operator · **model n/a** — human-only · **human_admin true** · **blocked_on: INV-07 demo track record** |
-| feature_spec | `docs/phases/phase-5.md` + `docs/go-live-runbook.md` |
+| feature_spec | `docs/phases/phase-05/phase.md` + `docs/go-live-runbook.md` |
 | depends_on | P5-T-02, P5-T-04 **AND** the recorded positive demo track record (Phase 2 T-08, Phase 3 T-11, Phase 4 T-06 closed) |
 | verification | manual |
 

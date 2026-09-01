@@ -338,6 +338,6 @@ Live acceptance requires a human operator to:
 2. Confirm the watchlist lands coherently in Discord on **≥5 consecutive
    weekday runs** (charts + Claude rationale + news flags present; empty days
    post "no candidates"; a `skip` verdict vetoes; no secret token in output).
-3. Record the results in `docs/phases/phase-2-results.md`.
+3. Record the results in `docs/phases/phase-02/results.md`.
 
 This is a manual, human-admin gate (D-P2-5) — it cannot be automated.

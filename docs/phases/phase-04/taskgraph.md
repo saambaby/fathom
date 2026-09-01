@@ -2,7 +2,7 @@
 
 > **Status: awaiting human approval. Do NOT dispatch to workers until this graph is reviewed and signed off.** (Generated per `runbook-taskgraph-generation`; the session that generated it is not the gate.)
 
-Maps to product-spec Phase 5. Source specs: the 3 `ready` Phase 4 specs (cross-spec audit passed 2026-05-29). See [phase-4.md](phase-4.md), [phase-4-spec-audit-2026-05-29.md](phase-4-spec-audit-2026-05-29.md), [code-map.md](../code-map.md) (Phase 4 dispatch section).
+Maps to product-spec Phase 5. Source specs: the 3 `ready` Phase 4 specs (cross-spec audit passed 2026-05-29). See [phase-4.md](phase.md), [phase-4-spec-audit-2026-05-29.md](spec-audit-2026-05-29.md), [code-map.md](../../product/code-map.md) (Phase 4 dispatch section).
 
 ## Confirmed kickoff decisions (already locked)
 
@@ -111,11 +111,11 @@ flowchart TD
 | Field | Value |
 |---|---|
 | area | `panel` · **model n/a** — human/operator-run · **human_admin true** |
-| feature_spec | `docs/phases/phase-4.md` (Done When) |
+| feature_spec | `docs/phases/phase-04/phase.md` (Done When) |
 | depends_on | P4-T-05 |
 | verification | manual |
 
-**Checklist:** `streamlit run panel/app.py --db-path data/fathom.db` against the seeded demo store → confirm all 5 views render real data (charts with entry/stop/target overlays + attribution; equity curve + drawdown; blotter with positions/P&L/risk-in-use vs limit; watchlist mirroring Discord; deviation log); the refresh button re-ranks with no order placed; no secret shown; UTC timestamps. Confirm over the **sustained demo track record** (product-spec Phase 5 exit). Record in `docs/phases/phase-4-results.md`. **Stack-assembly gate** (runnable-stack phase).
+**Checklist:** `streamlit run panel/app.py --db-path data/fathom.db` against the seeded demo store → confirm all 5 views render real data (charts with entry/stop/target overlays + attribution; equity curve + drawdown; blotter with positions/P&L/risk-in-use vs limit; watchlist mirroring Discord; deviation log); the refresh button re-ranks with no order placed; no secret shown; UTC timestamps. Confirm over the **sustained demo track record** (product-spec Phase 5 exit). Record in `docs/phases/phase-04/results.md`. **Stack-assembly gate** (runnable-stack phase).
 
 ## Sanity checks
 
@@ -153,4 +153,4 @@ On sign-off → `runbook-orchestration-kickoff`:
 2. Open 6 issues (`area:{signals,risk,execution,panel,cli}` / `phase:p4` / `role:{opus,sonnet}`; T-06 `blocked-on-human`, no role).
 3. When T-02 + T-03 merge → **T-04** (panel-data-layer; `load_fills` serialized after T-03's store edit). When T-01 + T-04 + C-A → **T-05** (the app). Then **T-06** (manual).
 4. Each PR → fresh read-only `reviewer` → `gh pr merge --squash --delete-branch`. Watch the transitive INV-01 boundary (panel must not reach the order path) and the two behaviour-preserving extractions (re-run the Phase 3 limits + reconciliation suites).
-5. **T-06 is operator-run** (panel + sustained demo). Go-live (impl-Phase 5) does not begin until `docs/phases/phase-4-results.md` exists.
+5. **T-06 is operator-run** (panel + sustained demo). Go-live (impl-Phase 5) does not begin until `docs/phases/phase-04/results.md` exists.

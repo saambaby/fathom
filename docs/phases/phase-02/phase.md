@@ -1,9 +1,12 @@
-# Fathom — Phase 2: Daily Watchlist to Discord
+# phase-02 — Daily Watchlist to Discord
 
-**Status:** Stub — not started
-**Depends on:** [Phase 1](phase-1.md) approved-set table populated and stable
-**Unlocks:** Phase 3 (Risk + Execution — stub TBD)
-**Spec layer:** [product-spec.md](../product-spec.md) · [architecture-overview.md](../architecture-overview.md) · [invariants.md](../invariants.md)
+**Status:** in_progress — all 7 code/config tasks merged; operator acceptance gate P2-T-08 (#59) still open
+**Commitment level:** Phase N — ships to the operator
+**Time horizon:** 2026-05-29 -> code merged 2026-05-29; gate open
+**Depends on:** [`phase-01.1`](../phase-01.1/phase.md) approved-set table populated and stable
+**Unlocks:** [`phase-03`](../phase-03/phase.md) — risk + execution
+**Product layer:** [spec](../../product/spec.md) · [architecture](../../product/architecture.md) · [invariants](../../product/invariants.md)
+**Results:** [results.md](results.md) · **Open gate:** [operator-acceptance.md](../../operator-acceptance.md)
 
 ---
 

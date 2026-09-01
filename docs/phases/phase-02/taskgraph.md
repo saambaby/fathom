@@ -166,7 +166,7 @@ Extends `cli.py` — **the ONLY Phase 2 task that edits `cli.py`** (the join poi
 | depends_on | P2-T-06, P2-T-07 |
 | verification | manual |
 
-**Checklist:** register the `daily.md` job in Hermes; point it at the `fathom` CLI as a tool (scan/watchlist/chart ONLY — INV-01); connect the Discord gateway + Anthropic key. Confirm a coherent, actionable ranked watchlist (charts + Claude rationale + news flags) lands in Discord over **≥5 consecutive daily runs**; empty days post "no candidates"; a `skip` verdict vetoes; no token in output. Save a note to `docs/phases/phase-2-results.md`. Phase 2 complete.
+**Checklist:** register the `daily.md` job in Hermes; point it at the `fathom` CLI as a tool (scan/watchlist/chart ONLY — INV-01); connect the Discord gateway + Anthropic key. Confirm a coherent, actionable ranked watchlist (charts + Claude rationale + news flags) lands in Discord over **≥5 consecutive daily runs**; empty days post "no candidates"; a `skip` verdict vetoes; no token in output. Save a note to `docs/phases/phase-02/results.md`. Phase 2 complete.
 
 ---
 
@@ -197,4 +197,4 @@ On sign-off → `runbook-orchestration-kickoff`:
 4. Each PR → fresh read-only reviewer → `gh pr merge --squash --delete-branch`. Watch `hermes_integration/` context-log + the `Candidate` shape across consumers.
 5. **T-08 is operator-run** (configured Hermes + Discord) — schedule it as the phase gate, not an automated step.
 
-Phase 3 (risk + execution) does not begin until Phase 2's `Done when` is met and `docs/phases/phase-2-results.md` exists.
+Phase 3 (risk + execution) does not begin until Phase 2's `Done when` is met and `docs/phases/phase-02/results.md` exists.
