@@ -135,7 +135,7 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 **Reason:** `Candidate` is consumed by `portfolio.py`, `charts.py`, `cli.py`, `narration.py`, and the Hermes daily job. Once shipped, a silent field rename ripples across all of them and breaks the Discord watchlist. Freezing the contract (as INV-11 freezes the `Signal` stop/target derivation) makes the dependency explicit and reviewable. Note: `timeframe` is the same dimension the approved-set/DB calls `granularity`; the INV-10 gate join is `signal.timeframe == approved_set.granularity`.
 
-**Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `chart-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. Reviewer checks any `Candidate` field change against this invariant.
+**Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `chart-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. `Candidate` sets `model_config = {"frozen": True}` (pydantic v2), so in-process field assignment raises `ValidationError` at runtime, not just at review time; a test (`tests/test_ranker.py::test_candidate_is_frozen`) pins this. Reviewer checks any `Candidate` field change against this invariant.
 
 ---
 
@@ -145,7 +145,7 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 **Reason:** like `Candidate` (INV-13), these models are consumed by many modules; a silent rename ripples across sizing, placement, reconciliation, and monitoring. Freezing them makes the dependency explicit and reviewable. This is the execution-side analogue of INV-13.
 
-**Enforcement:** a serialisation round-trip test pins each model's JSON shape; the field tables live in `docs/features/order-model-and-brackets.md` (and the persisted column lists in `order-placement.md`), and consumers reference them rather than re-listing fields. Reviewer checks any field change against this invariant.
+**Enforcement:** a serialisation round-trip test pins each model's JSON shape; the field tables live in `docs/features/order-model-and-brackets.md` (and the persisted column lists in `order-placement.md`), and consumers reference them rather than re-listing fields. `Order`, `Fill`, and `Position` each set `model_config = {"frozen": True}` (pydantic v2), so in-process field assignment raises `ValidationError` at runtime; tests (`tests/test_order_model.py::test_order_is_frozen`, `test_fill_is_frozen`, `test_position_is_frozen`) pin this. Reviewer checks any field change against this invariant.
 
 ---
 

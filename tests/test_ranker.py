@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 import pandas as pd
+import pydantic
 import pytest
 
 from data.calendar import CalendarEvent, Impact
@@ -517,6 +518,15 @@ def test_candidate_serialisation_round_trip() -> None:
     # generated_at is a UTC RFC-3339 ...Z string (INV-03).
     assert payload["generated_at"].endswith("Z")
     assert payload["direction"] in ("LONG", "SHORT")
+
+
+def test_candidate_is_frozen() -> None:
+    approved = [_row("s1", "EUR_USD", "H1", 1.0)]
+    spec = {("s1", "EUR_USD", "H1"): (Direction.LONG, 0.5)}
+    candidate = make_ranker(approved, spec).rank(NOW)[0]
+
+    with pytest.raises(pydantic.ValidationError):
+        candidate.stop_distance = 0.0  # type: ignore[misc]
 
 
 def test_generated_at_carries_signal_bar_close_time() -> None:

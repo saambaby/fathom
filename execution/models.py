@@ -126,6 +126,8 @@ class Order(BaseModel):
     created_at        : UTC-aware order-creation time (INV-03).
     """
 
+    model_config = {"frozen": True}
+
     client_order_id: str
     instrument: str
     direction: Direction
@@ -183,6 +185,8 @@ class Fill(BaseModel):
     status          : ``filled`` | ``partial`` | ``rejected``.
     """
 
+    model_config = {"frozen": True}
+
     client_order_id: str
     broker_trade_id: str
     fill_price: float
@@ -236,6 +240,8 @@ class Position(BaseModel):
     realized_pl       : realised PnL, written on close (``None`` until then).
     candidate_ref     : provenance ``f"{instrument}:{timeframe}:{strategy_name}"``.
     """
+
+    model_config = {"frozen": True}
 
     broker_trade_id: str
     instrument: str

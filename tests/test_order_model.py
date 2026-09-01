@@ -391,6 +391,44 @@ def test_position_json_roundtrip_pins_shape() -> None:
     }
 
 
+def test_order_is_frozen() -> None:
+    order = build_bracket(_candidate(), 1000, execution_date=EXEC_DATE, precision=5)
+    with pytest.raises(ValidationError):
+        order.stop_loss_price = 0.0  # type: ignore[misc]
+
+
+def test_fill_is_frozen() -> None:
+    fill = Fill(
+        client_order_id="x" * 32,
+        broker_trade_id="t1",
+        fill_price=1.10,
+        units_filled=1000,
+        slippage=0.00012,
+        filled_at=EXEC_DATE,
+        status=FillStatus.FILLED,
+    )
+    with pytest.raises(ValidationError):
+        fill.fill_price = 0.0  # type: ignore[misc]
+
+
+def test_position_is_frozen() -> None:
+    pos = Position(
+        broker_trade_id="t1",
+        instrument="EUR_USD",
+        units=1000,
+        entry_price=1.10,
+        stop_loss_price=1.098,
+        take_profit_price=1.103,
+        opened_at=EXEC_DATE,
+        unrealized_pl=0.0,
+        closed_at=None,
+        realized_pl=None,
+        candidate_ref="EUR_USD:H1:macrossover",
+    )
+    with pytest.raises(ValidationError):
+        pos.unrealized_pl = 1.0  # type: ignore[misc]
+
+
 def test_candidate_ref_format() -> None:
     order = build_bracket(
         _candidate(instrument="EUR_USD", timeframe="H1", strategy_name="donchian_20"),

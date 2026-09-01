@@ -108,6 +108,8 @@ class Candidate(BaseModel):
     generated_at    : UTC RFC-3339 string — the signal bar's close time (INV-03).
     """
 
+    model_config = {"frozen": True}
+
     instrument: str
     timeframe: str
     strategy_name: str
