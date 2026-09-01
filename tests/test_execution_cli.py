@@ -805,11 +805,15 @@ class TestCliHelp:
     def test_fathom_help_lists_all_subcommands(self, capsys: object) -> None:
         """fathom --help lists execute/positions/reconcile alongside backtest/scan."""
         import subprocess
+        import sys
+        from pathlib import Path
+
+        repo_root = str(Path(__file__).parent.parent)
         result = subprocess.run(
-            [".venv/bin/fathom", "--help"],
+            [sys.executable, str(Path(repo_root) / "cli.py"), "--help"],
             capture_output=True,
             text=True,
-            cwd="/home/sam-baby/development/fathom",
+            cwd=repo_root,
         )
         output = result.stdout + result.stderr
         assert "execute" in output

@@ -27,6 +27,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -893,14 +894,15 @@ if violations:
 else:
     print("OK: no forbidden imports or names in panel.data source")
     sys.exit(0)
-""".format(root="/home/sam-baby/development/fathom")
+""".format(root=str(Path(__file__).parent.parent))
 
     def test_panel_data_does_not_import_forbidden_modules(self) -> None:
+        repo_root = str(Path(__file__).parent.parent)
         result = subprocess.run(
             [sys.executable, "-c", self._PROBE],
             capture_output=True,
             text=True,
-            cwd="/home/sam-baby/development/fathom",
+            cwd=repo_root,
         )
         output = result.stdout.strip() + result.stderr.strip()
         assert result.returncode == 0, (
