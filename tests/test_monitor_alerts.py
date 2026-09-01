@@ -666,6 +666,58 @@ def test_discord_webhook_client_posts_json_content() -> None:
     assert captured[0]["json"] == {"content": "test alert message"}
 
 
+# ---------------------------------------------------------------------------
+# WS0-T05: scripts/run_monitor.py wires build_alerter_from_settings (P3-T-08
+# hardcoded NoOpAlerter must be replaced by the real T-09 factory).
+# ---------------------------------------------------------------------------
+
+
+def test_run_monitor_build_alerter_delegates_to_factory(store: Store) -> None:
+    """scripts.run_monitor._build_alerter calls build_alerter_from_settings."""
+    import scripts.run_monitor as run_monitor
+
+    sentinel = object()
+    with patch(
+        "scripts.run_monitor.build_alerter_from_settings", return_value=sentinel
+    ) as mock_factory:
+        result = run_monitor._build_alerter(store)
+
+    mock_factory.assert_called_once_with(store)
+    assert result is sentinel
+
+
+def test_run_monitor_build_alerter_returns_discord_alerter_when_configured(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With DISCORD_WEBHOOK_URL set, _build_alerter returns a real Alerter
+    wrapping a DiscordWebhookClient (not the NoOp stub)."""
+    monkeypatch.setenv("OANDA_API_TOKEN", "fake-token")
+    monkeypatch.setenv("OANDA_ACCOUNT_ID", "fake-account")
+    monkeypatch.setenv(
+        "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1/token"
+    )
+    import scripts.run_monitor as run_monitor
+
+    result = run_monitor._build_alerter(store)
+
+    assert isinstance(result, Alerter)
+    assert isinstance(result._webhook, DiscordWebhookClient)
+
+
+def test_run_monitor_build_alerter_raises_without_webhook_url(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without DISCORD_WEBHOOK_URL, _build_alerter raises (fail fast at
+    startup — the monitor cannot silently run alert-less)."""
+    monkeypatch.setenv("OANDA_API_TOKEN", "fake-token")
+    monkeypatch.setenv("OANDA_ACCOUNT_ID", "fake-account")
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    import scripts.run_monitor as run_monitor
+
+    with pytest.raises(ValueError, match="DISCORD_WEBHOOK_URL"):
+        run_monitor._build_alerter(store)
+
+
 def test_discord_webhook_client_raises_on_http_error() -> None:
     """DiscordWebhookClient propagates httpx.HTTPStatusError on 4xx/5xx."""
 
