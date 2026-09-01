@@ -97,7 +97,7 @@ riskiest-assumption probe and implements first.
 | ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | ready |
 | analyze-command | `fathom analyze` on-demand pipeline: scan → brief → veto → narration → Pine; `analysis_log` table; offline fail-safe | [analyze-command.md](analyze-command.md) | ready |
 | market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | ready |
-| hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | draft |
+| hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | ready |
 
 ## phase-08 — trader companion commands (spec sprint in progress)
 

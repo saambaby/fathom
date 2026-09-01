@@ -37,7 +37,10 @@ it, no Fathom capability requires an external orchestrator.
 
 1. `git grep -l 'hermes_integration'` over tracked `*.py` + `pyproject.toml` returns
    nothing; the full test suite passes with the `ai.` import paths (tests renamed/updated
-   in the same change).
+   in the same change). The sweep also updates **path spellings in durable docs** to
+   `ai/`: `docs/product/code-map.md`'s area/dispatch rows and the "today
+   `hermes_integration/…`" parentheticals in INV-20/INV-21 (hermes-teardown's rename
+   handoff — its phase-close grep depends on this).
 2. `ai/llm_client.py` owns `OpenAICompatClient` + the `_ClientAdapter` protocol;
    `ai/pretrade_check.py` imports them from there and its public API
    (`pretrade_check`, `parse_pretrade_verdict`, `PretradeVerdict`, `MODEL`,
