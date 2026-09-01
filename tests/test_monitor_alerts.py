@@ -704,18 +704,28 @@ def test_run_monitor_build_alerter_returns_discord_alerter_when_configured(
     assert isinstance(result._webhook, DiscordWebhookClient)
 
 
-def test_run_monitor_build_alerter_raises_without_webhook_url(
-    store: Store, monkeypatch: pytest.MonkeyPatch
+def test_run_monitor_build_alerter_falls_back_to_noop_without_webhook_url(
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Without DISCORD_WEBHOOK_URL, _build_alerter raises (fail fast at
-    startup — the monitor cannot silently run alert-less)."""
+    """Without DISCORD_WEBHOOK_URL, _build_alerter falls back to NoOpAlerter
+    and logs a warning — webhook-less demo operation must keep working;
+    delivery is verified separately at the operator gate."""
+    from monitoring.watcher import NoOpAlerter
+
     monkeypatch.setenv("OANDA_API_TOKEN", "fake-token")
     monkeypatch.setenv("OANDA_ACCOUNT_ID", "fake-account")
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
     import scripts.run_monitor as run_monitor
 
-    with pytest.raises(ValueError, match="DISCORD_WEBHOOK_URL"):
-        run_monitor._build_alerter(store)
+    with caplog.at_level("WARNING", logger="fathom.scripts.run_monitor"):
+        result = run_monitor._build_alerter(store)
+
+    assert isinstance(result, NoOpAlerter)
+    assert any(
+        "DISCORD_WEBHOOK_URL" in record.getMessage() for record in caplog.records
+    ), "Expected a warning mentioning DISCORD_WEBHOOK_URL when falling back to NoOpAlerter"
 
 
 def test_discord_webhook_client_raises_on_http_error() -> None:

@@ -22,8 +22,9 @@ Invariants
 The alerter is built via ``monitoring.alerts.build_alerter_from_settings``
 (P3-T-09), which constructs a live Discord-backed ``Alerter`` from
 ``Settings.discord_webhook_url``.  If ``DISCORD_WEBHOOK_URL`` is not set,
-construction fails fast with a ``ValueError`` (INV-08: never silently run
-without delivery).
+the monitor falls back to ``NoOpAlerter`` (logs a warning) so webhook-less
+demo operation keeps working; delivery is verified separately at the
+operator gate.
 """
 
 from __future__ import annotations
@@ -44,8 +45,10 @@ if str(_ROOT) not in sys.path:
 from config.settings import Settings
 from data.store import Store
 from data.stream import PriceStream
-from monitoring.alerts import Alerter, build_alerter_from_settings
+from monitoring.alerts import build_alerter_from_settings
 from monitoring.watcher import (
+    Alerter,
+    NoOpAlerter,
     NoOpExecutionResponder,
     PositionSnapshot,
     Watcher,
@@ -56,14 +59,20 @@ logger = logging.getLogger("fathom.scripts.run_monitor")
 
 
 def _build_alerter(store: Store) -> Alerter:
-    """Build the live Discord alerter (P3-T-09) for the deviation monitor.
+    """Build the deviation monitor's alerter (P3-T-09).
 
-    Delegates to ``monitoring.alerts.build_alerter_from_settings``.
-
-    Raises:
-        ValueError: If ``DISCORD_WEBHOOK_URL`` is not set in .env / environment.
+    Delegates to ``monitoring.alerts.build_alerter_from_settings``.  If
+    ``DISCORD_WEBHOOK_URL`` is not configured, falls back to ``NoOpAlerter``
+    (logs a warning) so webhook-less demo operation keeps working — Discord
+    delivery is verified separately at the operator gate.
     """
-    return build_alerter_from_settings(store)
+    try:
+        return build_alerter_from_settings(store)
+    except ValueError:
+        logger.warning(
+            "DISCORD_WEBHOOK_URL not set — alerts disabled, using NoOpAlerter"
+        )
+        return NoOpAlerter()
 
 
 def _build_store_loader(store: Store) -> "Callable[[], list[PositionSnapshot]]":
