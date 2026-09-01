@@ -112,6 +112,52 @@ graph TD
 
 ---
 
+## Architecture Decision Records
+
+Load-bearing decisions, numbered and dated. Status: **accepted** (in force) or
+**accepted — lands in phase-NN** (decided, implementation scheduled). A decision here
+overrides any older prose elsewhere in this doc or in [spec.md](spec.md) that says
+otherwise; the prose is redrawn when the implementing phase lands.
+
+### ADR-001 — Standalone CLI platform; Hermes orchestrator removed
+**Date:** 2026-09-01 · **Status:** accepted — lands in [phase-07](../phases/phase-07/phase.md)
+Fathom becomes a self-contained CLI trading platform. The external Hermes Agent (cron
+orchestration, Claude calls, Discord gateway) is removed; the LLM analysis it performed
+(news-risk veto, narration) moves in-process onto the ADR-002 adapter, and the daily
+scheduled watchlist is replaced by on-demand analysis (ADR-004). INV-01 is unchanged in
+substance — order authority stays behind the operator-only `fathom execute` gate; the
+"Hermes must not place orders" boundary becomes "no AI/analysis surface may import or
+invoke execution". **Supersedes** spec.md Confirmed Decision #1 (Discord-via-Hermes
+delivery) and the Hermes half of Decision #2 and #6.
+
+### ADR-002 — Provider-agnostic OpenAI-compatible LLM adapter
+**Date:** 2026-08-31 · **Status:** accepted (implemented in phase-06 / Workstream 1)
+All LLM calls go through one `OpenAICompatClient` speaking the OpenAI chat-completions
+wire format over httpx, selected via `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`
+(OpenAI, Groq, NIM, OpenRouter, Ollama, …). No `anthropic` SDK dependency; no
+per-provider code paths. INV-02 parse boundaries with fail-closed safe defaults wrap
+every call.
+
+### ADR-003 — TradingView posture: Pine Script out, nothing TradingView-derived in
+**Date:** 2026-09-01 · **Status:** accepted — Pine output lands in [phase-07](../phases/phase-07/phase.md)
+TradingView has no retail write API; third-party "TradingView MCP" servers are
+ToS-violating scrapers. Therefore **no TradingView-derived data ever enters the automated
+pipeline** (settled in [implementation-plan.md](../implementation-plan.md) Workstream 2),
+and the one sanctioned TradingView surface is *outbound*: Fathom generates a Pine v6
+indicator from the persisted watchlist which the operator manually pastes into their own
+charts. This replaces PNG chart rendering as the presentation layer (operator-confirmed
+unused). Execution and market data stay on OANDA v20 exclusively.
+
+### ADR-004 — On-demand analysis at trade time; no built-in scheduler
+**Date:** 2026-09-01 · **Status:** accepted — lands in [phase-07](../phases/phase-07/phase.md)
+Analysis runs when the operator sits down to trade — one `fathom analyze` command (scan →
+news-risk → regime tag → market brief → session verdict → narration → Pine) — not on a
+cron schedule, and with no scheduler daemon inside Fathom. Discord watchlist delivery is
+retired with the Hermes job (ADR-001); terminal + TradingView is the delivery surface.
+(The deviation *monitor's* webhook alerting is a separate concern and keeps its channel.)
+
+---
+
 ## Key Boundaries
 
 ### The Hermes Boundary

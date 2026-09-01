@@ -25,12 +25,12 @@ Fathom is a Python forex algorithmic trading system that:
 
 | # | Decision | Value |
 |---|---|---|
-| 1 | Alert & delivery channel | Discord, via Hermes' Discord gateway |
-| 2 | Hosting | Own private server (always-on; runs Hermes, monitor, panel) |
+| 1 | Alert & delivery channel | ~~Discord, via Hermes' Discord gateway~~ **Superseded** by [ADR-001/ADR-004](architecture.md#architecture-decision-records): terminal + TradingView Pine paste; Hermes and Discord watchlist delivery removed (phase-07) |
+| 2 | Hosting | Own private server (always-on; runs monitor, panel — ~~Hermes~~ removed per [ADR-001](architecture.md#architecture-decision-records)) |
 | 3 | Admin panel | Streamlit + TradingView Lightweight Charts (Apache 2.0) to start; FastAPI + JS/React later |
 | 4 | Pair universe | All FX pairs OANDA offers in region; scan everything, rank naturally filters illiquid exotics |
 | 5 | Per-trade risk | ~0.25% of equity, plus daily loss cap; revisit only after positive demo track record |
-| 6 | Intraday cadence | Start swing/daily; add intraday Hermes run once a strategy earns it |
+| 6 | Intraday cadence | Start swing/daily; ~~add intraday Hermes run once a strategy earns it~~ intraday capture is the watcher server (implementation-plan Workstream 3); analysis itself is on-demand per [ADR-004](architecture.md#architecture-decision-records) |
 
 ---
 
