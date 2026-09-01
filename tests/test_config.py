@@ -202,3 +202,46 @@ class TestLiveTradingGateFields:
         """A valid fraction within (0, 0.0025] is accepted."""
         s = self._make_settings(live_risk_fraction=0.0015)
         assert s.live_risk_fraction == pytest.approx(0.0015)
+
+
+# ---------------------------------------------------------------------------
+# LLM client fields (provider-agnostic pretrade veto — OpenAI-compatible)
+# ---------------------------------------------------------------------------
+
+
+class TestLlmClientFields:
+    """llm_api_key / llm_base_url / llm_model defaults on Settings."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OANDA_API_TOKEN", "test-token")
+        monkeypatch.setenv("OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.chdir(tempfile.mkdtemp())
+
+    def _make_settings(self, **kwargs: Any) -> Any:
+        from importlib import reload
+        import config.settings as settings_mod
+        reload(settings_mod)
+        return settings_mod.Settings(**kwargs)
+
+    def test_llm_api_key_default_none(self) -> None:
+        """No LLM key by default — the pretrade veto fail-closes without it."""
+        s = self._make_settings()
+        assert s.llm_api_key is None
+
+    def test_llm_api_key_is_secret(self) -> None:
+        """The key must be a SecretStr so it never appears in repr/logs."""
+        s = self._make_settings(llm_api_key="sk-super-secret")
+        assert "sk-super-secret" not in repr(s)
+        assert s.llm_api_key is not None
+        assert s.llm_api_key.get_secret_value() == "sk-super-secret"
+
+    def test_llm_base_url_default_openai(self) -> None:
+        s = self._make_settings()
+        assert s.llm_base_url == "https://api.openai.com/v1"
+
+    def test_llm_model_default(self) -> None:
+        from hermes_integration.pretrade_check import MODEL
+        s = self._make_settings()
+        assert s.llm_model == MODEL
