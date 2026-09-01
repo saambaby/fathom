@@ -68,6 +68,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Pre-trade veto LLM (provider-agnostic, OpenAI-compatible) ---------
+    #: API key for the OpenAI-compatible endpoint backing the pre-trade veto.
+    #: Optional: absent → the veto has no client and fails closed to ``block``
+    #: (INV-02).  INV-08: SecretStr, never logged.
+    llm_api_key: Optional[SecretStr] = None
+
+    #: Base URL of the OpenAI-compatible endpoint.  Any compatible provider
+    #: works (OpenAI, Groq, NVIDIA NIM, OpenRouter, Gemini compat, Ollama).
+    llm_base_url: str = "https://api.openai.com/v1"
+
+    #: Model id for the veto call.  Pinned to the cheapest reliable
+    #: structured-JSON tier (D-P3-E); must match
+    #: ``hermes_integration.pretrade_check.MODEL``.
+    llm_model: str = "gpt-5-nano"
+
     @model_validator(mode="after")
     def derive_base_url(self) -> "Settings":
         """Derive oanda_base_url from env if not explicitly set."""
