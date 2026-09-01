@@ -53,3 +53,29 @@ disclose-stale as a consumer.
 Next Layer 5: `/halfcycle:taskgraph` per phase, starting pine-generation
 (phase-07 riskiest-assumption first).
 
+## Spec sprint close — push + worktree (2026-09-01, main)
+
+Pushed `794d094..c8e14c1` to `origin/main`. Removed git worktree
+`phase-7-10-spec-sprint-1acfe9` and local branch
+`claude/phase-7-10-spec-sprint-1acfe9` (already an ancestor of main). Did not
+merge leftover squash-PR branch tips (`docs/phase-09-veto-ledger`,
+`fix/ws1-adapter`, …) — those already landed as GitHub squash merges.
+
+**Gotchas from spec review (implementers):**
+- `calendar_events` is **not** in `Store`'s CREATE list. `FairEconomyCalendar.__init__`
+  runs `CREATE TABLE IF NOT EXISTS` + commit (mutates the DB file). `review` /
+  `ask` must SELECT via Store and treat missing table as `[]`, never construct
+  that client on the live store.
+- No persisted `ReconcileReport` / `drift_flags`. `fathom review` reads
+  last `account_state` + `as_of`, and must not call `reconcile()`.
+- `TIMEFRAME_BAR_LENGTH` still lives in `cli.py` (~217). Analyze-command relocates
+  it to `signals/timeframes.py`; `fathom ask` INV-21 stamps must import that
+  leaf module, never `cli`.
+- `fathom veto-report` CLI is owned by the veto-report spec; tracker exposes
+  `refresh_counterfactuals` → `RefreshCounts` only (no exit-2 placeholder).
+- `operator_journal` is a lifecycle UPSERT on `client_order_id` (INV-22
+  exception), demo-only skip at `cmd_execute` (INV-09). Not append-only.
+
+Uncommitted local noise in `tests/test_admin_panel.py` was left out of the
+sprint commits (docstring/format churn, not part of the spec work).
+

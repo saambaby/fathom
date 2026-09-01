@@ -1,6 +1,8 @@
 # Fathom
 
-Forex algorithmic trading system — OANDA-based, multi-strategy, orchestrated by Hermes Agent. Demo-first.
+Forex algorithmic trading system — OANDA-based, multi-strategy, demo-first.
+Code is still Hermes-orchestrated; phase-07 specs (ready) make it a standalone
+CLI (`fathom analyze` / `pine`) and tear Hermes/Discord down.
 
 ---
 
@@ -16,7 +18,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | [`docs/operator-acceptance.md`](docs/operator-acceptance.md) | **Resume here.** The 4 remaining operator gates (T-08 → T-11 → T-06 → T-05) as one ordered checklist with exact commands + the credentials you must supply |
 | [`docs/product/spec.md`](docs/product/spec.md) | Scope, confirmed decisions, build phases, honest caveats |
 | [`docs/product/architecture.md`](docs/product/architecture.md) | Container diagram, key boundaries, data flows, repo layout, stack |
-| [`docs/product/invariants.md`](docs/product/invariants.md) | 16 non-negotiable rules (execution boundary, JSON+safe-defaults, UTC, brackets, 0.25% cap, approved-set gate, frozen `Candidate` + `Order`/`Fill`/`Position` contracts, client-order-id idempotency, broker-is-truth, …) |
+| [`docs/product/invariants.md`](docs/product/invariants.md) | INV-01–16 shipped; INV-17–19 reserved (phase-10); INV-20–22 from the 2026-09-01 spec sprint (one LLM adapter, one freshness definition, append-only measurement tables). Advisory LLM sites use `"analysis unavailable"`, not INV-02 skip. |
 | [`docs/product/code-map.md`](docs/product/code-map.md) | Area → path → safe-parallel rules |
 | [`docs/features/INDEX.md`](docs/features/INDEX.md) | One-line summary per feature area, grouped by the phase that shipped it |
 | [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Master implementation plan (2026-08-31)** — audit fixes, LLM provider swap, TradingView posture, capture/breadth work, AI research loop (trial ledger + deflation gate), consolidated sequencing |
@@ -36,6 +38,10 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | `phase-04` | [admin panel](docs/phases/phase-04/phase.md) | 🔵 in_progress — 5/5 units merged · ⏳ T-06 operator gate |
 | `phase-05` | [go-live decision](docs/phases/phase-05/phase.md) | ⛔ blocked — guardrails merged · T-05 operator-only + **INV-07-blocked** |
 | `phase-06` | [WS0: audit fixes, portability, CI](docs/phases/phase-06/phase.md) | 🔵 in_progress — 10/11 merged · open: #143 (blocked on human) |
+| `phase-07` | [standalone CLI: analyze, Pine, de-Hermes](docs/phases/phase-07/phase.md) | ⚪ not_started — **specs ready** (INDEX); next: taskgraph, pine first |
+| `phase-08` | [companion: review, journal, ask](docs/phases/phase-08/phase.md) | ⚪ not_started — **specs ready** |
+| `phase-09` | [veto ledger + counterfactual report](docs/phases/phase-09/phase.md) | ⚪ not_started — **specs ready** |
+| `phase-10` | [AI research loop 10.1–10.5](docs/phases/phase-10/phase.md) | ⚪ not_started — Layer-4 **deferred** to epic kickoff |
 
 **Read before starting any session:** [`phases-manifest.json`](docs/phases/phases-manifest.json)
 (status) + [`docs/product/architecture.md`](docs/product/architecture.md) (boundaries) +
