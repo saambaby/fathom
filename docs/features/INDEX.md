@@ -85,3 +85,11 @@ Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cuto
 | preflight-check | `fathom preflight` GO/NO-GO readiness (account/kill-switch/brackets/env consistency + operator track-record attestation); read-only | [preflight-check.md](preflight-check.md) | ready |
 | live-trading-gate | defense-in-depth live gate (ENV=live + `live_trading_enabled` + preflight pass + typed confirm) + reduced `live_risk_fraction` (0.10%); pure, default-refuse | [live-trading-gate.md](live-trading-gate.md) | ready |
 | go-live-runbook | the deliberate reviewed cutover procedure (INV-07 prerequisite, gate sequence, small-size start, rollback) — doc/config artifact | [go-live-runbook.md](go-live-runbook.md) | ready |
+
+## phase-09 — counterfactual veto ledger (spec sprint in progress)
+
+See [phase-09/phase.md](../phases/phase-09/phase.md). Recording layer ready; tracker + report still to spec.
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| veto-ledger | append-only news-risk / pretrade / operator-declined rows; failure-isolated demo-only hooks (INV-09 Phase-9) | [veto-ledger.md](veto-ledger.md) | ready |

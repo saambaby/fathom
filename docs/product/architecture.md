@@ -172,7 +172,7 @@ Claude is used in exactly two ways inside the Fathom pipeline:
 Every signal from the ranker passes through `risk/sizing.py` (0.25% equity cap, stop-derived lot size) and `risk/limits.py` (exposure, correlation, daily kill switch) before reaching the execution engine. The gate is deterministic Python, fully unit-tested, and cannot be bypassed. See [INV-04](invariants.md#inv-04--every-trade-has-a-bracket-stop-loss--take-profit) and [INV-05](invariants.md#inv-05--per-trade-risk-capped-at-025-of-equity).
 
 ### The Demo/Live Switch
-One code path; two endpoints. The `env: demo | live` switch in config selects the OANDA practice vs live endpoint and token. Only `oanda_client.py` reads this switch — no logic branches elsewhere. See [INV-09](invariants.md#inv-09--demo-and-live-share-one-code-path).
+One code path; two endpoints. The `env: demo | live` switch in config selects the OANDA practice vs live endpoint and token. `oanda_client.py` is the only reader of `env` for **endpoint** selection. Execution/risk/monitoring **mechanics** stay env-free; the sanctioned `cli.py` / `live_gate.py` / `signals/analyze.py` exceptions are listed on [INV-09](invariants.md#inv-09--demo-and-live-share-one-code-path) (operator-boundary go-live gate + demo-only measurement-write skip until INV-07).
 
 ---
 
