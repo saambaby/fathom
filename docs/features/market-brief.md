@@ -1,6 +1,6 @@
 # Feature: market-brief
 
-**Status:** draft
+**Status:** ready
 **Phase:** phase-07
 **Owner:** operator + Claude
 **Last updated:** 2026-09-01
@@ -20,7 +20,8 @@ prompt template, and the deterministic fallbacks; analyze-command consumes them.
 Rendered by analyze-command's session block (this feature has no CLI surface of its own):
 
 - **Brief** — a short paragraph plus two bullet lists: `landmines` (dated calendar risks
-  in the trade window) and `invalidators` (what would make today's setups wrong).
+  in the caller-supplied calendar window — analyze-command renders next-24h UTC) and
+  `invalidators` (what would make today's setups wrong).
 - **Session verdict** — `normal` | `caution` | `stand_aside` with reasons. Advisory
   only: `stand_aside` prints prominently but vetoes nothing; the operator decides.
 - **Regime tag** per watchlist instrument — `trending` | `ranging` | `high_vol` |
@@ -37,10 +38,12 @@ Rendered by analyze-command's session block (this feature has no CLI surface of 
    `regimes` map get `unavailable` (partial responses tolerated per-instrument, not
    failed whole).
 2. Fail-safe (NOT INV-02 veto semantics, explicitly): invalid JSON, missing field,
-   out-of-enum value, transport error, or no client + no `LLM_API_KEY` → the full
-   deterministic fallback (`verdict="unavailable"`, all regimes `unavailable`, fallback
-   brief text); the function never raises and the caller can always render — proven for
-   each failure class offline. A future reader must NOT add a skip/veto default here
+   out-of-enum value (including a raw `"unavailable"`), transport error, or no client +
+   no `LLM_API_KEY` → the full deterministic fallback (`verdict="unavailable"`, all
+   regimes `unavailable`, fallback brief text); the function never raises and the
+   caller can always render — proven for each failure class offline, with the
+   no-client/no-key case asserting **zero network I/O** via a socket guard or httpx
+   mock (INV-20). A future reader must NOT add a skip/veto default here
    (narration-style guard note in the module docstring).
 3. Prompt: `ai/prompts/session.md` placeholders (`{{candidates_summary}}`,
    `{{calendar_events}}`, `{{market_stats}}`, `{{utc_now}}`) all substituted; the
@@ -56,12 +59,23 @@ Rendered by analyze-command's session block (this feature has no CLI surface of 
 ## Component design
 
 - **`ai/brief.py`**
-  - Models: `SessionAnalysis { brief: MarketBrief, session: SessionVerdict,
+  - Models — **wire and result types are split so the model can never *say*
+    `unavailable`:** the parse boundary validates against wire models whose enums
+    exclude it (`_WireSessionVerdict.verdict: Literal["normal","caution","stand_aside"]`,
+    `_WireRegimeTag = Literal["trending","ranging","high_vol","quiet","pre_event"]`,
+    `extra="forbid"`) — a raw `"unavailable"` is out-of-enum and routes to the full
+    fallback like any other invalid value. The *returned* types add it:
+    `SessionAnalysis { brief: MarketBrief, session: SessionVerdict,
     regimes: dict[str, RegimeTag] }`; `MarketBrief { summary: str, landmines:
     list[str], invalidators: list[str] }`; `SessionVerdict { verdict:
     Literal["normal","caution","stand_aside","unavailable"], reasons: list[str] }`;
     `RegimeTag = Literal["trending","ranging","high_vol","quiet","pre_event",
-    "unavailable"]`.
+    "unavailable"]` — `unavailable` is minted only by the fallback constructors and
+    the missing-instrument fill. `MarketBrief` carries no enum/reserved values and is
+    used directly at the parse boundary (no wire counterpart needed). Superfluous keys
+    in the model's `regimes` map (instruments not on the watchlist) are **silently
+    ignored** at the parse boundary — they are not a validation failure (dict keys are
+    not `extra`) and are never persisted; consumers look up watchlist instruments only.
   - `parse_session_analysis(raw) -> SessionAnalysis` — fail-closed to the fallback
     (never raises); `session_analysis(...)` — build prompt → `client.complete` →
     parse; the `pretrade_check` 5-step algorithm with the *advisory* fallback instead
@@ -74,6 +88,9 @@ Rendered by analyze-command's session block (this feature has no CLI surface of 
   median) and renders `candidates_summary` from the `Candidate` list. This spec pins the
   *placeholder names*; the stats formula details live in analyze-command's
   implementation and may grow without amending this contract.
+- **`{{utc_now}}` is minted inside `session_analysis`** (UTC RFC-3339, INV-03) — the
+  caller renders only the three content strings; the timestamp placeholder is not a
+  caller input.
 - **`ai/prompts/session.md`** — new template (the one new prompt of phase-07); includes
   the JSON schema, the enum values verbatim, and an explicit "advisory only — you cannot
   block trades" framing to keep outputs calibrated.
@@ -105,6 +122,9 @@ Rendered by analyze-command's session block (this feature has no CLI surface of 
   asymmetry to prevent future misapplication (AC 2).
 - INV-03 — `{{utc_now}}` and any rendered times are UTC RFC-3339.
 - INV-08 — key hygiene (AC 6).
+- INV-20 — `session_analysis` imports the shared `ai/llm_client.py` adapter (never its
+  own HTTP client) and applies the uniform offline predicate; AC 2's no-key case
+  asserts zero network I/O per the invariant's enforcement clause.
 
 ## Events
 
@@ -114,7 +134,9 @@ Rendered by analyze-command's session block (this feature has no CLI surface of 
 
 | Var | Purpose | Arg type | Where set |
 |---|---|---|---|
-| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | the session-analysis call (existing adapter; no new vars) | runtime secret / runtime / runtime | operator `.env` |
+| `LLM_API_KEY` | auth for the session-analysis call (existing adapter; no new vars) | runtime secret | operator `.env` |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint | runtime | operator `.env`, default `https://api.openai.com/v1` |
+| `LLM_MODEL` | model id for the call | runtime | operator `.env`, default `MODEL` constant |
 
 ## Wire-format contract
 
@@ -128,9 +150,11 @@ LLM response (JSON object, snake_case, strict):
 }
 ```
 
-- `unavailable` is **never** a legal model output for `verdict`/regime values — it is
-  reserved for the parser's fallback, so a stored `unavailable` always means "no valid
-  analysis", never "the model said so" (`extra="forbid"`; out-of-enum → full fallback).
+- `unavailable` is **never** a legal model output for `verdict`/regime values —
+  enforced structurally: the wire models' enums exclude it (see Component design), so a
+  model emitting `"unavailable"` fails validation and routes to the full fallback like
+  any other out-of-enum value. A stored `unavailable` therefore always means "no valid
+  analysis", never "the model said so".
 - Consumer contract: `analysis_log.regime` (analyze-command) stores `RegimeTag` values
   verbatim — the enum here is the single source for that column's domain.
 
@@ -151,6 +175,7 @@ LLM response (JSON object, snake_case, strict):
 | Claim | Anchor | Verified how |
 |---|---|---|
 | The advisory-fallback precedent (cosmetic layer must not inherit INV-02's veto) is established | hermes_integration/narration.py:9-21 | read the CRITICAL-distinction docstring |
+| `parse_news_risk` is the fail-closed parse-boundary pattern AC 4 copies | hermes_integration/news_risk.py:91 | read full function body (91-155) |
 | The 5-step call algorithm to reuse | hermes_integration/pretrade_check.py:355-436 | read function |
 | Candles + ATR inputs are computable from the store | data/store.py:527 (`load_candles`) | signature exists; stats formulas are analyze-command implementation detail |
 | CalendarEvent carries currency/time/impact/name for the landmines rendering | data/calendar.py:91-103 | read dataclass fields |
