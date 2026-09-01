@@ -1,6 +1,6 @@
 # Feature: pine-generation
 
-**Status:** draft
+**Status:** ready
 **Phase:** phase-07
 **Owner:** operator + Claude
 **Last updated:** 2026-09-01
@@ -27,12 +27,22 @@ usability is the phase's riskiest assumption.
   stop (`entry_ref − stop_distance` for LONG / `+` for SHORT), target (`entry_ref +
   target_distance` for LONG / `−` for SHORT) — plus one label: rank, strategy_name,
   direction, timeframe, OOS Sharpe, and a `⚠ news` marker when `news_flag` is set.
-- **Analysis join (verdict-aware rendering):** when an `analysis_log` run exists for the
-  loaded watchlist (written by analyze-command), standalone `fathom pine` drops
-  candidates whose `suggest_action` is `skip` and adds a `reduce size` marker to the
-  label where it is `reduce_size`. With no analysis rows, all watchlist candidates render
-  with `news_flag` only. (`fathom analyze` bypasses the join — it passes its in-memory
-  survivor list to `render_pine` directly.)
+- **Analysis join (verdict-aware rendering):** standalone `fathom pine` first reads the
+  latest watchlist run key via a new scalar store accessor
+  `latest_watchlist_run_ts() -> str | None` (`SELECT MAX(run_timestamp) FROM watchlist`;
+  returns the stored RFC-3339 TEXT verbatim — it is the join key), loads that exact run
+  (`load_watchlist(run_timestamp=parse(run_ts))` — the existing signature takes a UTC
+  datetime, so the CLI parses the string back before calling; race-free vs a concurrent
+  scan), then asks `load_latest_analysis(watchlist_run=run_ts)` (string form —
+  `analysis_log.watchlist_ts` is TEXT)
+  (analyze-command's accessor, pinned there to return rows **only** when an
+  `analysis_log` run's `watchlist_ts` equals the given run key). When rows come back,
+  pine drops candidates whose `suggest_action` is `skip` and adds a `reduce size` marker
+  where it is `reduce_size`; when the accessor returns no rows — no analyze run yet, or
+  the latest analysis belongs to an older watchlist — **all** watchlist candidates render
+  with `news_flag` only (the no-join path; stale analysis is never joined onto a newer
+  watchlist). (`fathom analyze` bypasses the join — it passes its in-memory survivor
+  list to `render_pine` directly.)
 - No-candidates output (INV-10 honest empty): when `load_watchlist` returns zero rows,
   emit a valid, compiling script that draws a single "Fathom: no candidates" table cell
   (timestamp-free — nothing is stored to stamp, and wall-clock would break determinism);
@@ -63,7 +73,7 @@ usability is the phase's riskiest assumption.
    notice, exit 0; a missing/unreadable database exits non-zero with a distinct error.
 4. Determinism: two runs over identical watchlist (+ analysis) rows produce
    byte-identical scripts (candidates ordered by `rank`; the only timestamps in the
-   output are the stored `generated_at` / `run_ts` values).
+   output are stored `generated_at` values — no run timestamp and no wall-clock).
 5. Clipboard degradation: with `pbcopy` absent from PATH, the command still succeeds
    (stdout intact, stderr warning); `--no-clipboard` skips the attempt entirely.
 6. Boundary: an AST test (pattern of `tests/test_admin_panel.py`'s forbidden-import
@@ -89,7 +99,8 @@ usability is the phase's riskiest assumption.
   `PineItem` lists it is byte-identical, and per-candidate "(stale)" labels (AC 7) and
   markers (AC 8) come straight off the wrapper. Empty list → the no-candidates script.
   The status cell's timestamp is the max `generated_at` across items (deterministic,
-  stored — `load_watchlist` deliberately strips the DB-internal `run_timestamp`).
+  stored; the watchlist `run_timestamp` is used only as the join key in the CLI handler
+  and never enters the rendered script).
   Templating by plain string building (no new dependency); one module-level
   `PINE_VERSION = 6`.
   - Symbol scoping: per candidate emit a guarded block —
@@ -97,13 +108,17 @@ usability is the phase's riskiest assumption.
     underscore stripped. `syminfo.ticker` is broker-prefix-free, so the same paste works
     on OANDA, FXCM, or IDC-fed charts (open question 1 covers exotic ticker variants).
   - Drawing primitives: `line.new` × 3 anchored from `bar_index` back N bars to the right
-    edge, `label.new` × 1 per candidate, one `table` status cell (run timestamp + STALE
-    marker + candidate count). Object budget: ≤ 4 drawing objects per candidate, far
+    edge, `label.new` × 1 per candidate, one `table` status cell (latest `generated_at`
+    + STALE marker + candidate count). Object budget: ≤ 4 drawing objects per candidate, far
     under Pine's ~500-object ceilings at watchlist scale (portfolio limiter caps
     concurrent candidates — see Grounded claims).
 - **CLI** — `fathom pine` subcommand in `cli.py` mirroring `fathom watchlist`'s read
-  path: `Store.load_watchlist(...)` → `Candidate` list → `render_pine` → stdout /
-  clipboard (`subprocess.run(["pbcopy"], input=...)`) / `--out`.
+  path: `run_ts = Store.latest_watchlist_run_ts()` (new scalar accessor, this feature) →
+  `Store.load_watchlist(run_timestamp=run_ts)` → `Candidate` list →
+  `load_latest_analysis(watchlist_run=run_ts)` join (analyze-command's accessor; no
+  rows → no-join path) → `render_pine` → stdout / clipboard
+  (`subprocess.run(["pbcopy"], input=...)`) / `--out`. Until analyze-command lands the
+  accessor, the join call site is a guarded no-op (no-join path) — pine ships first.
 - Freshness: reuse the same TTL constant/setting the execute gate reads (single source;
   see Grounded claims) to compute `stale`.
 
@@ -138,7 +153,9 @@ usability is the phase's riskiest assumption.
 ## Events
 
 - Written: none.
-- Consumed: none (reads the `watchlist` table directly, as `fathom watchlist` does).
+- Consumed: `watchlist` table (read directly, as `fathom watchlist` does);
+  `analysis_log` rows (read-only, optional — the standalone analysis join; absent →
+  no-join path).
 
 ## Environment variables
 
@@ -162,11 +179,14 @@ transform site is `render_pine`, the only producer):
 | `news_flag` (bool) | `⚠ news` marker in label | verbatim |
 | `generated_at` (RFC-3339 str) | staleness input; labels | verbatim string in script; parsed only for TTL comparison |
 
-Join input (standalone `fathom pine` only, optional): the latest `analysis_log` rows for
-the loaded watchlist, matched on the `(instrument, timeframe, strategy_name)` identity
-triple — `suggest_action = "skip"` drops the candidate, `"reduce_size"` adds the label
-marker. Schema is pinned in analyze-command's wire-format contract; this feature is a
-read-only consumer.
+Join input (standalone `fathom pine` only, optional): rows from
+`load_latest_analysis(watchlist_run=run_ts)` — analyze-command's accessor, which yields
+rows only when the latest `analysis_log` run's `watchlist_ts` equals `run_ts` (the
+watchlist run key pine fetched via `latest_watchlist_run_ts()`). Rows are matched to
+candidates on the `(instrument, timeframe, strategy_name)` identity triple —
+`suggest_action = "skip"` drops the candidate, `"reduce_size"` adds the label marker.
+Schema is pinned in analyze-command's wire-format contract; this feature is a read-only
+consumer plus the owner of the `latest_watchlist_run_ts()` scalar accessor.
 
 ## Depends on
 
@@ -198,6 +218,7 @@ read-only consumer.
 | A freshness TTL for watchlist candidates exists and is enforced at the execute gate — settings field (TTL in bars of the candidate's own timeframe) + per-timeframe bar lengths + gate check | config/settings.py:71 · cli.py:215 · cli.py:1625 | read all three: setting defines TTL, cli holds bar-length map, execute Step 1.5 refuses stale candidates; pine reuses the same setting + map |
 | An AST forbidden-import probe pattern exists to copy | tests/test_admin_panel.py | named as the pattern by implementation-plan Task 2.1; file exists in tests/ |
 | Portfolio limiter caps admitted candidates at `max_concurrent` (default 5) → ≤ ~20 drawing objects/script, far under Pine limits | signals/portfolio.py:68,129-130 | read `DEFAULT_MAX_CONCURRENT: int = 5` and the Field default |
+| `load_watchlist` already accepts an exact `run_timestamp` and the latest-run scalar is a one-line query (`SELECT MAX(run_timestamp) FROM watchlist`) the store uses internally — `latest_watchlist_run_ts()` only exposes it | data/store.py:897-937 | read `load_watchlist` signature + the latest-run branch's MAX subquery |
 
 ## Smoke checklist hooks
 

@@ -109,8 +109,14 @@ sequenceDiagram
   calendar renders `"(no calendar events in window)"` — never blocks the call.
   `entry_window_utc` = next bar-open → +1 bar of the candidate's timeframe, from the
   same bar-length map the freshness TTL uses.
-- **Store** — `append_analysis(rows)` + `load_latest_analysis(watchlist_run) -> rows`;
-  the latter is what standalone `fathom pine` joins against (see pine-generation).
+- **Store** — `append_analysis(rows)` + `load_latest_analysis(watchlist_run) -> rows`.
+  `load_latest_analysis` is pinned as: select the latest `analysis_log` run (max
+  `run_ts`), return its rows **iff** that run's `watchlist_ts` equals the
+  `watchlist_run` argument, else return `[]` — so a consumer can never join analysis
+  from an older watchlist onto a newer one. Standalone `fathom pine` is the consumer:
+  it obtains `watchlist_run` via `latest_watchlist_run_ts()` (a scalar accessor owned
+  by pine-generation) and takes `[]` as its no-join path (see pine-generation's
+  wire-format contract).
 - **Veto ledger (phase-09 contract)** — `run_analysis` owns the
   `record_news_risk_verdict` call. Insertion point is the line after
   `news_risk_check(...)` returns, **before** `narrate`. The same `run_ts` written
@@ -247,6 +253,8 @@ place — intended; a wrong verdict is superseded by a new run, never edited.
 
 ## Notes
 
-Amendment queued for pine-generation at the sprint drift radar: standalone `fathom pine`
-joins the watchlist with `load_latest_analysis` (when present) to drop `skip` candidates
-and add `reduce_size` markers — analyze passes survivors directly.
+Amendment applied 2026-09-01 (pine-generation consistency-check blocker): the standalone
+`fathom pine` join mechanism is now pinned in both specs — pine fetches the watchlist
+run key via `latest_watchlist_run_ts()` (accessor owned by pine-generation) and
+`load_latest_analysis(watchlist_run)` returns rows only for a matching `watchlist_ts`
+(guard defined here). Analyze itself passes survivors to `render_pine` directly.
