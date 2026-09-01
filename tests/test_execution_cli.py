@@ -397,9 +397,9 @@ def _make_jpy_candle(
 class TestExecuteConversionRateRequired:
     """A non-USD-quoted instrument must never be sized with a guessed rate.
 
-    Falling back to ``rate = 1.0`` for USD_JPY overstates per-unit risk by the
-    JPY mid (~150x), so the position is sized ~150x the 0.25% INV-05 intent.
-    The gate must refuse instead of guessing.
+    Falling back to ``rate = 1.0`` for USD_JPY understates per-unit risk by
+    the JPY mid (~157x), so the position would be under-sized relative to
+    the 0.25% INV-05 intent. The gate must refuse instead of guessing.
     """
 
     @staticmethod
@@ -987,7 +987,7 @@ class TestInv01Boundary:
 
 
 class TestCliHelp:
-    def test_fathom_help_lists_all_subcommands(self, capsys: object) -> None:
+    def test_fathom_help_lists_all_subcommands(self) -> None:
         """fathom --help lists execute/positions/reconcile alongside backtest/scan."""
         import subprocess
         import sys
@@ -1008,6 +1008,7 @@ class TestCliHelp:
         assert "scan" in output
         assert "watchlist" in output
         assert "chart" in output
+        assert "preflight" in output
 
 
 # ---------------------------------------------------------------------------

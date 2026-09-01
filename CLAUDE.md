@@ -67,7 +67,7 @@ fathom chart <instrument>     # render candidate chart PNG, print path (Hermes t
 
 # Phase 3 (current) — P3-T-10 — INV-01 gate (operator-only, NEVER Hermes tools)
 fathom execute <candidate-ref>  # run full Phase 3 gate (pretrade → sizing → limits → submit)
-#   fathom execute EUR_USD:H1:macrossover_10_50 [--db-path PATH] [--dry-run] [--yes]
+#   fathom execute "EUR_USD:D:BollingerReversion(20,2.0)" [--db-path PATH] [--dry-run] [--yes]
 #   candidate-ref format: instrument:timeframe:strategy_name (must be on latest watchlist)
 #   --dry-run: runs gate steps 1-5, prints would-be order without any v20 submission
 #   --yes: skip the interactive confirm prompt

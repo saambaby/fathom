@@ -179,7 +179,7 @@ subcommand takes a single positional `candidate_ref` in the form
 ```bash
 fathom execute <instrument>:<timeframe>:<strategy_name>
 # e.g.
-fathom execute EUR_USD:H1:macrossover_10_50_eur_usd_h1
+fathom execute "EUR_USD:D:BollingerReversion(20,2.0)"
 ```
 
 Optional flags: `--db-path PATH` (default `data/fathom.db`), `--dry-run`

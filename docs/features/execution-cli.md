@@ -48,7 +48,9 @@ fathom execute <candidate-ref> [--db-path PATH] [--dry-run] [--yes]
    resolves `quote_to_account_rate` from the latest cached candle mid. If that rate
    cannot be resolved, the CLI **refuses to size** (`SIZING REFUSED: no quote->account
    conversion rate for <pair>`, exit 1, no order, applies to `--dry-run` too) — it never
-   assumes 1.0, which would mis-size a JPY-quoted pair by ~150x against the INV-05 cap.
+   assumes 1.0, which would understate risk (under-size) by ~157x for a JPY-quoted
+   pair, or overstate risk (over-size) for a quote currency stronger than USD (e.g.
+   GBP-quoted, ~27%), against the INV-05 cap.
 6. **Limits / kill switch** ([[risk-limits-kill-switch]], reading the fresh `account_state`) → reject aborts with the reason.
 7. **Submit** ([[order-placement]]) the bracketed, idempotent order; print the `Fill`.
 8. `--dry-run` runs steps 1–6 and prints what *would* be submitted without placing
