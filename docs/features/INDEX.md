@@ -1,8 +1,8 @@
 # Fathom — Feature Index
 
-One row per feature. Scannable in a single read — the cross-feature-consistency anchor. Phases follow the carved scheme: **PoC** (shipped) → **Phase 1** (research engine) → **Phase 2** (watchlist→Discord) → later. Spec files live beside this one under `docs/features/`.
+One row per feature. Scannable in a single read — the cross-feature-consistency anchor. A spec belongs to the product, not to the phase that shipped it — the section headings carry the phase linkage, keyed by canonical id (`phase-00`, `phase-01.1`, …; see [`docs/phases/phases-manifest.json`](../phases/phases-manifest.json)). Spec files live beside this one under `docs/features/`.
 
-## PoC — shipped
+## phase-00 — PoC (shipped)
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -16,9 +16,9 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | walk-forward | rolling train/test, per-window approved-set gate | _(taskgraph)_ | shipped |
 | poc-runner | end-to-end PoC runner | _(taskgraph)_ | shipped |
 
-## Phase 1 — research engine (specs ready; cross-spec audit passed 2026-05-29)
+## phase-01 — research engine (specs ready; cross-spec audit passed 2026-05-29)
 
-**Epic 1A (research engine → approved-set):**
+**`phase-01.1` (research engine → approved-set):**
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -31,14 +31,14 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | session-range-breakout | session / rolling-range breakout (UTC sessions) | [session-range-breakout.md](session-range-breakout.md) | ready |
 | full-universe-backtest-runner | `fathom backtest` CLI, scaled walk-forward, persisted approved-set | [full-universe-backtest-runner.md](full-universe-backtest-runner.md) | ready |
 
-**Epic 1B (live-data groundwork — off the critical path to the approved-set):**
+**`phase-01.2` (live-data groundwork — off the critical path to the approved-set):**
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | live-streaming | OANDA pricing stream, reconnect/backoff/gap | [live-streaming.md](live-streaming.md) | ready |
 | economic-calendar | calendar/news pull, currency+impact tags | [economic-calendar.md](economic-calendar.md) | draft — blocked on provider choice |
 
-## Phase 2 — watchlist → Discord (specs ready; cross-spec audit passed 2026-05-29)
+## phase-02 — watchlist → Discord (specs ready; cross-spec audit passed 2026-05-29)
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -50,9 +50,9 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 | cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools; the Hermes boundary) | [cli-commands.md](cli-commands.md) | ready |
 | hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | ready |
 
-## Phase 3 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
+## phase-03 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
-Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-3.md).
+Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-03/phase.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -66,9 +66,9 @@ Maps to product-spec Phase 4. The phase where Fathom gains order authority — k
 | monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
 | execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | ready |
 
-## Phase 4 — admin panel & hardening, demo only (specs ready; cross-spec audit passed 2026-05-29)
+## phase-04 — admin panel & hardening, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
-Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the existing store + TradingView Lightweight Charts; the only action is a scan-refresh (no order/execute — INV-01, transitive-import enforced; execution stays the CLI). See [phase-4.md](../phases/phase-4.md) + [phase-4-spec-audit-2026-05-29.md](../phases/phase-4-spec-audit-2026-05-29.md). Two coordinator pre-step extractions surfaced: `signals/scan.py::run_scan` (order-free scan) and `risk/limits.py::book_risk_sum`/`book_risk_budget`.
+Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the existing store + TradingView Lightweight Charts; the only action is a scan-refresh (no order/execute — INV-01, transitive-import enforced; execution stays the CLI). See [phase-4.md](../phases/phase-04/phase.md) + [phase-4-spec-audit-2026-05-29.md](../phases/phase-04/spec-audit-2026-05-29.md). Two coordinator pre-step extractions surfaced: `signals/scan.py::run_scan` (order-free scan) and `risk/limits.py::book_risk_sum`/`book_risk_budget`.
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -76,12 +76,62 @@ Maps to product-spec Phase 5. A **read-only** Streamlit dashboard over the exist
 | panel-data-layer | `panel/data.py` read-only accessors + view models (blotter incl. risk-in-use, equity series + drawdown, watchlist, deviation log, chart data); the tested seam | [panel-data-layer.md](panel-data-layer.md) | ready |
 | admin-panel | Streamlit app: 5 views + Lightweight Charts overlays + scan-refresh button; INV-01 transitive read-only boundary | [admin-panel.md](admin-panel.md) | ready |
 
-## Phase 5 — go-live decision, real money (specs ready; cross-spec audit passed 2026-05-30)
+## phase-05 — go-live decision, real money (specs ready; cross-spec audit passed 2026-05-30)
 
-Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cutover is INV-07-blocked** (no demo track record yet) and operator-only; nothing here flips live or wires the live token. See [phase-5.md](../phases/phase-5.md).
+Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cutover is INV-07-blocked** (no demo track record yet) and operator-only; nothing here flips live or wires the live token. See [phase-5.md](../phases/phase-05/phase.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
 | preflight-check | `fathom preflight` GO/NO-GO readiness (account/kill-switch/brackets/env consistency + operator track-record attestation); read-only | [preflight-check.md](preflight-check.md) | ready |
 | live-trading-gate | defense-in-depth live gate (ENV=live + `live_trading_enabled` + preflight pass + typed confirm) + reduced `live_risk_fraction` (0.10%); pure, default-refuse | [live-trading-gate.md](live-trading-gate.md) | ready |
 | go-live-runbook | the deliberate reviewed cutover procedure (INV-07 prerequisite, gate sequence, small-size start, rollback) — doc/config artifact | [go-live-runbook.md](go-live-runbook.md) | ready |
+
+## phase-07 — standalone platform: de-Hermes, analyze, Pine (specs ready)
+
+See [phase-07/phase.md](../phases/phase-07/phase.md). Pine generation is the
+riskiest-assumption probe and implements first.
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| pine-generation | watchlist → Pine v6 indicator (level lines + labels, `syminfo.ticker` scoped); clipboard/stdout; deterministic, no LLM | [pine-generation.md](pine-generation.md) | ready |
+| ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | ready |
+| analyze-command | `fathom analyze` on-demand pipeline: scan → brief → veto → narration → Pine; `analysis_log` table; offline fail-safe | [analyze-command.md](analyze-command.md) | ready |
+| market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | ready |
+| hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | ready |
+
+## phase-08 — trader companion commands (specs ready)
+
+See [phase-08/phase.md](../phases/phase-08/phase.md). Companion commands are INV-01-safe
+read-only **except** journal's execute-side UPSERT (demo-only, INV-09). LLM outage
+degrades to "analysis unavailable", never a wrong action.
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| companion-core | context-pack builder + shared call shape + offline fallbacks + AST boundary test | [companion-core.md](companion-core.md) | ready |
+| review-command | positions + last `account_state` + local calendar + deviation log → anomaly flags; `--deviations` explainer | [review-command.md](review-command.md) | ready |
+| journal | `operator_journal` UPSERT on `client_order_id`; `show`/`summarize`; demo execute hook | [journal.md](journal.md) | ready |
+| ask-command | store-grounded Q&A with visible `REFUSED:`; fixed source pack; INV-21 stale stamp | [ask-command.md](ask-command.md) | ready |
+
+## phase-09 — counterfactual veto ledger (specs ready)
+
+See [phase-09/phase.md](../phases/phase-09/phase.md). Recording, tracker, and report ready.
+
+| Feature | Summary | Spec file | Status |
+|---|---|---|---|
+| veto-ledger | append-only news-risk / pretrade / operator-declined rows; failure-isolated demo-only hooks (INV-09 Phase-9) | [veto-ledger.md](veto-ledger.md) | ready |
+| counterfactual-tracker | replay ledger rows via engine fill rules; `refresh_counterfactuals`; sticky terminals | [counterfactual-tracker.md](counterfactual-tracker.md) | ready |
+| veto-report | `fathom veto-report` aggregate + JSON; `--refresh` then print; explicit `unknown` | [veto-report.md](veto-report.md) | ready |
+
+## phase-10 — AI quant research loop (specs deferred)
+
+See [phase-10/phase.md](../phases/phase-10/phase.md). Layer-4 specs are **per-epic at
+kickoff**, not in this 07–09 sprint (`phase.md` Anticipated specs: “authored at
+each epic's kickoff, not now”). INV-17–19 remain reserved.
+
+| Epic | Spec seeds | Status |
+|---|---|---|
+| phase-10.1 | trial-ledger + `run_trial()` | deferred — epic kickoff |
+| phase-10.2 | deflation / `fathom verify` | deferred — epic kickoff |
+| phase-10.3 | StrategySpec DSL + research MCP | deferred — epic kickoff |
+| phase-10.4 | research agent + contamination controls | deferred — epic kickoff |
+| phase-10.5 | autonomy ladder + champion-challenger | deferred — epic kickoff |

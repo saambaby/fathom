@@ -8,7 +8,8 @@ Modules:
         (Phase 2, Hermes-side; no anthropic SDK dependency here).
     pretrade_check: PretradeVerdict model + parse_pretrade_verdict() +
         pretrade_check() — INV-02 in-process Claude veto before order
-        submission (Phase 3).  Uses the anthropic SDK via an injectable
+        submission (Phase 3).  Uses an OpenAI-compatible adapter (any
+        provider via LLM_API_KEY/LLM_BASE_URL/LLM_MODEL) via an injectable
         _LiveClient adapter; fully testable offline.
     narration: fallback_narration() — cosmetic watchlist one-liner (Phase 2).
 """

@@ -99,6 +99,7 @@ from typing import Callable, Optional
 
 from backtest.costs import CostParams
 from backtest.engine import BacktestEngine
+from backtest.metrics import periods_per_year_for
 from backtest.walkforward import ApprovedSetEntry, WalkForwardValidator
 from data.store import Store
 from strategies.base import Strategy
@@ -127,13 +128,37 @@ try:
     from execution.orders import OrderRejected, submit_order
     from execution.preflight import run_preflight
     from execution.reconcile import reconcile
-    from hermes_integration.pretrade_check import pretrade_check
+    from hermes_integration.pretrade_check import OpenAICompatClient, pretrade_check
     from risk.limits import LimitsConfig, check_limits, kill_switch_status
     from risk.sizing import size_position
 except ImportError:  # pragma: no cover
     # During module-level import in environments where execution deps are
     # absent, defer to runtime so the non-execution subcommands still work.
     pass
+
+# ---------------------------------------------------------------------------
+# Pre-trade veto LLM client — built from Settings (.env-aware)
+# ---------------------------------------------------------------------------
+
+
+def _llm_client_from_settings(settings: "Settings") -> "Optional[OpenAICompatClient]":
+    """Build the pre-trade veto LLM client from ``Settings``.
+
+    Returns ``None`` when ``llm_api_key`` is unset — ``pretrade_check`` then
+    falls back to its ``LLM_API_KEY`` env path, and failing that to the INV-02
+    safe default ``block``.
+
+    INV-08: the key is unwrapped from ``SecretStr`` only here, and the client
+    keeps it private (never logged, excluded from ``repr``).
+    """
+    if settings.llm_api_key is None:
+        return None
+    return OpenAICompatClient(
+        api_key=settings.llm_api_key.get_secret_value(),
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Logging — UTC RFC 3339 timestamps (INV-03)
@@ -185,6 +210,14 @@ WINDOW_CONFIG: dict[str, WindowConfig] = {
     "H1": WindowConfig(train_months=12, test_months=3),
     "H4": WindowConfig(train_months=18, test_months=6),
     "D": WindowConfig(train_months=24, test_months=6),
+}
+
+#: Bar length per timeframe, used for the candidate freshness TTL check
+#: (WS0-T04) in ``cmd_execute``. Keys must match ``Candidate.timeframe``.
+TIMEFRAME_BAR_LENGTH: dict[str, timedelta] = {
+    "H1": timedelta(hours=1),
+    "H4": timedelta(hours=4),
+    "D": timedelta(hours=24),
 }
 
 #: History to fetch/scan per timeframe must comfortably exceed the longest
@@ -362,6 +395,11 @@ def _run_combo(spec: ComboSpec) -> Optional[ApprovedSetEntry]:
             end=end,
             train_months=spec.train_months,
             test_months=spec.test_months,
+            # WS0-T03: annualise this combo's per-bar returns for ITS timeframe
+            # (D=252, H4=1512, H1=6048) so oos_sharpe_mean is comparable across
+            # timeframes in the ranker. Passed explicitly rather than relying on
+            # the validator's granularity lookup so the choice is auditable here.
+            periods_per_year=periods_per_year_for(spec.timeframe),
         )
         return result.approved_set_entry
     except Exception:  # noqa: BLE001 — one bad combo must not kill the run
@@ -823,7 +861,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "candidate_ref",
         help=(
             "Candidate reference: instrument:timeframe:strategy_name, "
-            "e.g. EUR_USD:H1:macrossover_10_50_eur_usd_h1. "
+            "e.g. EUR_USD:D:BollingerReversion(20,2.0). "
             "Must be present on the latest persisted watchlist (INV-13)."
         ),
     )
@@ -906,6 +944,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Operator attestation: assert the demo track record satisfies INV-07 "
             "(positive, stable edge on demo before live cutover).  Required for GO."
+        ),
+    )
+    pf.add_argument(
+        "--pre-cutover",
+        action="store_true",
+        default=False,
+        help=(
+            "Runbook Step-2 mode: with ENV=live but LIVE_TRADING_ENABLED still "
+            "off, treat env/flag/token as consistent instead of NO-GO, so the "
+            "documented cutover ordering is satisfiable.  A --pre-cutover GO is "
+            "recorded as such and NEVER authorizes a live order: re-run "
+            "preflight without this flag after setting LIVE_TRADING_ENABLED."
         ),
     )
 
@@ -1341,7 +1391,7 @@ def _load_candidate(
             (
                 f"Invalid candidate ref {candidate_ref!r}: expected "
                 "instrument:timeframe:strategy_name "
-                "(e.g. EUR_USD:H1:macrossover_10_50).",
+                "(e.g. EUR_USD:D:BollingerReversion(20,2.0)).",
                 2,
             ),
         )
@@ -1383,6 +1433,142 @@ def _load_candidate(
 
     candidate = Candidate(**matches[0])
     return (candidate, None)
+
+
+def _candidate_staleness_error(
+    candidate: object,
+    max_candidate_age_bars: float,
+    *,
+    now: datetime,
+) -> Optional[str]:
+    """Return a refusal message if ``candidate`` is stale, else ``None``.
+
+    WS0-T04: a candidate loaded from the watchlist carries an ``entry_ref``
+    (and derived stop/target) anchored to the signal bar's close time
+    (``generated_at``, INV-03 UTC). If too much time has elapsed since then,
+    that anchor is no longer representative and realized R:R drifts with
+    every hour of delay. Staleness is measured in units of the candidate's
+    OWN timeframe bar length (H1=1h, H4=4h, D=24h) so the limit scales
+    naturally across timeframes.
+    """
+    timeframe = candidate.timeframe  # type: ignore[attr-defined]
+    bar_length = TIMEFRAME_BAR_LENGTH.get(timeframe)
+    if bar_length is None:
+        # Unknown timeframe: nothing to compare against — let downstream
+        # gates handle it (should not happen for a watchlist-persisted ref).
+        return None
+
+    generated_at_raw = candidate.generated_at  # type: ignore[attr-defined]
+    s = str(generated_at_raw).rstrip("Z")
+    generated_at = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+
+    age = now - generated_at
+    limit = bar_length * max_candidate_age_bars
+    if age <= limit:
+        return None
+
+    age_hours = age.total_seconds() / 3600.0
+    limit_hours = limit.total_seconds() / 3600.0
+    ref = f"{candidate.instrument}:{timeframe}:{candidate.strategy_name}"  # type: ignore[attr-defined]
+    return (
+        f"STALE CANDIDATE REFUSED: {ref} is {age_hours:.1f}h old "
+        f"(limit {limit_hours:.1f}h = {max_candidate_age_bars:g} x {timeframe} bar). "
+        "Re-run fathom scan. No order placed."
+    )
+
+
+#: How long a persisted preflight attestation authorizes live execution.
+ATTESTATION_MAX_AGE = timedelta(hours=24)
+
+#: Appended to every live-attestation refusal so the operator knows the remedy.
+_ATTESTATION_REMEDY = (
+    "Run `fathom preflight --attest-track-record` (without --pre-cutover) and "
+    "obtain a GO first.  No order placed."
+)
+
+
+def _live_attestation_error(
+    attestation: "dict[str, object] | None",
+    *,
+    account_id: str,
+    now: datetime,
+) -> Optional[str]:
+    """Return a refusal reason when the persisted attestation cannot authorize live.
+
+    WS0-T06.  ``fathom execute`` on ``ENV=live`` used to pass ``attested=True``
+    to ``run_preflight`` unconditionally, so nothing linked an operator's
+    ``fathom preflight --attest-track-record`` ceremony to the moment an order
+    was placed.  This check restores that link: the latest persisted row must
+    exist, be attested, be a GO, be a **non-pre-cutover** GO (a pre-cutover GO
+    only satisfies the runbook's Step-2 ordering), be for the configured
+    account, and be less than :data:`ATTESTATION_MAX_AGE` old.
+
+    Fail closed: an unparseable timestamp is treated as no attestation at all.
+
+    Args:
+        attestation: The row from ``Store.load_latest_preflight_attestation``,
+            or ``None`` when preflight has never run against this store.
+        account_id: The configured ``OANDA_ACCOUNT_ID``.
+        now: UTC-aware current time (INV-03).
+
+    Returns:
+        ``None`` when the attestation authorizes live execution; otherwise a
+        human-readable refusal reason naming the remedy.
+    """
+    if attestation is None:
+        return (
+            "no preflight attestation on record for this store.  " + _ATTESTATION_REMEDY
+        )
+
+    if not attestation.get("attested"):
+        return (
+            "the latest preflight attestation was recorded WITHOUT "
+            "--attest-track-record (INV-07 not attested).  " + _ATTESTATION_REMEDY
+        )
+
+    if attestation.get("pre_cutover"):
+        return (
+            "the latest preflight attestation is a --pre-cutover GO, which "
+            "satisfies runbook Step 2 but never authorizes execution.  Set "
+            "LIVE_TRADING_ENABLED=true, then " + _ATTESTATION_REMEDY[0:1].lower()
+            + _ATTESTATION_REMEDY[1:]
+        )
+
+    if not attestation.get("go"):
+        return (
+            "the latest preflight attestation recorded NO-GO.  "
+            + _ATTESTATION_REMEDY
+        )
+
+    recorded_account = str(attestation.get("account_id") or "")
+    if not account_id or recorded_account != account_id:
+        return (
+            f"the latest preflight attestation is for account "
+            f"{recorded_account!r}, not the configured {account_id!r}.  "
+            + _ATTESTATION_REMEDY
+        )
+
+    raw = str(attestation.get("created_at") or "")
+    try:
+        created_at = datetime.fromisoformat(raw.rstrip("Z")).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return (
+            f"the latest preflight attestation has an unparseable timestamp "
+            f"({raw!r}).  " + _ATTESTATION_REMEDY
+        )
+
+    age = now - created_at
+    if age > ATTESTATION_MAX_AGE:
+        age_hours = age.total_seconds() / 3600.0
+        return (
+            f"the latest preflight attestation is {age_hours:.1f}h old "
+            f"(limit {ATTESTATION_MAX_AGE.total_seconds() / 3600.0:.0f}h).  "
+            + _ATTESTATION_REMEDY
+        )
+
+    return None
 
 
 def cmd_execute(args: argparse.Namespace) -> int:
@@ -1436,11 +1622,31 @@ def cmd_execute(args: argparse.Namespace) -> int:
     )
 
     # ------------------------------------------------------------------
+    # Step 1.5: Candidate freshness TTL (WS0-T04). Refuse a stale watchlist
+    # entry BEFORE any downstream gate step (reconcile/pretrade/sizing/
+    # limits/submit) runs — a stale entry_ref must never reach an order.
+    # ------------------------------------------------------------------
+    settings = Settings()
+    try:
+        max_candidate_age_bars = float(settings.max_candidate_age_bars)
+    except (TypeError, ValueError, AttributeError):
+        # Defensive fallback (e.g. Settings mocked/faked without this
+        # attribute configured in tests) — the documented default.
+        max_candidate_age_bars = 1.0
+
+    staleness_error = _candidate_staleness_error(
+        candidate, max_candidate_age_bars, now=run_dt
+    )
+    if staleness_error is not None:
+        _log.error("execute: %s", staleness_error)
+        print(f"ERROR: {staleness_error}", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
     # Step 2: Fresh reconcile BEFORE limits (AMBIGUOUS-03).
     # Refresh account_state (day_pl, start_of_day_equity) and open
     # positions from the broker so the kill switch reads current data.
     # ------------------------------------------------------------------
-    settings = Settings()
     _log.info("execute: connecting to OANDA (env=%s).", settings.env)  # INV-08: no token
     client = OandaClient(settings)
     store = Store(db_path)
@@ -1490,6 +1696,27 @@ def cmd_execute(args: argparse.Namespace) -> int:
     # always requires it; the [y/N] confirm below remains demo-only.
     # ------------------------------------------------------------------
     if settings.env == "live":
+        # (a0) WS0-T06 — persisted attestation.  The operator must have run
+        #      `fathom preflight --attest-track-record` and obtained a full GO
+        #      for THIS account within the last 24 hours.  Fail closed: any
+        #      missing / stale / non-attested / non-GO / pre-cutover /
+        #      account-mismatched record refuses before anything else runs.
+        store_at = Store(db_path)
+        try:
+            attestation = store_at.load_latest_preflight_attestation()
+        finally:
+            store_at.close()
+
+        attest_err = _live_attestation_error(
+            attestation, account_id=settings.oanda_account_id, now=run_dt
+        )
+        if attest_err is not None:
+            _log.warning("execute: live refused on attestation: %s", attest_err)
+            print(f"LIVE REFUSED: {attest_err}", file=sys.stderr)
+            return 1
+        assert attestation is not None  # narrowed by _live_attestation_error
+        persisted_attested = bool(attestation["attested"])
+
         # (a) run_preflight — any exception → refuse (never GO).  B-1.
         store_pf = Store(db_path)
         try:
@@ -1497,8 +1724,8 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 settings=settings,
                 store=store_pf,
                 client=client,
-                attested=True,  # operator runs `fathom preflight` separately;
-                # the live confirm + the gate are the deliberate operator act here.
+                # The operator's PERSISTED attestation, not a literal (WS0-T06).
+                attested=persisted_attested,
             )
         except Exception as exc:  # noqa: BLE001  — fail closed.
             _log.error("execute: live preflight raised, refusing: %s", exc)
@@ -1543,7 +1770,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
     # Step 3: Pretrade check.
     # ``block`` aborts with a clear reason and non-zero exit.
     # ------------------------------------------------------------------
-    verdict = pretrade_check(candidate)
+    verdict = pretrade_check(candidate, client=_llm_client_from_settings(settings))
     if verdict.decision == "block":
         _log.warning(
             "execute: pretrade-check blocked: %s", verdict.reason
@@ -1584,13 +1811,19 @@ def cmd_execute(args: argparse.Namespace) -> int:
         return 1
 
     # quote_to_account_rate: for pairs where the quote currency is USD
-    # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid.
-    # Simple heuristic: if instrument ends in "_USD", rate = 1.0; otherwise
-    # load the latest close_mid from the candle store as the proxy rate.
-    # If unavailable, fall back to 1.0 with a warning (safe — sizing still runs,
-    # may reject on the minimum-trade-size floor if the rate is very wrong).
+    # (e.g. EUR_USD) rate = 1.0; for others (e.g. USD_JPY) rate = 1/mid,
+    # derived from the latest cached close_mid in the candle store.
+    #
+    # There is deliberately NO 1.0 fallback: assuming rate = 1.0 mis-sizes in
+    # both directions depending on the quote currency. For a JPY-quoted pair
+    # it understates per-unit risk by the JPY mid (~157x), under-sizing the
+    # position; for a quote currency stronger than USD (e.g. GBP-quoted,
+    # ~27%) it overstates per-unit risk, over-sizing the position relative to
+    # the 0.25% risk intent (INV-05). If the rate cannot be derived, we
+    # refuse to size and place no order — never guess (WS0-T02).
     rate: float = 1.0
     if not candidate.instrument.endswith("_USD"):
+        resolved_rate: Optional[float] = None
         store3 = Store(db_path)
         try:
             end_dt = datetime.now(tz=timezone.utc)
@@ -1601,19 +1834,44 @@ def cmd_execute(args: argparse.Namespace) -> int:
                 start=start_dt,
                 end=end_dt,
             )
-            if not candles.empty and "close_mid" in candles.columns:
-                last_mid = float(candles["close_mid"].iloc[-1])
+            if not candles.empty:
+                # ``load_candles`` returns bid/ask columns only — the mid is
+                # derived here.  (A ``close_mid`` column is honoured if a
+                # future loader adds one.)
+                if "close_mid" in candles.columns:
+                    last_mid = float(candles["close_mid"].iloc[-1])
+                elif {"close_bid", "close_ask"} <= set(candles.columns):
+                    last_mid = (
+                        float(candles["close_bid"].iloc[-1])
+                        + float(candles["close_ask"].iloc[-1])
+                    ) / 2.0
+                else:
+                    last_mid = 0.0
                 if last_mid > 0:
-                    rate = 1.0 / last_mid
+                    resolved_rate = 1.0 / last_mid
         except Exception as exc:  # noqa: BLE001
-            _log.warning(
-                "execute: could not derive quote→account rate for %s "
-                "(using 1.0 fallback): %s",
+            _log.error(
+                "execute: could not derive quote→account rate for %s: %s",
                 candidate.instrument,
                 exc,
             )
         finally:
             store3.close()
+
+        if resolved_rate is None:
+            _log.error(
+                "execute: SIZING REFUSED — no quote→account conversion rate "
+                "for %s; refusing to size rather than assume 1.0.",
+                candidate.instrument,
+            )
+            print(
+                "SIZING REFUSED: no quote->account conversion rate for "
+                f"{candidate.instrument} — refresh candles (fathom scan) and "
+                "retry. No order placed.",
+                file=sys.stderr,
+            )
+            return 1
+        rate = resolved_rate
 
     sizing_result = size_position(
         candidate,
@@ -1902,6 +2160,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     db_path = args.db_path
     attested: bool = args.attest_track_record
+    pre_cutover: bool = getattr(args, "pre_cutover", False)
 
     try:
         settings = Settings()
@@ -1910,6 +2169,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 1
 
     store = Store(db_path)
+    attestation_recorded = False
     try:
         # Build a real OandaClient for the reachability check.
         try:
@@ -1923,7 +2183,28 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             store=store,
             client=client,
             attested=attested,
+            pre_cutover=pre_cutover,
         )
+
+        # WS0-T06: persist the attestation.  This row — not a hardcoded
+        # literal — is what the live branch of `fathom execute` reads as
+        # evidence that the operator actually performed the INV-07 ceremony.
+        # Both GO and NO-GO runs are recorded (append-only audit trail).
+        # INV-08: the summary carries check names + PASS/FAIL only, never a
+        # detail string (which could echo config) and never the token.
+        summary = "; ".join(
+            f"{c.name}={'PASS' if c.ok else 'FAIL'}" for c in report.checks
+        )
+        store.write_preflight_attestation(
+            created_at=report.checked_at,
+            account_id=str(settings.oanda_account_id or ""),
+            env=str(settings.env),
+            attested=attested,
+            go=report.go,
+            pre_cutover=pre_cutover,
+            checks_summary=summary,
+        )
+        attestation_recorded = True
     except Exception as exc:  # noqa: BLE001
         _log.error("preflight: unexpected error: %s", exc)
         print(f"ERROR: preflight failed unexpectedly: {exc}", file=sys.stderr)
@@ -1941,6 +2222,15 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         print(f"{check.name:<35}  {status:<8}  {check.detail}")
 
     print()
+    if attestation_recorded:
+        kind = "pre-cutover " if pre_cutover else ""
+        print(
+            f"Attestation recorded in {db_path} (preflight_attestations): "
+            f"{kind}attested={attested}, go={report.go}.  "
+            "`fathom execute` on ENV=live reads the latest non-pre-cutover "
+            "attested GO from this table (valid for 24h)."
+        )
+        print()
     if report.go:
         print("OVERALL: GO — all checks passed.  System is mechanically ready.")
         _log.info("fathom preflight: GO at %s", report.checked_at.isoformat())

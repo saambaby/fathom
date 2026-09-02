@@ -29,6 +29,7 @@ from execution.models import (
     FillStatus,
     Order,
     Position,
+    _client_order_id,
     build_bracket,
 )
 from signals.ranker import Candidate
@@ -390,6 +391,44 @@ def test_position_json_roundtrip_pins_shape() -> None:
     }
 
 
+def test_order_is_frozen() -> None:
+    order = build_bracket(_candidate(), 1000, execution_date=EXEC_DATE, precision=5)
+    with pytest.raises(ValidationError):
+        order.stop_loss_price = 0.0  # type: ignore[misc]
+
+
+def test_fill_is_frozen() -> None:
+    fill = Fill(
+        client_order_id="x" * 32,
+        broker_trade_id="t1",
+        fill_price=1.10,
+        units_filled=1000,
+        slippage=0.00012,
+        filled_at=EXEC_DATE,
+        status=FillStatus.FILLED,
+    )
+    with pytest.raises(ValidationError):
+        fill.fill_price = 0.0  # type: ignore[misc]
+
+
+def test_position_is_frozen() -> None:
+    pos = Position(
+        broker_trade_id="t1",
+        instrument="EUR_USD",
+        units=1000,
+        entry_price=1.10,
+        stop_loss_price=1.098,
+        take_profit_price=1.103,
+        opened_at=EXEC_DATE,
+        unrealized_pl=0.0,
+        closed_at=None,
+        realized_pl=None,
+        candidate_ref="EUR_USD:H1:macrossover",
+    )
+    with pytest.raises(ValidationError):
+        pos.unrealized_pl = 1.0  # type: ignore[misc]
+
+
 def test_candidate_ref_format() -> None:
     order = build_bracket(
         _candidate(instrument="EUR_USD", timeframe="H1", strategy_name="donchian_20"),
@@ -414,6 +453,31 @@ def test_client_order_id_deterministic() -> None:
     assert a.client_order_id != ""
 
 
+def test_client_order_id_stable_across_same_utc_day_reruns() -> None:
+    """INV-15: an operator re-run on the same UTC day dedups (same id)."""
+    c = _candidate()
+    morning = datetime(2026, 8, 31, 9, 15, 3, 123456, tzinfo=UTC)
+    evening = datetime(2026, 8, 31, 17, 42, 59, 999999, tzinfo=UTC)
+    assert _client_order_id(c, morning) == _client_order_id(c, evening)
+    a = build_bracket(c, 1000, execution_date=morning, precision=5)
+    b = build_bracket(c, 1000, execution_date=evening, precision=5)
+    assert a.client_order_id == b.client_order_id
+    # created_at keeps full timestamp resolution.
+    assert a.created_at == morning
+    assert b.created_at == evening
+
+
+def test_client_order_id_distinct_on_next_utc_day() -> None:
+    """A genuine re-approval the next day yields a distinct id."""
+    c = _candidate()
+    day1 = datetime(2026, 8, 31, 23, 59, 59, tzinfo=UTC)
+    day2 = datetime(2026, 9, 1, 0, 0, 1, tzinfo=UTC)
+    assert _client_order_id(c, day1) != _client_order_id(c, day2)
+    a = build_bracket(c, 1000, execution_date=day1, precision=5)
+    b = build_bracket(c, 1000, execution_date=day2, precision=5)
+    assert a.client_order_id != b.client_order_id
+
+
 def test_client_order_id_changes_with_execution_date() -> None:
     c = _candidate()
     a = build_bracket(c, 1000, execution_date=EXEC_DATE, precision=5)
@@ -433,7 +497,7 @@ def test_client_order_id_matches_formula() -> None:
     c = _candidate()
     payload = (
         f"{c.instrument}:{c.strategy_name}:{c.timeframe}:"
-        f"{c.generated_at}:{EXEC_DATE}"
+        f"{c.generated_at}:{EXEC_DATE.date().isoformat()}"
     )
     expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
     order = build_bracket(c, 1000, execution_date=EXEC_DATE, precision=5)

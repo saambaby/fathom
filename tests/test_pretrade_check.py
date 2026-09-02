@@ -472,48 +472,184 @@ class TestPretradeCheckStubClient:
 
 
 class TestPretradeCheckOfflinePath:
-    """With no client and no ANTHROPIC_API_KEY, pretrade_check returns block."""
+    """With no client and no LLM_API_KEY, pretrade_check returns block."""
 
-    def test_no_client_no_key_returns_block(self) -> None:
+    def test_no_client_no_key_returns_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         candidate = _make_candidate()
-        with patch.dict(os.environ, {}, clear=False):
-            # Ensure key is absent for this test.
-            env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
-            try:
-                v = pretrade_check(candidate, client=None)
-                assert _is_safe_default(v)
-                assert v.decision == "block"
-            finally:
-                if env_backup is not None:
-                    os.environ["ANTHROPIC_API_KEY"] = env_backup
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        v = pretrade_check(candidate, client=None)
+        assert _is_safe_default(v)
+        assert v.decision == "block"
 
-    def test_no_client_no_key_never_raises(self) -> None:
+    def test_no_client_no_key_never_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         candidate = _make_candidate()
-        env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
         try:
-            try:
-                pretrade_check(candidate, client=None)
-            except Exception as exc:  # noqa: BLE001
-                pytest.fail(f"pretrade_check raised {type(exc).__name__}: {exc}")
-        finally:
-            if env_backup is not None:
-                os.environ["ANTHROPIC_API_KEY"] = env_backup
+            pretrade_check(candidate, client=None)
+        except Exception as exc:  # noqa: BLE001
+            pytest.fail(f"pretrade_check raised {type(exc).__name__}: {exc}")
 
-    def test_no_client_no_key_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_no_client_no_key_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         candidate = _make_candidate()
-        env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
-        try:
-            with caplog.at_level(
-                logging.WARNING, logger="hermes_integration.pretrade_check"
-            ):
-                pretrade_check(candidate, client=None)
-            assert any(
-                "safe default" in r.message.lower() or "no client" in r.message.lower()
-                for r in caplog.records
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        with caplog.at_level(
+            logging.WARNING, logger="hermes_integration.pretrade_check"
+        ):
+            pretrade_check(candidate, client=None)
+        assert any(
+            "safe default" in r.message.lower() or "no client" in r.message.lower()
+            for r in caplog.records
+        )
+
+    def test_anthropic_key_alone_no_longer_activates_live_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The provider swap: ANTHROPIC_API_KEY without LLM_API_KEY stays offline."""
+        candidate = _make_candidate()
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-be-ignored")
+        v = pretrade_check(candidate, client=None)
+        assert _is_safe_default(v)
+
+
+# ---------------------------------------------------------------------------
+# OpenAICompatClient — OpenAI-compatible chat-completions adapter (mocked httpx)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    """Minimal httpx.Response stand-in for the adapter tests."""
+
+    def __init__(self, payload: dict[str, Any], status_error: bool = False) -> None:
+        self._payload = payload
+        self._status_error = status_error
+
+    def raise_for_status(self) -> None:
+        if self._status_error:
+            raise RuntimeError("HTTP 500 from provider")
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class TestOpenAICompatClient:
+    """The provider-agnostic adapter speaks the OpenAI chat-completions wire format."""
+
+    _GOOD_PAYLOAD: dict[str, Any] = {
+        "choices": [
+            {"message": {"role": "assistant", "content": '{"decision": "proceed", "reason": "ok"}'}}
+        ]
+    }
+
+    def _client_with_capture(
+        self, payload: dict[str, Any], captured: dict[str, Any], status_error: bool = False
+    ) -> "Any":
+        from hermes_integration.pretrade_check import OpenAICompatClient
+
+        class _MockHttpxClient:
+            def __init__(self, **kwargs: Any) -> None:
+                captured["client_kwargs"] = kwargs
+
+            def __enter__(self) -> "_MockHttpxClient":
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                return None
+
+            def post(self, url: str, **kwargs: Any) -> _FakeResponse:
+                captured["url"] = url
+                captured["headers"] = kwargs.get("headers")
+                captured["json"] = kwargs.get("json")
+                return _FakeResponse(payload, status_error=status_error)
+
+        with patch("hermes_integration.pretrade_check.httpx.Client", _MockHttpxClient):
+            client = OpenAICompatClient(
+                api_key="test-key-123",
+                base_url="https://example.test/v1",
+                model="test-model",
             )
-        finally:
-            if env_backup is not None:
-                os.environ["ANTHROPIC_API_KEY"] = env_backup
+            return client.complete("hello prompt")
+
+    def test_posts_openai_chat_completions_wire_format(self) -> None:
+        captured: dict[str, Any] = {}
+        text = self._client_with_capture(self._GOOD_PAYLOAD, captured)
+        assert text == '{"decision": "proceed", "reason": "ok"}'
+        assert captured["url"] == "https://example.test/v1/chat/completions"
+        assert captured["headers"]["Authorization"] == "Bearer test-key-123"
+        body = captured["json"]
+        assert body["model"] == "test-model"
+        assert body["messages"] == [{"role": "user", "content": "hello prompt"}]
+
+    def test_missing_choices_raises(self) -> None:
+        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+
+        captured: dict[str, Any] = {}
+        with pytest.raises(ValueError):
+            self._client_with_capture({"choices": []}, captured)
+
+    def test_non_string_content_raises(self) -> None:
+        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+
+        captured: dict[str, Any] = {}
+        with pytest.raises(ValueError):
+            self._client_with_capture(
+                {"choices": [{"message": {"content": None}}]}, captured
+            )
+
+    def test_http_error_propagates_to_caller(self) -> None:
+        """The adapter raises on HTTP errors; pretrade_check's except → block."""
+        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+
+        captured: dict[str, Any] = {}
+        with pytest.raises(RuntimeError):
+            self._client_with_capture(self._GOOD_PAYLOAD, captured, status_error=True)
+
+    def test_api_key_not_in_default_repr(self) -> None:
+        """INV-08: the key must not leak via repr/str of the client."""
+        from hermes_integration.pretrade_check import OpenAICompatClient
+
+        client = OpenAICompatClient(
+            api_key="super-secret-key", base_url="https://example.test/v1", model="m"
+        )
+        assert "super-secret-key" not in repr(client)
+        assert "super-secret-key" not in str(client)
+
+    def test_defaults_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """from_env() reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL."""
+        from hermes_integration.pretrade_check import (
+            DEFAULT_BASE_URL,
+            MODEL,
+            OpenAICompatClient,
+        )
+
+        monkeypatch.setenv("LLM_API_KEY", "env-key")
+        monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        client = OpenAICompatClient.from_env()
+        assert client is not None
+        assert client.base_url == DEFAULT_BASE_URL
+        assert client.model == MODEL
+
+        monkeypatch.setenv("LLM_BASE_URL", "https://groq.example/openai/v1")
+        monkeypatch.setenv("LLM_MODEL", "llama-3.3-70b")
+        client2 = OpenAICompatClient.from_env()
+        assert client2 is not None
+        assert client2.base_url == "https://groq.example/openai/v1"
+        assert client2.model == "llama-3.3-70b"
+
+    def test_from_env_without_key_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hermes_integration.pretrade_check import OpenAICompatClient
+
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        assert OpenAICompatClient.from_env() is None
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +699,7 @@ class TestModuleIsolation:
         assert "parse_pretrade_verdict" in public_names
         assert "pretrade_check" in public_names
         assert "MODEL" in public_names
+        assert "OpenAICompatClient" in public_names
         # These must NOT be present
         forbidden = {"place_order", "submit_order", "size_position", "kill_switch"}
         overlap = public_names & forbidden

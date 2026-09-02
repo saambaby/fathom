@@ -373,3 +373,12 @@ be split or `risk.sizing` should be removed from the package-level re-exports.
 CLAUDE.md NOT edited.
 
 **Merge plan:** `gh pr merge 113 --squash --delete-branch` (lead action after reviewer pass)
+
+## 2026-09-01 — spec sprint (main): calendar_events vs Store
+
+`calendar_events` is created only by `FairEconomyCalendar.__init__`
+(`CREATE TABLE IF NOT EXISTS` + commit), not by `Store` DDL
+(`data/store.py` CREATE list ~106–401). Phase-08 `review-command` therefore
+adds a read-only `Store.load_calendar_events` that returns `[]` on
+`no such table` and must not instantiate `FairEconomyCalendar` (mtime /
+row-count ACs). Same DB file the calendar writer uses.

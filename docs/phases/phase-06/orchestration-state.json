@@ -1,0 +1,21 @@
+{
+ "sweep": "ws0",
+ "started_at": "2026-09-01T05:40:00Z",
+ "base": "main",
+ "cap": 4,
+ "items": {
+  "134": "merged-pr144",
+  "135": "merged-pr150",
+  "136": "merged-pr149",
+  "137": "merged-pr151",
+  "138": "merged-pr145",
+  "139": "merged-pr153",
+  "140": "merged-pr154",
+  "141": "merged-pr146",
+  "142": "merged-pr148",
+  "143": "blocked-on-human (needs OANDA token or candle-db export)",
+  "ws1-pr133": "merged-pr147-closed-133"
+ },
+ "completed_at": "2026-09-01T07:20:00Z",
+ "summary": "Sweep COMPLETE: 10/11 items merged to main via reviewed, CI-gated squash PRs \u2014 #134(PR144) #141(PR146,CI stood up) #138(PR145,1 rejection cycle) #142(PR148) #136(PR149) #135(PR150) #137(PR151) #139(PR153) #140(PR154,doc-lint guard added) + WS1 adapter(PR147). Sole remainder: #143 real-data fixture, blocked-on-human (OANDA practice token or candle-db export). Latent bugs found during fixes: conversion-rate lookup never worked; inverted sizing rationale. 9 spec amendments landed with fixes -> run /halfcycle:cross-spec-audit before authoring new specs. Post-sweep operator prereq: re-run fathom backtest --instruments ALL --history-years 5 (stale approved_set Sharpes) then gates T-08 -> T-11 -> T-06 per docs/operator-acceptance.md."
+}

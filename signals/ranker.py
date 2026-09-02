@@ -23,7 +23,12 @@ Pipeline (each stage a pure function, unit-testable in isolation):
 INV-03: every timestamp is UTC RFC 3339 (sourced from the ``Signal`` bar's
     close time, never ``datetime.now()`` for candidate content).
 INV-11: consumes ``Signal``s whose ATR(14)-derived stops make cross-strategy
-    ``oos_sharpe_mean`` comparable.
+    ``oos_sharpe_mean`` comparable.  Cross-**timeframe** comparability is a
+    separate guarantee, owned by ``backtest.metrics`` (WS0-T03): metrics are
+    annualised with ``√periods_per_year`` for the combo's own granularity
+    (D 252 / H4 1512 / H1 6048), so the mixed-timeframe sort below is sound.
+    Approved-set rows written before WS0-T03 used √252 for every timeframe and
+    are stale until ``fathom backtest`` is re-run.
 INV-01: produces a watchlist of *candidates only* — never sizes or places an
     order.  There is deliberately no import of ``execution`` or ``risk`` here.
 
@@ -107,6 +112,8 @@ class Candidate(BaseModel):
                       flagged).
     generated_at    : UTC RFC-3339 string — the signal bar's close time (INV-03).
     """
+
+    model_config = {"frozen": True}
 
     instrument: str
     timeframe: str

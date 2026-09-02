@@ -229,7 +229,10 @@ Before registering this job, ensure the following are available:
    candle cache before the first Hermes run.
 4. **Discord webhook or bot token** — a Discord channel where the watchlist
    will be posted.
-5. **Anthropic API key** — for Hermes' Claude calls (news-risk + narration).
+5. **Hermes-side Anthropic API key** — for Hermes' own Claude calls (news-risk +
+   narration). Distinct from the Fathom-side `LLM_API_KEY` used by the in-process
+   pre-trade veto (any OpenAI-compatible provider) — that key is not needed for
+   this job, since order execution is out of scope here (INV-01).
 
 ### Credentials and secrets (INV-08)
 
@@ -242,9 +245,9 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 # (or DISCORD_BOT_TOKEN + DISCORD_CHANNEL_ID for bot approach)
 
 # Fathom-side (if Hermes calls fathom scan live — not --dry-run)
-OANDA_API_KEY=...
+OANDA_API_TOKEN=...
 OANDA_ACCOUNT_ID=...
-OANDA_ENV=practice
+ENV=demo
 ```
 
 Hermes passes these to its tool calls via environment injection — never as
@@ -335,6 +338,6 @@ Live acceptance requires a human operator to:
 2. Confirm the watchlist lands coherently in Discord on **≥5 consecutive
    weekday runs** (charts + Claude rationale + news flags present; empty days
    post "no candidates"; a `skip` verdict vetoes; no secret token in output).
-3. Record the results in `docs/phases/phase-2-results.md`.
+3. Record the results in `docs/phases/phase-02/results.md`.
 
 This is a manual, human-admin gate (D-P2-5) — it cannot be automated.

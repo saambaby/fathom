@@ -19,9 +19,12 @@ Invariants
 * **INV-08** — credentials from ``Settings``/.env; never printed/logged.
 * **INV-09** — single code path; demo/live differentiated by ``settings.env``.
 
-The alerter is a ``NoOpAlerter`` stub (logs only) until monitor-alerts T-09
-ships.  To wire a real alerter, replace the stub with the T-09 implementation
-and pass it in.
+The alerter is built via ``monitoring.alerts.build_alerter_from_settings``
+(P3-T-09), which constructs a live Discord-backed ``Alerter`` from
+``Settings.discord_webhook_url``.  If ``DISCORD_WEBHOOK_URL`` is not set,
+the monitor falls back to ``NoOpAlerter`` (logs a warning) so webhook-less
+demo operation keeps working; delivery is verified separately at the
+operator gate.
 """
 
 from __future__ import annotations
@@ -42,7 +45,9 @@ if str(_ROOT) not in sys.path:
 from config.settings import Settings
 from data.store import Store
 from data.stream import PriceStream
+from monitoring.alerts import build_alerter_from_settings
 from monitoring.watcher import (
+    Alerter,
     NoOpAlerter,
     NoOpExecutionResponder,
     PositionSnapshot,
@@ -51,6 +56,23 @@ from monitoring.watcher import (
 )
 
 logger = logging.getLogger("fathom.scripts.run_monitor")
+
+
+def _build_alerter(store: Store) -> Alerter:
+    """Build the deviation monitor's alerter (P3-T-09).
+
+    Delegates to ``monitoring.alerts.build_alerter_from_settings``.  If
+    ``DISCORD_WEBHOOK_URL`` is not configured, falls back to ``NoOpAlerter``
+    (logs a warning) so webhook-less demo operation keeps working — Discord
+    delivery is verified separately at the operator gate.
+    """
+    try:
+        return build_alerter_from_settings(store)
+    except ValueError:
+        logger.warning(
+            "DISCORD_WEBHOOK_URL not set — alerts disabled, using NoOpAlerter"
+        )
+        return NoOpAlerter()
 
 
 def _build_store_loader(store: Store) -> "Callable[[], list[PositionSnapshot]]":
@@ -139,7 +161,7 @@ def main() -> None:
 
     from data.stream import PriceTick as _PriceTick
 
-    alerter = NoOpAlerter()  # T-09 will replace this with the real alerter
+    alerter = _build_alerter(store)
     responder = NoOpExecutionResponder()
 
     logger.info(

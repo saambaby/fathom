@@ -249,3 +249,15 @@ importable without a key. Tests use `_StubClient`/`_RaisingClient` injected via 
 **New dependency added to pyproject.toml?** NO (anthropic already present).
 **New CLI command?** NO.
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass)
+
+## 2026-09-01 — spec sprint (main): INV-20 / INV-02 split / `ai/` rename
+
+Phase-07 `ai-package-migration` will move `hermes_integration/` → `ai/` and
+route all in-process LLM traffic through one `OpenAICompatClient` (INV-20).
+Until that lands, grounded-claim anchors stay on `hermes_integration/`.
+
+INV-02 **skip/block** applies only to automated decisions (news-risk, pretrade).
+Advisory sites (narration, market-brief, companion review/journal/ask) fail
+soft to `"analysis unavailable"` — never skip. Offline predicate is
+`client is None and not LLM_API_KEY` → zero I/O; measurement rows use
+`model_id="offline"`.

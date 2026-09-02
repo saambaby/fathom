@@ -126,6 +126,8 @@ class Order(BaseModel):
     created_at        : UTC-aware order-creation time (INV-03).
     """
 
+    model_config = {"frozen": True}
+
     client_order_id: str
     instrument: str
     direction: Direction
@@ -183,6 +185,8 @@ class Fill(BaseModel):
     status          : ``filled`` | ``partial`` | ``rejected``.
     """
 
+    model_config = {"frozen": True}
+
     client_order_id: str
     broker_trade_id: str
     fill_price: float
@@ -236,6 +240,8 @@ class Position(BaseModel):
     realized_pl       : realised PnL, written on close (``None`` until then).
     candidate_ref     : provenance ``f"{instrument}:{timeframe}:{strategy_name}"``.
     """
+
+    model_config = {"frozen": True}
 
     broker_trade_id: str
     instrument: str
@@ -417,11 +423,21 @@ def _client_order_id(candidate: Candidate, execution_date: datetime) -> str:
     ``sha256(f"{instrument}:{strategy_name}:{timeframe}:{generated_at}:"
     f"{execution_date}").hexdigest()[:32]`` over the candidate fields plus the
     injected ``execution_date``.  ``generated_at`` is already the candidate's
-    RFC-3339 string; ``execution_date`` is interpolated via the f-string as the
-    spec states.  Pure: identical inputs always yield the identical id.
+    RFC-3339 string.
+
+    Per ``docs/features/order-placement.md``, ``execution_date`` is the **UTC
+    date** of the ``fathom execute`` run, so it is interpolated as
+    ``execution_date.date().isoformat()`` (``YYYY-MM-DD``), never the full
+    timestamp: "The same approved candidate retried the same day dedups; a
+    genuine re-approval the next day yields a distinct id."  Interpolating the
+    microsecond-precision datetime would give every operator re-run a fresh id
+    and place a duplicate broker order (INV-15 violation).
+
+    ``Order.created_at`` keeps the full timestamp; only the id is date-grained.
+    Pure: identical inputs always yield the identical id.
     """
     payload = (
         f"{candidate.instrument}:{candidate.strategy_name}:{candidate.timeframe}:"
-        f"{candidate.generated_at}:{execution_date}"
+        f"{candidate.generated_at}:{execution_date.date().isoformat()}"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]

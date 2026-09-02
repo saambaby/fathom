@@ -46,7 +46,7 @@ from dateutil.relativedelta import relativedelta
 from pydantic import BaseModel
 
 from backtest.engine import BacktestEngine
-from backtest.metrics import Metrics, compute_metrics
+from backtest.metrics import Metrics, compute_metrics, periods_per_year_for
 from strategies.base import Strategy
 
 
@@ -139,6 +139,7 @@ class WalkForwardValidator:
         end: datetime,
         train_months: int = 12,
         test_months: int = 3,
+        periods_per_year: Optional[float] = None,
     ) -> WalkForwardResult:
         """Execute the walk-forward validation.
 
@@ -153,6 +154,13 @@ class WalkForwardValidator:
         test_months:
             Length of each test window in calendar months; also the step size
             (the windows advance by ``test_months`` at each iteration).
+        periods_per_year:
+            Bars per year used to annualise every window's Sharpe / Sortino
+            (WS0-T03).  ``None`` (the default) resolves it from ``granularity``
+            via :func:`~backtest.metrics.periods_per_year_for`, so every window
+            of a walk-forward run is annualised for its own bar length and the
+            resulting ``oos_sharpe_mean`` values are comparable across
+            timeframes.
 
         Returns
         -------
@@ -164,6 +172,12 @@ class WalkForwardValidator:
             error.
         """
         windows: list[WindowResult] = []
+
+        ppy = (
+            periods_per_year
+            if periods_per_year is not None
+            else periods_per_year_for(granularity)
+        )
 
         train_delta = relativedelta(months=train_months)
         test_delta = relativedelta(months=test_months)
@@ -183,13 +197,13 @@ class WalkForwardValidator:
             is_result = self._engine.run(
                 self._strategy, instrument, granularity, train_start, train_end
             )
-            is_metrics = compute_metrics(is_result)
+            is_metrics = compute_metrics(is_result, periods_per_year=ppy)
 
             # Run out-of-sample backtest on the test window.
             oos_result = self._engine.run(
                 self._strategy, instrument, granularity, test_start, test_end
             )
-            oos_metrics = compute_metrics(oos_result)
+            oos_metrics = compute_metrics(oos_result, periods_per_year=ppy)
 
             windows.append(
                 WindowResult(

@@ -11,13 +11,23 @@ The live cutover does NOT proceed until every box in Section 1 is ticked.
 ## CRITICAL ORDERING REQUIREMENT
 
 The cutover sequence in Section 2 is a **hard prerequisite, not a suggestion**.
-The ordering exists because the live gate auto-passes the attestation inside
-`fathom execute` ONLY because `LIVE_TRADING_ENABLED=true` is the persisted
-evidence that the attested preflight ceremony was completed first. **Never set
-`LIVE_TRADING_ENABLED=true` before a passing `fathom preflight
---attest-track-record` run.** The flag IS the attestation record. Setting the
-flag without a prior passing attested preflight defeats the entire defense-in-depth
-design (D-P5-2) and bypasses the INV-07 gate.
+The live gate inside `fathom execute` does **not** take the INV-07 attestation on
+trust: it reads the latest row of the `preflight_attestations` table and refuses
+unless that row is an attested, non-pre-cutover **GO** for the configured account,
+written less than **24 hours** ago. The ceremony is therefore enforced, not
+assumed — but the ordering still matters, because each step is what makes the next
+one passable:
+
+1. `ENV=live` + live token (flag still off)
+2. `fathom preflight --attest-track-record --pre-cutover` → **GO**
+3. `LIVE_TRADING_ENABLED=true`
+3b. `fathom preflight --attest-track-record` (no `--pre-cutover`) → **GO** — this
+    is the row `fathom execute` checks
+4. `fathom execute …` with the typed account-id confirm
+
+**Never set `LIVE_TRADING_ENABLED=true` before a passing attested preflight.** The
+flag is one of four independent gates (D-P5-2), not the attestation record itself;
+setting it early removes a layer of the defense-in-depth design.
 
 Going live is **operator-only and deliberate**. No automated step performs the
 cutover. The lead/agent never flips `LIVE_TRADING_ENABLED` or `ENV=live`. The
@@ -28,7 +38,7 @@ cutover is a manual, reviewed, single-operator action.
 ## Section 1 — Prerequisites (INV-07 Hard Gate)
 
 The live cutover is **blocked** until every item below is ticked. These are not
-suggestions; they are the INV-07 prerequisite (see `docs/invariants.md`).
+suggestions; they are the INV-07 prerequisite (see `docs/product/invariants.md`).
 
 ### 1.1 Demo track record requirements
 
@@ -81,7 +91,7 @@ ENV=live
 ```
 
 Do **not** set `LIVE_TRADING_ENABLED=true` yet. The flag is set only after a
-passing attested preflight (Step 3).
+passing attested pre-cutover preflight (Step 3).
 
 Verify `.env` is gitignored:
 
@@ -90,11 +100,21 @@ git status --short | grep -v "^?? .env"
 # .env must not appear as a tracked or staged file
 ```
 
-### Step 2 — Run fathom preflight — must be GO
+### Step 2 — Run the pre-cutover preflight — must be GO
 
 ```bash
-fathom preflight --attest-track-record
+fathom preflight --attest-track-record --pre-cutover
 ```
+
+`--pre-cutover` is required here and only here. At this point `ENV=live` but
+`LIVE_TRADING_ENABLED` is deliberately still off (Step 1), which the strict
+`env_flag_token_consistency` check treats as a NO-GO. `--pre-cutover` makes that
+one check report the flag as *intentionally* off, so this step is satisfiable —
+it excuses nothing else (a missing token or account id still NO-GOs).
+
+**A `--pre-cutover` GO never authorizes an order.** It is recorded as
+`pre_cutover=True` and `fathom execute` refuses it explicitly; the GO that
+authorizes execution is the Step-3b re-run.
 
 This command:
 - Checks account reachability (OANDA returns a valid account summary).
@@ -104,16 +124,16 @@ This command:
 - Checks env/flag/token consistency (ENV=live, token present, account ID present).
 - Records the operator's explicit attestation that the demo track record satisfies
   INV-07 (the `--attest-track-record` flag is this attestation).
+- Persists the result as a row in the `preflight_attestations` table (timestamp,
+  account id, env, attested, go, pre-cutover, per-check summary). Every run is
+  recorded, GO and NO-GO alike.
 
 **The output must show `GO` with all five checks passing. Any `NO-GO` blocks the
-cutover — resolve the failing check and re-run until GO before proceeding.** The
-`env_flag_token_consistency` check verifies that `live_trading_enabled` (the
-`settings.live_trading_enabled` field, set via `LIVE_TRADING_ENABLED=true` in
-`.env`) is consistent with `ENV=live`.
+cutover — resolve the failing check and re-run until GO before proceeding.**
 
 Record the GO output (timestamp + all check lines) in Section 6.
 
-### Step 3 — ONLY after a GO: set LIVE_TRADING_ENABLED=true
+### Step 3 — ONLY after a pre-cutover GO: set LIVE_TRADING_ENABLED=true
 
 Only after Step 2 produces a GO result, edit `.env`:
 
@@ -121,10 +141,30 @@ Only after Step 2 produces a GO result, edit `.env`:
 LIVE_TRADING_ENABLED=true
 ```
 
-**Never set this flag before a passing attested preflight.** This flag is the
-persisted record that the attested preflight ceremony was completed. The live gate
-in `fathom execute` reads this flag as evidence that the ceremony happened; setting
-the flag without that ceremony bypasses the INV-07 gate.
+**Never set this flag before a passing attested preflight.** The flag is one of
+the four independent live gates (`ENV=live` AND `live_trading_enabled` AND
+`preflight.go` AND typed account-id confirm) — it is *not* by itself the record
+that the ceremony happened. That record is the persisted attestation row written
+in Step 3b.
+
+### Step 3b — Re-run the full preflight (no `--pre-cutover`) — must be GO
+
+```bash
+fathom preflight --attest-track-record
+```
+
+With the flag now set, the strict `env_flag_token_consistency` check passes on
+its own terms. This run writes the attestation row that actually authorizes
+execution:
+
+**`fathom execute` on `ENV=live` refuses unless the latest persisted attestation
+is `attested=True`, `go=True`, `pre_cutover=False`, for the configured
+`OANDA_ACCOUNT_ID`, and less than 24 hours old.** A missing, stale, non-attested,
+NO-GO, pre-cutover, or account-mismatched record refuses the order before
+reconcile-time preflight, the typed confirm, sizing, or submission — no order is
+placed. If more than 24 hours pass before Step 4, simply re-run this command.
+
+Record this GO output in Section 6 as well.
 
 Do not also set `LIVE_RISK_FRACTION` above 0.001 (0.10%) at this stage. Section 3
 covers the ramp schedule.
@@ -139,7 +179,7 @@ subcommand takes a single positional `candidate_ref` in the form
 ```bash
 fathom execute <instrument>:<timeframe>:<strategy_name>
 # e.g.
-fathom execute EUR_USD:H1:macrossover_10_50_eur_usd_h1
+fathom execute "EUR_USD:D:BollingerReversion(20,2.0)"
 ```
 
 Optional flags: `--db-path PATH` (default `data/fathom.db`), `--dry-run`

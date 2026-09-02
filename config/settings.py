@@ -68,6 +68,36 @@ class Settings(BaseSettings):
         ),
     )
 
+    #: Candidate freshness TTL, in units of the candidate's OWN timeframe bar
+    #: length (H1=1h, H4=4h, D=24h). A candidate older than this many bars
+    #: (measured against ``Candidate.generated_at``, the signal bar's close
+    #: time) is refused at ``fathom execute`` load time (WS0-T04) — its
+    #: entry_ref/stop/target were anchored to a scan that is no longer
+    #: representative of the current market. Default 1.0 = one full bar.
+    max_candidate_age_bars: float = Field(
+        default=1.0,
+        gt=0.0,
+        description=(
+            "Candidate expires after this many bars of its own timeframe "
+            "(e.g. 1.0 x H4 = 4h). Enforced at fathom execute load time."
+        ),
+    )
+
+    # --- Pre-trade veto LLM (provider-agnostic, OpenAI-compatible) ---------
+    #: API key for the OpenAI-compatible endpoint backing the pre-trade veto.
+    #: Optional: absent → the veto has no client and fails closed to ``block``
+    #: (INV-02).  INV-08: SecretStr, never logged.
+    llm_api_key: Optional[SecretStr] = None
+
+    #: Base URL of the OpenAI-compatible endpoint.  Any compatible provider
+    #: works (OpenAI, Groq, NVIDIA NIM, OpenRouter, Gemini compat, Ollama).
+    llm_base_url: str = "https://api.openai.com/v1"
+
+    #: Model id for the veto call.  Pinned to the cheapest reliable
+    #: structured-JSON tier (D-P3-E); must match
+    #: ``hermes_integration.pretrade_check.MODEL``.
+    llm_model: str = "gpt-5-nano"
+
     @model_validator(mode="after")
     def derive_base_url(self) -> "Settings":
         """Derive oanda_base_url from env if not explicitly set."""
