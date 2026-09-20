@@ -1,11 +1,11 @@
-"""Tests for the Phase 2 CLI subcommands: scan, watchlist, chart (P2-T-07).
+"""Tests for the Phase 2 CLI subcommands: scan, watchlist (P2-T-07).
 
 Design (NO live HTTP)
 ---------------------
-* All tests drive ``cli.cmd_scan``, ``cli.cmd_watchlist``, ``cli.cmd_chart``
+* All tests drive ``cli.cmd_scan``, ``cli.cmd_watchlist``
   and ``cli.main`` directly — no subprocess.
 * The OANDA client, Settings, and candle fetch are never called (dry-run or
-  patched).  The ranker, portfolio limiter, and chart renderer are exercised
+  patched).  The ranker and portfolio limiter are exercised
   against in-memory SQLite + synthetic fixtures.
 * ``--dry-run`` skip for ``cmd_scan`` is exercised explicitly.
 
@@ -16,11 +16,10 @@ Coverage
 2. Empty approved-set → empty watchlist, exit 0, clear message (INV-10).
 3. ``watchlist`` re-reads the persisted run; JSON round-trips back to Candidate
    with correct field names + types (INV-13 shape check).
-4. ``chart <instrument>`` writes a non-empty PNG and prints its path to stdout.
-5. ``backtest`` subcommand still works (not broken).
-6. ``--dry-run scan`` smoke: exits 0 against an empty DB.
-7. No live HTTP, no token logged (INV-08); all timestamps UTC (INV-03).
-8. No order/execution import path (INV-01).
+4. ``backtest`` subcommand still works (not broken).
+5. ``--dry-run scan`` smoke: exits 0 against an empty DB.
+6. No live HTTP, no token logged (INV-08); all timestamps UTC (INV-03).
+7. No order/execution import path (INV-01).
 """
 
 from __future__ import annotations
@@ -110,7 +109,7 @@ def _make_candidate(rank: int = 1, instrument: str = "EUR_USD") -> Candidate:
 
 
 def _make_namespace(**kwargs: object) -> argparse.Namespace:
-    """Build an argparse.Namespace with scan/watchlist/chart defaults."""
+    """Build an argparse.Namespace with scan/watchlist defaults."""
     defaults = {
         "command": "scan",
         "instruments": "EUR_USD",
@@ -134,27 +133,21 @@ def _make_namespace(**kwargs: object) -> argparse.Namespace:
 class TestNoOrderPath:
     def test_hermes_integration_has_no_execution_commands(self) -> None:
         """hermes_integration/ must not register or grant access to fathom execute,
-        fathom positions, or fathom reconcile — the Phase 2 allow-list is
-        scan/watchlist/chart only (INV-01).
+        fathom positions, or fathom reconcile (INV-01).
 
         P3-T-10 added execute/positions/reconcile to cli.py, which is correct
         and intentional — cli.py is the canonical INV-01 enforcement point.
-        The invariant is that Hermes (hermes_integration/) must NEVER be given
+        The invariant is that hermes_integration/ must NEVER be given
         access to order/execution commands.  We scan every text file under
-        hermes_integration/ to assert the allow-list boundary is upheld.
+        hermes_integration/ to assert the boundary is upheld.
 
-        Patterns checked are the CLI tool/command strings that Hermes would need
-        to reference to gain access: "fathom execute", "fathom positions",
-        "fathom reconcile".  Discussion of why NOT to grant access (as in daily.md)
-        is fine and is not caught by these exact patterns.
+        Patterns checked are the CLI tool/command strings that a job definition
+        would need to reference to gain access: "fathom execute", "fathom positions",
+        "fathom reconcile".
         """
         import pathlib
 
         hermes_dir = pathlib.Path(__file__).parent.parent / "hermes_integration"
-        # These are the exact command strings a Hermes job definition would use
-        # to invoke the forbidden commands.  We do NOT match bare "execute" or
-        # "positions" to avoid flagging legitimate negative mentions (e.g.
-        # "Do not grant execute access").
         forbidden_patterns = [
             "fathom execute",
             "fathom positions",
@@ -173,8 +166,8 @@ class TestNoOrderPath:
             for pattern in forbidden_patterns:
                 assert pattern not in content, (
                     f"hermes_integration/{file_path.name} contains forbidden "
-                    f"pattern {pattern!r} — INV-01: Hermes must NOT have access "
-                    "to order/execution commands (allow-list: scan/watchlist/chart)."
+                    f"pattern {pattern!r} — INV-01: no AI/analysis surface may "
+                    "import or invoke order/execution commands."
                 )
 
 
@@ -372,7 +365,7 @@ class TestScanCommand:
             "cmd_scan must return 1 when Ranker.rank() raises, not propagate the "
             "exception as a raw traceback"
         )
-        # A log line at ERROR level must be emitted (the Hermes job can detect it).
+        # A log line at ERROR level must be emitted so the operator can detect it.
         error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
         assert error_msgs, "Expected at least one ERROR log entry when ranker raises"
         assert any("scoring backend offline" in m for m in error_msgs), (
@@ -577,97 +570,6 @@ class TestWatchlistCommand:
                 f"Round-trip mismatch on field {field!r}: "
                 f"scan={scan_json[0][field]!r}, watchlist={wl_json[0][field]!r}"
             )
-
-
-# ---------------------------------------------------------------------------
-# chart — PNG creation
-# ---------------------------------------------------------------------------
-
-
-class TestChartCommand:
-    def test_chart_writes_png_prints_path(self, tmp_path: Path) -> None:
-        """chart <instrument> writes a non-empty PNG and prints its path."""
-        db_path = str(tmp_path / "chart.db")
-        out_dir = str(tmp_path / "charts")
-        run_dt = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
-
-        candidate = _make_candidate()
-
-        # Persist the candidate to watchlist and candles to the store.
-        store = Store(db_path)
-        try:
-            _populate_h1(store, "EUR_USD", n_bars=150)
-            store.write_watchlist([candidate], run_timestamp=run_dt)
-        finally:
-            store.close()
-
-        args = _make_namespace(
-            command="chart",
-            instrument="EUR_USD",
-            timeframe="H1",
-            db_path=db_path,
-            out_dir=out_dir,
-            history_years=1,
-        )
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            rc = cli.cmd_chart(args)
-
-        assert rc == 0
-        png_path = buf.getvalue().strip()
-        assert png_path.endswith(".png"), f"Expected PNG path, got: {png_path!r}"
-        assert os.path.exists(png_path), f"PNG file not created: {png_path!r}"
-        assert os.path.getsize(png_path) > 0, "PNG is empty"
-
-    def test_chart_no_watchlist_entry_exits_nonzero(self, tmp_path: Path) -> None:
-        """chart fails with exit 1 when no watchlist entry exists."""
-        db_path = str(tmp_path / "no_wl.db")
-        # Create an empty DB.
-        Store(db_path).close()
-
-        args = _make_namespace(
-            command="chart",
-            instrument="EUR_USD",
-            timeframe="H1",
-            db_path=db_path,
-            out_dir=str(tmp_path / "charts"),
-            history_years=1,
-        )
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            rc = cli.cmd_chart(args)
-
-        assert rc != 0
-
-    def test_chart_no_candles_exits_nonzero(self, tmp_path: Path) -> None:
-        """chart fails with exit 1 when candles are missing from the store."""
-        db_path = str(tmp_path / "no_candles.db")
-        run_dt = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
-
-        candidate = _make_candidate()
-        store = Store(db_path)
-        try:
-            # No candles inserted — only the watchlist entry.
-            store.write_watchlist([candidate], run_timestamp=run_dt)
-        finally:
-            store.close()
-
-        args = _make_namespace(
-            command="chart",
-            instrument="EUR_USD",
-            timeframe="H1",
-            db_path=db_path,
-            out_dir=str(tmp_path / "charts"),
-            history_years=1,
-        )
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            rc = cli.cmd_chart(args)
-
-        assert rc != 0
 
 
 # ---------------------------------------------------------------------------

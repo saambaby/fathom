@@ -959,27 +959,9 @@ class TestInv01Boundary:
             for pattern in forbidden_patterns:
                 assert pattern not in content, (
                     f"{file_path} contains forbidden pattern {pattern!r} — "
-                    "INV-01: Hermes must NOT have access to order/execution "
-                    "commands (allow-list: scan/watchlist/chart only)."
+                    "INV-01: no AI/analysis surface may import or invoke "
+                    "order/execution commands."
                 )
-
-    def test_daily_md_allowlist_unchanged(self) -> None:
-        """hermes_integration/jobs/daily.md allow-list is still scan/watchlist/chart."""
-        import pathlib
-
-        daily_path = (
-            pathlib.Path(__file__).parent.parent
-            / "hermes_integration" / "jobs" / "daily.md"
-        )
-        if not daily_path.exists():
-            pytest.skip("daily.md not found")
-
-        content = daily_path.read_text(encoding="utf-8")
-        # The allow-list must remain scan/watchlist/chart.
-        assert "fathom scan" in content, "fathom scan must be in the allow-list"
-        assert "fathom watchlist" in content, "fathom watchlist must be in the allow-list"
-        assert "fathom chart" in content, "fathom chart must be in the allow-list"
-
 
 # ---------------------------------------------------------------------------
 # 10. fathom --help lists execute/positions/reconcile
@@ -1007,8 +989,9 @@ class TestCliHelp:
         assert "backtest" in output
         assert "scan" in output
         assert "watchlist" in output
-        assert "chart" in output
+        assert "pine" in output
         assert "preflight" in output
+        assert "chart" not in output
 
 
 # ---------------------------------------------------------------------------

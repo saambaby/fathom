@@ -2,8 +2,8 @@
 
 This is the most safety-critical module in Fathom: it is the only code that
 actually opens a position with real (demo) money.  It is invoked exclusively by
-the deterministic execution path (``fathom execute``), never by Hermes
-(INV-01).
+the deterministic execution path (``fathom execute``), never by an
+AI/analysis surface (INV-01).
 
 Correctness guarantees enforced here
 ------------------------------------

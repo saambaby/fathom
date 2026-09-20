@@ -16,7 +16,6 @@ dependencies = [
     "python-dateutil>=2.8",
     "pyarrow>=14",
     "httpx>=0.27",
-    "matplotlib>=3.7",
     "streamlit>=1.30",
     "streamlit-lightweight-charts>=0.7",
 ]
