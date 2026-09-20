@@ -382,3 +382,9 @@ CLAUDE.md NOT edited.
 adds a read-only `Store.load_calendar_events` that returns `[]` on
 `no such table` and must not instantiate `FairEconomyCalendar` (mtime /
 row-count ACs). Same DB file the calendar writer uses.
+
+## phase-07 T1 (2026-09-20)
+
+`Store.latest_watchlist_run_ts() -> str | None` is `SELECT MAX(run_timestamp) FROM watchlist`
+(RFC-3339 TEXT join key). T5 adds append-only `analysis_log` + `load_latest_analysis(watchlist_run=)`.
+

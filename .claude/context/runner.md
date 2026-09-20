@@ -431,3 +431,11 @@ CLAUDE.md update is a lead/reviewer action. CLAUDE.md Commands section should re
 `fathom preflight [--db-path PATH] [--attest-track-record]` in the Phase 5 / Common Commands block.
 
 **Merge plan:** `gh pr merge <N> --squash --delete-branch` (lead action after reviewer pass).
+
+## phase-07 Wave 1 fold (2026-09-20)
+
+`fathom chart` is gone. `fathom pine` is the watchlist presentation command. INV-01:
+no AI/analysis surface may invoke execution; order authority is operator-run
+`fathom execute`. Pretrade imports `from ai.pretrade_check import OpenAICompatClient, pretrade_check`.
+T-08 retired; remaining operator gates T-11 → T-06 → T-05.
+

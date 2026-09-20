@@ -333,6 +333,16 @@ dep, no new CLI command — `fathom scan` is unchanged).
 reviewer pass). T-05 (admin-panel) depends on this — it must be on main before T-05
 dispatches.
 
+## phase-07 T1 pine (2026-09-20)
+
+`signals/charts.py` is deleted. Presentation is `signals/pine.py::render_pine(PineItem)`
+(clock-free) plus `fathom pine` in `cli.py` (clipboard subprocess stays in the CLI).
+Tickers strip `_` from `instrument`; `line.new` anchors default 50 bars. Stale flags
+are caller-computed with `TIMEFRAME_BAR_LENGTH` still in `cli.py` until T5 moves it to
+`signals/timeframes.py`. `Store.latest_watchlist_run_ts()` is the analysis join key;
+`load_latest_analysis` is T5.
+
+
 ## P3-T-04 — 2026-05-29 (feat/p3-T-04-limits)
 
 **What was done:**

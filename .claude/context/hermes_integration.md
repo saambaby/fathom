@@ -261,3 +261,14 @@ Advisory sites (narration, market-brief, companion review/journal/ask) fail
 soft to `"analysis unavailable"` — never skip. Offline predicate is
 `client is None and not LLM_API_KEY` → zero I/O; measurement rows use
 `model_id="offline"`.
+
+## phase-07 Wave 1 fold (2026-09-20)
+
+`hermes_integration/` Python package is gone (no shim). Analysis lives in `ai/`:
+- `ai/llm_client.py` — sole `OpenAICompatClient` (INV-20). `ai.pretrade_check` re-exports it + `MODEL`.
+- `news_risk_check(candidate, calendar_events, entry_window_utc, *, client=None)`
+- `narrate(candidate, *, client=None) -> NarrationResult`
+- `session_analysis(...)` in `ai/brief.py` (advisory fallback, not INV-02 skip). `{{utc_now}}` minted inside the function.
+- INV-01 boundary tests scan `ai/`.
+- Daily job + `fathom chart` + matplotlib deleted (T2). T-08 superseded by pine/analyze walk.
+- Leftover Hermes *prose* in `signals/__init__.py`, `monitoring/watcher.py`, `tests/test_monitor_alerts.py` is T6.

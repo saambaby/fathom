@@ -8,92 +8,29 @@
   "baseline": {
     "sha_at_baseline": "d2340b4c9ae69d77ed88babe137e430bac55357c",
     "pytest": "1233 passed, 1 skipped",
-    "mypy": "94 source files, 0 issues",
-    "install": "uv venv .venv; uv pip install -e '.[dev]'",
-    "health": "import cli OK; import panel.app OK (no long-running listener)"
+    "mypy": "94 source files, 0 issues"
   },
   "platform_fixes_on_main": [],
-  "ci_economics": {
-    "docs_paths_ignore": "unsafe — tests/test_docs_lint.py inventories Markdown",
-    "drop_pull_request_trigger": "blocked: coordinator role-lock cannot edit .github/workflows/ci.yml on main; not a Wave 1 start blocker"
-  },
   "waves": {
     "1": {
       "dag": ["T1", "T2", "T3", "T4"],
-      "in_flight": ["T3"],
+      "in_flight": [],
       "in_review": [],
-      "merged": ["T4", "T1", "T2"],
-      "held": []
+      "merged": ["T4", "T1", "T2", "T3"],
+      "closed": true,
+      "lint_sweep": "n/a (no ruff/blocking_lint_rules)",
+      "context_fold": "2026-09-20"
     },
-    "2": {"dag": ["T5"], "in_flight": []},
+    "2": {"dag": ["T5"], "in_flight": ["T5"]},
     "3": {"dag": ["T6"], "in_flight": []}
   },
   "tasks": {
-    "T1": {
-      "title": "pine-generation",
-      "issue": 159,
-      "status": "merged",
-      "role": "mechanical",
-      "track": "full",
-      "wave": 1,
-      "depends_on": [],
-      "worktree": "yes",
-      "pr": 166,
-      "sha": "3321ca0"
-    },
-    "T2": {
-      "title": "hermes-teardown",
-      "issue": 160,
-      "status": "merged",
-      "role": "mechanical",
-      "track": "full",
-      "wave": 1,
-      "depends_on": [],
-      "worktree": "coordinator-branch",
-      "pr": 167,
-      "sha": "e7bd265"
-    },
-    "T3": {
-      "title": "ai-package-migration",
-      "issue": 161,
-      "status": "dispatched",
-      "role": "mechanical",
-      "track": "full",
-      "wave": 1,
-      "depends_on": [],
-      "worktree": "coordinator-branch"
-    },
-    "T4": {
-      "title": "market-brief",
-      "issue": 162,
-      "status": "merged",
-      "role": "mechanical",
-      "track": "full",
-      "wave": 1,
-      "depends_on": [],
-      "worktree": "yes",
-      "pr": 165,
-      "sha": "43c4a6f"
-    },
-    "T5": {
-      "title": "analyze-command",
-      "issue": 163,
-      "status": "pending",
-      "role": "critical",
-      "track": "full",
-      "wave": 2,
-      "depends_on": ["T1", "T3", "T4"]
-    },
-    "T6": {
-      "title": "phase-07-smoke",
-      "issue": 164,
-      "status": "pending",
-      "role": "n/a",
-      "track": "full",
-      "wave": 3,
-      "depends_on": ["T5", "T2"],
-      "verification": "manual"
-    }
+    "T1": {"title": "pine-generation", "issue": 159, "status": "merged", "pr": 166, "sha": "3321ca0", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
+    "T2": {"title": "hermes-teardown", "issue": 160, "status": "merged", "pr": 167, "sha": "e7bd265", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
+    "T3": {"title": "ai-package-migration", "issue": 161, "status": "merged", "pr": 168, "sha": "939b2e8", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
+    "T4": {"title": "market-brief", "issue": 162, "status": "merged", "pr": 165, "sha": "43c4a6f", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
+    "T5": {"title": "analyze-command", "issue": 163, "status": "dispatched", "track": "full", "role": "critical", "wave": 2, "depends_on": ["T1", "T3", "T4"]},
+    "T6": {"title": "phase-07-smoke", "issue": 164, "status": "pending", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual"}
   },
-  "summary": "T1 #166, T2 #167, T4 #165 merged. T3 dispatched. T5 waits on T3."
+  "summary": "Wave 1 closed (T1–T4 merged). T3 #168 on main. T5 dispatched. T6 waits on T5."
 }
