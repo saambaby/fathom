@@ -20,16 +20,23 @@ Owns the Fathom-side support for Claude's per-candidate one-line narration:
     - A future reader must NOT add a ``suggest_action="skip"`` default here.
       If narration fails, use ``fallback_narration`` and move on.
 
-This module is fully unit-testable offline.  No ``anthropic`` SDK dependency
-(D-P2-3): Claude is invoked Hermes-side.
+``narrate`` is the in-process call on the shared adapter.  Cosmetic only
+(NOT INV-02): unusable model output → ``fallback_narration``; the candidate
+is kept.  Offline: no client + no ``LLM_API_KEY`` → fallback, zero network.
 
-INV-08: No secrets, tokens, or API keys are referenced here.
+INV-08: ``LLM_API_KEY`` is never logged.  The adapter holds it privately.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import pathlib
+from typing import Literal
 
+from pydantic import BaseModel
+
+from ai.llm_client import OpenAICompatClient, _ClientAdapter
 from signals.ranker import Candidate
 
 _log = logging.getLogger(__name__)
@@ -140,3 +147,80 @@ def should_use_fallback(claude_response: str) -> bool:
     if len(stripped) > _MAX_NARRATION_LENGTH:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# NarrationResult + narrate — in-process call (NOT INV-02)
+# ---------------------------------------------------------------------------
+
+_PROMPTS_DIR = pathlib.Path(__file__).parent / "prompts"
+_PROMPT_PATH = _PROMPTS_DIR / "narration.md"
+
+
+class NarrationResult(BaseModel):
+    """One-line watchlist narration plus whether the model or fallback produced it."""
+
+    text: str
+    source: Literal["model", "fallback"]
+
+    model_config = {"frozen": True, "extra": "forbid"}
+
+
+def _build_prompt(candidate: Candidate) -> str:
+    """Render ``prompts/narration.md`` from the candidate's facts."""
+    template = _PROMPT_PATH.read_text(encoding="utf-8")
+    rendered = template.replace("{{instrument}}", candidate.instrument)
+    rendered = rendered.replace("{{timeframe}}", candidate.timeframe)
+    rendered = rendered.replace("{{strategy_name}}", candidate.strategy_name)
+    rendered = rendered.replace("{{direction}}", candidate.direction)
+    rendered = rendered.replace("{{oos_sharpe_mean}}", str(candidate.oos_sharpe_mean))
+    rendered = rendered.replace("{{news_flag}}", str(candidate.news_flag).lower())
+    return rendered
+
+
+def narrate(
+    candidate: Candidate,
+    *,
+    client: _ClientAdapter | None = None,
+) -> NarrationResult:
+    """Produce a one-line narration for ``candidate``.
+
+    Never raises.  ``text`` is never empty.  NOT INV-02 — a failed call
+    returns ``fallback_narration`` with ``source="fallback"``; the caller
+    keeps the candidate.
+    """
+    fallback_text = fallback_narration(candidate)
+    fallback = NarrationResult(text=fallback_text, source="fallback")
+
+    try:
+        if client is None and not os.environ.get("LLM_API_KEY"):
+            _log.warning(
+                "narrate: no client and LLM_API_KEY not set — "
+                "returning fallback narration (offline path)"
+            )
+            return fallback
+
+        active_client: _ClientAdapter
+        if client is None:
+            from_env_client = OpenAICompatClient.from_env()
+            if from_env_client is None:
+                return fallback
+            active_client = from_env_client
+        else:
+            active_client = client
+
+        prompt = _build_prompt(candidate)
+        raw = active_client.complete(prompt)
+        if should_use_fallback(raw):
+            return fallback
+        text = raw.strip()
+        if not text:
+            return fallback
+        return NarrationResult(text=text, source="model")
+    except Exception as exc:  # noqa: BLE001 — narrate must never raise
+        _log.warning(
+            "narrate: %s: %s — returning fallback narration",
+            type(exc).__name__,
+            exc,
+        )
+        return NarrationResult(text=fallback_narration(candidate), source="fallback")

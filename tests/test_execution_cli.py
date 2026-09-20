@@ -20,7 +20,7 @@ Coverage
 7. Successful path (mocked submit) → exit 0, Fill JSON on stdout.
 8. ``fathom positions`` → prints open Position[] JSON.
 9. ``fathom reconcile`` → calls reconcile once, prints report JSON.
-10. INV-01 boundary: ``hermes_integration/`` never references the execution commands.
+10. INV-01 boundary: ``ai/`` never references the execution commands.
 11. fathom --help lists execute/positions/reconcile.
 12. risk_fraction is always DEFAULT_RISK_FRACTION (0.0025) — never above the cap.
 """
@@ -263,7 +263,7 @@ class TestExecutePretradeBlock:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         block_verdict = PretradeVerdict(decision="block", reason="high-impact news event")
 
         mock_recon_report = _make_reconcile_report()
@@ -304,7 +304,7 @@ class TestExecuteSizingReject:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         proceed_verdict = PretradeVerdict(decision="proceed", reason="all clear")
         mock_recon_report = _make_reconcile_report(
             start_of_day_equity=1.0, day_pl=0.0
@@ -336,7 +336,7 @@ class TestExecuteSizingReject:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
         mock_recon_report = _make_reconcile_report()
 
@@ -431,7 +431,7 @@ class TestExecuteConversionRateRequired:
         db_path = str(Path(str(tmp_path)) / "test.db")
         self._seed(db_path, with_candles=False)
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
 
@@ -476,7 +476,7 @@ class TestExecuteConversionRateRequired:
         db_path = str(Path(str(tmp_path)) / "test.db")
         self._seed(db_path, with_candles=False)
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
         size_spy = MagicMock()
@@ -507,7 +507,7 @@ class TestExecuteConversionRateRequired:
         db_path = str(Path(str(tmp_path)) / "test.db")
         self._seed(db_path, with_candles=True)
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
@@ -557,7 +557,7 @@ class TestExecuteLimitsReject:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
@@ -608,7 +608,7 @@ class TestExecuteLimitsReject:
             store.write_position(pos)
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
@@ -648,7 +648,7 @@ class TestExecuteDryRun:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed_verdict = PretradeVerdict(decision="proceed", reason="ok")
@@ -691,7 +691,7 @@ class TestExecuteDryRun:
 
         call_order: list[str] = []
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         def track_reconcile(**kwargs: object) -> ReconcileReport:
@@ -742,7 +742,7 @@ class TestExecuteSuccess:
         store.close()
 
         fill = _make_fill()
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed = PretradeVerdict(decision="proceed", reason="ok")
@@ -787,7 +787,7 @@ class TestExecuteSuccess:
         store.close()
 
         from execution.orders import OrderRejected
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         proceed = PretradeVerdict(decision="proceed", reason="ok")
@@ -931,23 +931,23 @@ class TestReconcileCommand:
 
 
 # ---------------------------------------------------------------------------
-# 9. INV-01 boundary: hermes_integration/ never references execution commands
+# 9. INV-01 boundary: ai/ never references execution commands
 # ---------------------------------------------------------------------------
 
 
 class TestInv01Boundary:
-    def test_hermes_integration_has_no_execute_command_references(self) -> None:
-        """hermes_integration/ must not reference 'fathom execute',
+    def test_ai_has_no_execute_command_references(self) -> None:
+        """ai/ must not reference 'fathom execute',
         'fathom positions', or 'fathom reconcile' — INV-01 enforcement."""
         import pathlib
 
-        hermes_dir = pathlib.Path(__file__).parent.parent / "hermes_integration"
+        ai_dir = pathlib.Path(__file__).parent.parent / "ai"
         forbidden_patterns = [
             "fathom execute",
             "fathom positions",
             "fathom reconcile",
         ]
-        for file_path in hermes_dir.rglob("*"):
+        for file_path in ai_dir.rglob("*"):
             if not file_path.is_file():
                 continue
             if file_path.suffix in (".pyc",) or "__pycache__" in file_path.parts:
@@ -1016,7 +1016,7 @@ class TestGateOrdering:
         call_order: list[str] = []
         fill = _make_fill()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
         from risk.limits import LimitDecision
 
@@ -1077,7 +1077,7 @@ class TestGateOrdering:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         sizing_mock = MagicMock(name="size_position")
 
@@ -1110,7 +1110,7 @@ class TestGateOrdering:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
         from risk.sizing import SizingResult
 
         limits_mock = MagicMock(name="check_limits")
@@ -1226,7 +1226,7 @@ class TestCandidateFreshnessTTL:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         reconcile_spy = MagicMock(return_value=_make_reconcile_report())
         pretrade_spy = MagicMock(
@@ -1302,7 +1302,7 @@ class TestCandidateFreshnessTTL:
         store.upsert_instruments([_make_instrument_meta()])
         store.close()
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         reconcile_spy = MagicMock(return_value=_make_reconcile_report())
         pretrade_spy = MagicMock(

@@ -242,6 +242,6 @@ class TestLlmClientFields:
         assert s.llm_base_url == "https://api.openai.com/v1"
 
     def test_llm_model_default(self) -> None:
-        from hermes_integration.pretrade_check import MODEL
+        from ai.pretrade_check import MODEL
         s = self._make_settings()
         assert s.llm_model == MODEL

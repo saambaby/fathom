@@ -1,4 +1,4 @@
-"""Tests for hermes_integration.pretrade_check — INV-02 enforcement.
+"""Tests for ai.pretrade_check — INV-02 enforcement.
 
 Coverage:
     - PretradeVerdict: valid construction, field access, strict enum rejection.
@@ -23,7 +23,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from hermes_integration.pretrade_check import (
+from ai.pretrade_check import (
     PretradeVerdict,
     _safe_default,
     parse_pretrade_verdict,
@@ -368,25 +368,25 @@ class TestParsePretradeVerdictLogging:
     """Failures are logged at WARNING; no secrets leak (INV-08)."""
 
     def test_logs_warning_on_invalid_json(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.pretrade_check"):
+        with caplog.at_level(logging.WARNING, logger="ai.pretrade_check"):
             parse_pretrade_verdict("not json at all")
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
     def test_logs_warning_on_empty(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.pretrade_check"):
+        with caplog.at_level(logging.WARNING, logger="ai.pretrade_check"):
             parse_pretrade_verdict("")
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
     def test_logs_warning_on_bad_enum(self, caplog: pytest.LogCaptureFixture) -> None:
         raw = json.dumps({"decision": "go", "reason": "x"})
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.pretrade_check"):
+        with caplog.at_level(logging.WARNING, logger="ai.pretrade_check"):
             parse_pretrade_verdict(raw)
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
     def test_no_secret_token_in_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         """INV-08: no secret values appear in log output."""
         sensitive = "sk-ant-VERY_SECRET_TOKEN_12345"
-        with caplog.at_level(logging.DEBUG, logger="hermes_integration.pretrade_check"):
+        with caplog.at_level(logging.DEBUG, logger="ai.pretrade_check"):
             parse_pretrade_verdict(sensitive)
         for record in caplog.records:
             assert sensitive not in record.message, (
@@ -499,7 +499,7 @@ class TestPretradeCheckOfflinePath:
         candidate = _make_candidate()
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         with caplog.at_level(
-            logging.WARNING, logger="hermes_integration.pretrade_check"
+            logging.WARNING, logger="ai.pretrade_check"
         ):
             pretrade_check(candidate, client=None)
         assert any(
@@ -550,7 +550,7 @@ class TestOpenAICompatClient:
     def _client_with_capture(
         self, payload: dict[str, Any], captured: dict[str, Any], status_error: bool = False
     ) -> "Any":
-        from hermes_integration.pretrade_check import OpenAICompatClient
+        from ai.pretrade_check import OpenAICompatClient
 
         class _MockHttpxClient:
             def __init__(self, **kwargs: Any) -> None:
@@ -568,7 +568,7 @@ class TestOpenAICompatClient:
                 captured["json"] = kwargs.get("json")
                 return _FakeResponse(payload, status_error=status_error)
 
-        with patch("hermes_integration.pretrade_check.httpx.Client", _MockHttpxClient):
+        with patch("ai.llm_client.httpx.Client", _MockHttpxClient):
             client = OpenAICompatClient(
                 api_key="test-key-123",
                 base_url="https://example.test/v1",
@@ -587,14 +587,14 @@ class TestOpenAICompatClient:
         assert body["messages"] == [{"role": "user", "content": "hello prompt"}]
 
     def test_missing_choices_raises(self) -> None:
-        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+        from ai.pretrade_check import OpenAICompatClient  # noqa: F401
 
         captured: dict[str, Any] = {}
         with pytest.raises(ValueError):
             self._client_with_capture({"choices": []}, captured)
 
     def test_non_string_content_raises(self) -> None:
-        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+        from ai.pretrade_check import OpenAICompatClient  # noqa: F401
 
         captured: dict[str, Any] = {}
         with pytest.raises(ValueError):
@@ -604,7 +604,7 @@ class TestOpenAICompatClient:
 
     def test_http_error_propagates_to_caller(self) -> None:
         """The adapter raises on HTTP errors; pretrade_check's except → block."""
-        from hermes_integration.pretrade_check import OpenAICompatClient  # noqa: F401
+        from ai.pretrade_check import OpenAICompatClient  # noqa: F401
 
         captured: dict[str, Any] = {}
         with pytest.raises(RuntimeError):
@@ -612,7 +612,7 @@ class TestOpenAICompatClient:
 
     def test_api_key_not_in_default_repr(self) -> None:
         """INV-08: the key must not leak via repr/str of the client."""
-        from hermes_integration.pretrade_check import OpenAICompatClient
+        from ai.pretrade_check import OpenAICompatClient
 
         client = OpenAICompatClient(
             api_key="super-secret-key", base_url="https://example.test/v1", model="m"
@@ -622,7 +622,7 @@ class TestOpenAICompatClient:
 
     def test_defaults_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """from_env() reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL."""
-        from hermes_integration.pretrade_check import (
+        from ai.pretrade_check import (
             DEFAULT_BASE_URL,
             MODEL,
             OpenAICompatClient,
@@ -646,7 +646,7 @@ class TestOpenAICompatClient:
     def test_from_env_without_key_returns_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from hermes_integration.pretrade_check import OpenAICompatClient
+        from ai.pretrade_check import OpenAICompatClient
 
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         assert OpenAICompatClient.from_env() is None
@@ -661,37 +661,45 @@ class TestModuleIsolation:
     """No order, execution, or risk function is importable from pretrade_check (INV-01)."""
 
     def test_no_execution_import(self) -> None:
-        import hermes_integration.pretrade_check as mod
+        import ai.pretrade_check as mod
 
         assert not hasattr(mod, "execution"), (
             "INV-01: execution module exposed from pretrade_check"
         )
 
     def test_no_orders_import(self) -> None:
-        import hermes_integration.pretrade_check as mod
+        import ai.pretrade_check as mod
 
         assert not hasattr(mod, "orders"), (
             "INV-01: orders callable exposed from pretrade_check"
         )
 
     def test_no_risk_import(self) -> None:
-        import hermes_integration.pretrade_check as mod
+        import ai.pretrade_check as mod
 
         assert not hasattr(mod, "risk"), (
             "INV-01: risk module exposed from pretrade_check"
         )
 
     def test_no_sizing_import(self) -> None:
-        import hermes_integration.pretrade_check as mod
+        import ai.pretrade_check as mod
 
         assert not hasattr(mod, "sizing"), (
             "INV-01: sizing callable exposed from pretrade_check"
         )
 
+    def test_adapter_lives_on_llm_client(self) -> None:
+        """AC 2: OpenAICompatClient is owned by ai.llm_client and re-exported."""
+        import ai.llm_client as llm
+        import ai.pretrade_check as mod
+
+        assert mod.OpenAICompatClient is llm.OpenAICompatClient
+        assert mod.MODEL is llm.MODEL
+
     def test_only_expected_public_names(self) -> None:
         """Public API is limited to: PretradeVerdict, parse_pretrade_verdict,
         pretrade_check, MODEL.  No order/risk/execution names present."""
-        import hermes_integration.pretrade_check as mod
+        import ai.pretrade_check as mod
 
         public_names = {n for n in dir(mod) if not n.startswith("_")}
         # These must be present

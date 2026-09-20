@@ -126,20 +126,20 @@ def _make_namespace(**kwargs: object) -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# INV-01 guard — hermes_integration must never reference execute/positions/reconcile
+# INV-01 guard — ai must never reference execute/positions/reconcile
 # ---------------------------------------------------------------------------
 
 
 class TestNoOrderPath:
-    def test_hermes_integration_has_no_execution_commands(self) -> None:
-        """hermes_integration/ must not register or grant access to fathom execute,
+    def test_ai_has_no_execution_commands(self) -> None:
+        """ai/ must not register or grant access to fathom execute,
         fathom positions, or fathom reconcile (INV-01).
 
         P3-T-10 added execute/positions/reconcile to cli.py, which is correct
         and intentional — cli.py is the canonical INV-01 enforcement point.
-        The invariant is that hermes_integration/ must NEVER be given
+        The invariant is that ai/ must NEVER be given
         access to order/execution commands.  We scan every text file under
-        hermes_integration/ to assert the boundary is upheld.
+        ai/ to assert the boundary is upheld.
 
         Patterns checked are the CLI tool/command strings that a job definition
         would need to reference to gain access: "fathom execute", "fathom positions",
@@ -147,13 +147,13 @@ class TestNoOrderPath:
         """
         import pathlib
 
-        hermes_dir = pathlib.Path(__file__).parent.parent / "hermes_integration"
+        ai_dir = pathlib.Path(__file__).parent.parent / "ai"
         forbidden_patterns = [
             "fathom execute",
             "fathom positions",
             "fathom reconcile",
         ]
-        for file_path in hermes_dir.rglob("*"):
+        for file_path in ai_dir.rglob("*"):
             if not file_path.is_file():
                 continue
             # Only inspect text/code/markdown files; skip .pyc and __pycache__.
@@ -165,7 +165,7 @@ class TestNoOrderPath:
                 continue
             for pattern in forbidden_patterns:
                 assert pattern not in content, (
-                    f"hermes_integration/{file_path.name} contains forbidden "
+                    f"ai/{file_path.name} contains forbidden "
                     f"pattern {pattern!r} — INV-01: no AI/analysis surface may "
                     "import or invoke order/execution commands."
                 )

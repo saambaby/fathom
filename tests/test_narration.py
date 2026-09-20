@@ -1,4 +1,4 @@
-"""Tests for hermes_integration.narration — watchlist-narration (P2-T-05).
+"""Tests for ai.narration — watchlist-narration (P2-T-05).
 
 Coverage:
     - fallback_narration: produces a non-empty one-liner for any candidate
@@ -16,12 +16,16 @@ No live Claude / Anthropic calls anywhere in this module.
 from __future__ import annotations
 
 import logging
+import socket
+from typing import Any
 
 import pytest
 
-from hermes_integration.narration import (
+from ai.narration import (
     _MAX_NARRATION_LENGTH,
+    NarrationResult,
     fallback_narration,
+    narrate,
     should_use_fallback,
 )
 from signals.ranker import Candidate
@@ -390,6 +394,91 @@ class TestFallbackNarrationLogging:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         c = _make_candidate()
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.narration"):
+        with caplog.at_level(logging.WARNING, logger="ai.narration"):
             fallback_narration(c)
         assert caplog.records == []
+
+
+# ---------------------------------------------------------------------------
+# narrate — AC 4
+# ---------------------------------------------------------------------------
+
+
+class _NarrationStub:
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self._raw
+
+
+class _RaisingNarration:
+    def complete(self, prompt: str) -> str:  # noqa: ARG002
+        raise RuntimeError("simulated transport error")
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["model_usable", "unusable_fallback", "no_client_no_key", "transport_error"],
+)
+def test_narrate_result_contract(
+    label: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC 4: model vs fallback source; never raises; text never empty; offline no I/O."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    candidate = _make_candidate()
+    expected_fallback = fallback_narration(candidate)
+
+    sock_calls = {"n": 0}
+
+    class _GuardedSocket(socket.socket):
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            sock_calls["n"] += 1
+            raise AssertionError("network I/O on narrate offline path")
+
+    try:
+        if label == "no_client_no_key":
+            monkeypatch.setattr(socket, "socket", _GuardedSocket)
+
+            class _NoHttpx:
+                def __init__(self, *args: Any, **kw: Any) -> None:
+                    raise AssertionError("httpx Client constructed")
+
+            monkeypatch.setattr("httpx.Client", _NoHttpx)
+            result = narrate(candidate, client=None)
+            assert sock_calls["n"] == 0
+            assert result.source == "fallback"
+            assert result.text == expected_fallback
+        elif label == "model_usable":
+            line = "Donchian long on EUR/USD H1, quiet tape."
+            result = narrate(candidate, client=_NarrationStub(line))
+            assert result.source == "model"
+            assert result.text == line
+        elif label == "unusable_fallback":
+            result = narrate(candidate, client=_NarrationStub("   "))
+            assert result.source == "fallback"
+            assert result.text == expected_fallback
+        else:
+            result = narrate(candidate, client=_RaisingNarration())
+            assert result.source == "fallback"
+            assert result.text == expected_fallback
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"{label}: narrate raised {type(exc).__name__}: {exc}")
+
+    assert isinstance(result, NarrationResult)
+    assert result.text
+    assert result.text.strip()
+
+
+def test_narrate_key_absent_from_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC 6: LLM_API_KEY never appears in narrate logs or result repr."""
+    secret = "sk-super-secret-narrate"
+    monkeypatch.setenv("LLM_API_KEY", secret)
+    with caplog.at_level(logging.DEBUG, logger="ai.narration"):
+        result = narrate(_make_candidate(), client=_RaisingNarration())
+    blob = " ".join(r.message for r in caplog.records) + repr(result)
+    assert secret not in blob

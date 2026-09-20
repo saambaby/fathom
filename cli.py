@@ -133,7 +133,7 @@ try:
     from execution.orders import OrderRejected, submit_order
     from execution.preflight import run_preflight
     from execution.reconcile import reconcile
-    from hermes_integration.pretrade_check import OpenAICompatClient, pretrade_check
+    from ai.pretrade_check import OpenAICompatClient, pretrade_check
     from risk.limits import LimitsConfig, check_limits, kill_switch_status
     from risk.sizing import size_position
 except ImportError:  # pragma: no cover
