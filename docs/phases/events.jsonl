@@ -9,3 +9,6 @@
 {"ts": 1789900058.591, "iso": "2026-09-20T06:27:38-0400", "phase": "phase-07", "type": "pr_opened", "task": "T1", "pr": "166"}
 {"ts": 1789900175.421, "iso": "2026-09-20T06:29:35-0400", "phase": "phase-07", "type": "review_pass", "task": "T4", "pr": "165", "reviewer": "9d4599db"}
 {"ts": 1789900175.45, "iso": "2026-09-20T06:29:35-0400", "phase": "phase-07", "type": "pr_merged", "task": "T4", "pr": "165", "sha": "43c4a6f"}
+{"ts": 1789900350.139, "iso": "2026-09-20T06:32:30-0400", "phase": "phase-07", "type": "review_pass", "task": "T1", "pr": "166", "reviewer": "ef090b0f"}
+{"ts": 1789900350.167, "iso": "2026-09-20T06:32:30-0400", "phase": "phase-07", "type": "pr_merged", "task": "T1", "pr": "166", "sha": "3321ca0"}
+{"ts": 1789900356.714, "iso": "2026-09-20T06:32:36-0400", "phase": "phase-07", "type": "task_dispatched", "task": "T2", "issue": "160", "wave": "1"}

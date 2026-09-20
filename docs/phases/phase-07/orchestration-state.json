@@ -20,11 +20,11 @@
   "waves": {
     "1": {
       "dag": ["T1", "T2", "T3", "T4"],
-      "in_flight": [],
-      "in_review": ["T1"],
-      "merged": ["T4"],
-      "held": ["T2", "T3"],
-      "held_why": "files overlap cli.py (T1/T2/T3) and pyproject.toml (T2/T3); T4 disjoint"
+      "in_flight": ["T2"],
+      "in_review": [],
+      "merged": ["T4", "T1"],
+      "held": ["T3"],
+      "held_why": "T3 shares pyproject.toml / cli.py / tests with T2"
     },
     "2": {"dag": ["T5"], "in_flight": []},
     "3": {"dag": ["T6"], "in_flight": []}
@@ -33,26 +33,26 @@
     "T1": {
       "title": "pine-generation",
       "issue": 159,
-      "status": "in_review",
+      "status": "merged",
       "role": "mechanical",
       "track": "full",
       "wave": 1,
       "depends_on": [],
       "worktree": "yes",
       "pr": 166,
-      "sha": "b254af0",
+      "sha": "3321ca0",
       "files": ["signals/pine.py", "tests/test_pine.py", "data/store.py", "cli.py"]
     },
     "T2": {
       "title": "hermes-teardown",
       "issue": 160,
-      "status": "pending",
+      "status": "dispatched",
       "role": "mechanical",
       "track": "full",
       "wave": 1,
       "depends_on": [],
       "worktree": "coordinator-branch",
-      "held_for": "T1 merge (cli.py serialize)"
+      "held_for": null
     },
     "T3": {
       "title": "ai-package-migration",
@@ -99,5 +99,5 @@
       "verification": "manual"
     }
   },
-  "summary": "T4 merged via #165 (43c4a6f). T1 #166 still in 8-gate review; T2/T3 held until T1 merge."
+  "summary": "T1 merged via #166 (3321ca0); T4 via #165. T2 dispatched; T3 held until T2 merge."
 }
