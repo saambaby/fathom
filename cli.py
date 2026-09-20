@@ -99,13 +99,14 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from backtest.costs import CostParams
 from backtest.engine import BacktestEngine
 from backtest.metrics import periods_per_year_for
 from backtest.walkforward import ApprovedSetEntry, WalkForwardValidator
 from data.store import Store
+from signals.timeframes import TIMEFRAME_BAR_LENGTH
 from strategies.base import Strategy
 from strategies.breakout import SessionRangeBreakout
 from strategies.mean_reversion import BollingerReversion, RSIReversion
@@ -219,14 +220,6 @@ WINDOW_CONFIG: dict[str, WindowConfig] = {
     "H1": WindowConfig(train_months=12, test_months=3),
     "H4": WindowConfig(train_months=18, test_months=6),
     "D": WindowConfig(train_months=24, test_months=6),
-}
-
-#: Bar length per timeframe, used for the candidate freshness TTL check
-#: (WS0-T04) in ``cmd_execute``. Keys must match ``Candidate.timeframe``.
-TIMEFRAME_BAR_LENGTH: dict[str, timedelta] = {
-    "H1": timedelta(hours=1),
-    "H4": timedelta(hours=4),
-    "D": timedelta(hours=24),
 }
 
 #: History to fetch/scan per timeframe must comfortably exceed the longest
@@ -848,6 +841,50 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the pbcopy clipboard attempt.",
     )
 
+    # ---- analyze ------------------------------------------------------------
+    an = sub.add_parser(
+        "analyze",
+        help=(
+            "Scan → session brief → news-risk veto → narration → Pine. "
+            "Order-free (INV-01); persists analysis_log."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    an.add_argument(
+        "--instruments",
+        default="ALL",
+        help="ALL to discover from cache, or a comma-separated list.",
+    )
+    an.add_argument(
+        "--timeframes",
+        default="H1,H4,D",
+        help="Comma-separated timeframes passed through to run_scan.",
+    )
+    an.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+    an.add_argument(
+        "--history-years",
+        type=int,
+        default=_DEFAULT_HISTORY_YEARS,
+        metavar="N",
+        help="Years of history to fetch/cache (passed to run_scan).",
+    )
+    an.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Cache-only scan (run_scan dry_run=True); still runs annotation.",
+    )
+    an.add_argument(
+        "--no-pine",
+        action="store_true",
+        default=False,
+        help="Skip the Pine block and clipboard copy.",
+    )
+
     # ---- execute ------------------------------------------------------------
     # INV-01: operator-only execution gate (P3-T-10).
     ex = sub.add_parser(
@@ -1260,6 +1297,112 @@ def cmd_watchlist(args: argparse.Namespace) -> int:
         len(candidates),
     )
     return 0
+
+
+# ---------------------------------------------------------------------------
+# analyze command
+# ---------------------------------------------------------------------------
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Thin printer around ``signals.analyze.run_analysis`` (INV-01)."""
+    from signals.analyze import run_analysis
+    from signals.pine import PineItem, render_pine
+
+    try:
+        result = run_analysis(
+            db_path=args.db_path,
+            instruments=args.instruments,
+            timeframes=args.timeframes,
+            history_years=args.history_years,
+            dry_run=args.dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.error("Analyze failed: %s", exc)
+        return 1
+
+    if result.session is None and not result.survivors and not result.vetoed:
+        print(
+            "No candidates. Watchlist is empty (a valid result — INV-10)."
+        )
+        return 0
+
+    _print_session_block(result)
+    _print_watchlist_block(result.survivors)
+    _print_vetoed_block(result.vetoed)
+
+    if not args.no_pine:
+        items = [
+            PineItem(
+                candidate=row.candidate,
+                stale=False,
+                reduce_size=row.verdict.suggest_action == "reduce_size",
+            )
+            for row in result.survivors
+        ]
+        script = render_pine(items)
+        print()
+        print("=== Pine ===")
+        sys.stdout.write(script)
+        if not script.endswith("\n"):
+            sys.stdout.write("\n")
+        _copy_script_to_clipboard(script)
+
+    return 0
+
+
+def _print_session_block(result: object) -> None:
+    session = getattr(result, "session", None)
+    print("=== Session ===")
+    if session is None:
+        print("analysis unavailable")
+        return
+    brief = session.brief
+    print(brief.summary)
+    if brief.landmines:
+        print("Landmines: " + "; ".join(brief.landmines))
+    if brief.invalidators:
+        print("Invalidators: " + "; ".join(brief.invalidators))
+    print(f"Verdict: {session.session.verdict}")
+    if session.session.reasons:
+        print("Reasons: " + "; ".join(session.session.reasons))
+    if session.regimes:
+        tags = ", ".join(f"{k}={v}" for k, v in session.regimes.items())
+        print(f"Regimes: {tags}")
+
+
+def _print_watchlist_block(survivors: Sequence[object]) -> None:
+    print()
+    print("=== Watchlist ===")
+    if not survivors:
+        print("(none)")
+        return
+    for row in survivors:
+        candidate = row.candidate  # type: ignore[attr-defined]
+        verdict = row.verdict  # type: ignore[attr-defined]
+        flag = "  ⚠ reduce size" if verdict.suggest_action == "reduce_size" else ""
+        print(
+            f"{candidate.rank}. {candidate.instrument} {candidate.timeframe} "
+            f"{candidate.strategy_name} {candidate.direction}{flag}"
+        )
+        if row.narration:  # type: ignore[attr-defined]
+            print(f"   {row.narration}")  # type: ignore[attr-defined]
+        print(f"   regime={row.regime}")  # type: ignore[attr-defined]
+
+
+def _print_vetoed_block(vetoed: Sequence[object]) -> None:
+    print()
+    print("=== Vetoed ===")
+    if not vetoed:
+        print("(none)")
+        return
+    for row in vetoed:
+        candidate = row.candidate  # type: ignore[attr-defined]
+        verdict = row.verdict  # type: ignore[attr-defined]
+        print(
+            f"{candidate.instrument} {candidate.timeframe} "
+            f"{candidate.strategy_name}: {verdict.reason}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2319,6 +2462,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_watchlist(args)
     if args.command == "pine":
         return cmd_pine(args)
+    if args.command == "analyze":
+        return cmd_analyze(args)
     if args.command == "execute":
         return cmd_execute(args)
     if args.command == "positions":

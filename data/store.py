@@ -409,6 +409,35 @@ class Store:
             (?, ?, ?, ?, ?, ?, ?)
     """
 
+    #: analysis_log — append-only measurement table (INV-22). Writer:
+    #: ``signals.analyze.run_analysis`` only. No UPDATE / INSERT OR REPLACE.
+    _CREATE_ANALYSIS_LOG_SQL: str = """
+        CREATE TABLE IF NOT EXISTS analysis_log (
+            run_ts            TEXT    NOT NULL,
+            watchlist_ts      TEXT    NOT NULL,
+            instrument        TEXT    NOT NULL,
+            timeframe         TEXT    NOT NULL,
+            strategy_name     TEXT    NOT NULL,
+            event_risk        TEXT    NOT NULL,
+            suggest_action    TEXT    NOT NULL,
+            reason            TEXT    NOT NULL,
+            narration         TEXT,
+            narration_source  TEXT    NOT NULL,
+            regime            TEXT    NOT NULL,
+            model_id          TEXT    NOT NULL,
+            PRIMARY KEY (run_ts, instrument, timeframe, strategy_name)
+        )
+    """
+
+    _INSERT_ANALYSIS_LOG_SQL: str = """
+        INSERT INTO analysis_log
+            (run_ts, watchlist_ts, instrument, timeframe, strategy_name,
+             event_risk, suggest_action, reason, narration, narration_source,
+             regime, model_id)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
     #: SQL to upsert a single candle row (replace on PK conflict).
     _UPSERT_CANDLE_SQL: str = """
         INSERT OR REPLACE INTO candles
@@ -475,6 +504,7 @@ class Store:
         self._conn.execute(self._CREATE_DEVIATION_LOG_SQL)
         self._conn.execute(self._CREATE_EQUITY_SNAPSHOTS_SQL)
         self._conn.execute(self._CREATE_PREFLIGHT_ATTESTATIONS_SQL)
+        self._conn.execute(self._CREATE_ANALYSIS_LOG_SQL)
         self._conn.commit()
 
     def close(self) -> None:
@@ -979,6 +1009,96 @@ class Store:
         if row is None or row[0] is None:
             return None
         return str(row[0])
+
+    def append_analysis(self, rows: list[dict[str, object]]) -> int:
+        """INSERT analysis_log rows (INV-22: no UPDATE / INSERT OR REPLACE)."""
+        if not rows:
+            return 0
+        params = [
+            (
+                row["run_ts"],
+                row["watchlist_ts"],
+                row["instrument"],
+                row["timeframe"],
+                row["strategy_name"],
+                row["event_risk"],
+                row["suggest_action"],
+                row["reason"],
+                row["narration"],
+                row["narration_source"],
+                row["regime"],
+                row["model_id"],
+            )
+            for row in rows
+        ]
+        self._conn.executemany(self._INSERT_ANALYSIS_LOG_SQL, params)
+        self._conn.commit()
+        return len(params)
+
+    def load_latest_analysis(
+        self, watchlist_run: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return the latest analysis_log run iff its watchlist_ts matches.
+
+        Selects ``MAX(run_ts)``. If that run's ``watchlist_ts`` does not
+        equal ``watchlist_run``, returns ``[]`` so a consumer cannot join
+        an older analysis onto a newer watchlist.
+        """
+        if watchlist_run is None:
+            return []
+        cursor = self._conn.execute(
+            "SELECT MAX(run_ts) FROM analysis_log"
+        )
+        peak = cursor.fetchone()
+        if peak is None or peak[0] is None:
+            return []
+        run_ts = str(peak[0])
+        cursor = self._conn.execute(
+            """
+            SELECT run_ts, watchlist_ts, instrument, timeframe, strategy_name,
+                   event_risk, suggest_action, reason, narration,
+                   narration_source, regime, model_id
+            FROM   analysis_log
+            WHERE  run_ts = ?
+            ORDER  BY instrument, timeframe, strategy_name
+            """,
+            (run_ts,),
+        )
+        result: list[dict[str, object]] = []
+        for row in cursor.fetchall():
+            (
+                stored_run_ts,
+                watchlist_ts,
+                instrument,
+                timeframe,
+                strategy_name,
+                event_risk,
+                suggest_action,
+                reason,
+                narration,
+                narration_source,
+                regime,
+                model_id,
+            ) = row
+            if str(watchlist_ts) != str(watchlist_run):
+                return []
+            result.append(
+                {
+                    "run_ts": stored_run_ts,
+                    "watchlist_ts": watchlist_ts,
+                    "instrument": instrument,
+                    "timeframe": timeframe,
+                    "strategy_name": strategy_name,
+                    "event_risk": event_risk,
+                    "suggest_action": suggest_action,
+                    "reason": reason,
+                    "narration": narration,
+                    "narration_source": narration_source,
+                    "regime": regime,
+                    "model_id": model_id,
+                }
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Execution tables (Phase 3 — order-placement persists; reconciliation
