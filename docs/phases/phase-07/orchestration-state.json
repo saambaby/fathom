@@ -20,11 +20,10 @@
   "waves": {
     "1": {
       "dag": ["T1", "T2", "T3", "T4"],
-      "in_flight": ["T2"],
+      "in_flight": ["T3"],
       "in_review": [],
-      "merged": ["T4", "T1"],
-      "held": ["T3"],
-      "held_why": "T3 shares pyproject.toml / cli.py / tests with T2"
+      "merged": ["T4", "T1", "T2"],
+      "held": []
     },
     "2": {"dag": ["T5"], "in_flight": []},
     "3": {"dag": ["T6"], "in_flight": []}
@@ -40,30 +39,29 @@
       "depends_on": [],
       "worktree": "yes",
       "pr": 166,
-      "sha": "3321ca0",
-      "files": ["signals/pine.py", "tests/test_pine.py", "data/store.py", "cli.py"]
+      "sha": "3321ca0"
     },
     "T2": {
       "title": "hermes-teardown",
       "issue": 160,
+      "status": "merged",
+      "role": "mechanical",
+      "track": "full",
+      "wave": 1,
+      "depends_on": [],
+      "worktree": "coordinator-branch",
+      "pr": 167,
+      "sha": "e7bd265"
+    },
+    "T3": {
+      "title": "ai-package-migration",
+      "issue": 161,
       "status": "dispatched",
       "role": "mechanical",
       "track": "full",
       "wave": 1,
       "depends_on": [],
-      "worktree": "coordinator-branch",
-      "held_for": null
-    },
-    "T3": {
-      "title": "ai-package-migration",
-      "issue": 161,
-      "status": "pending",
-      "role": "mechanical",
-      "track": "full",
-      "wave": 1,
-      "depends_on": [],
-      "worktree": "coordinator-branch",
-      "held_for": "T2 merge (shared platform files)"
+      "worktree": "coordinator-branch"
     },
     "T4": {
       "title": "market-brief",
@@ -75,9 +73,7 @@
       "depends_on": [],
       "worktree": "yes",
       "pr": 165,
-      "sha": "43c4a6f",
-      "files": ["ai/brief.py", "ai/prompts/session.md", "tests/test_brief.py"],
-      "files_extra": ["ai/__init__.py"]
+      "sha": "43c4a6f"
     },
     "T5": {
       "title": "analyze-command",
@@ -99,5 +95,5 @@
       "verification": "manual"
     }
   },
-  "summary": "T1 merged via #166 (3321ca0); T4 via #165. T2 dispatched; T3 held until T2 merge."
+  "summary": "T1 #166, T2 #167, T4 #165 merged. T3 dispatched. T5 waits on T3."
 }
