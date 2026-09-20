@@ -91,11 +91,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import shutil
+import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from backtest.costs import CostParams
 from backtest.engine import BacktestEngine
@@ -188,8 +192,12 @@ def _configure_logging() -> None:
 _log = logging.getLogger(__name__)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(tz=timezone.utc)
+
+
 def _utc_now_rfc3339() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +820,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the SQLite store.",
     )
 
+    # ---- pine ---------------------------------------------------------------
+    pn = sub.add_parser(
+        "pine",
+        help=(
+            "Render the latest persisted watchlist as a Pine Script v6 "
+            "indicator (stdout + clipboard)."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    pn.add_argument(
+        "--db-path",
+        default="data/fathom.db",
+        help="Path to the SQLite store.",
+    )
+    pn.add_argument(
+        "--out",
+        default=None,
+        metavar="FILE",
+        help="Optional path to write the generated script.",
+    )
+    pn.add_argument(
+        "--no-clipboard",
+        action="store_true",
+        default=False,
+        help="Skip the pbcopy clipboard attempt.",
+    )
+
     # ---- chart --------------------------------------------------------------
     ch = sub.add_parser(
         "chart",
@@ -1257,6 +1292,151 @@ def cmd_watchlist(args: argparse.Namespace) -> int:
         _utc_now_rfc3339(),
         len(candidates),
     )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# pine command
+# ---------------------------------------------------------------------------
+
+
+def _copy_script_to_clipboard(script: str) -> None:
+    """Copy ``script`` via macOS ``pbcopy``; degrade to stdout-only on miss."""
+    pbcopy = shutil.which("pbcopy")
+    if pbcopy is None:
+        print(
+            "warning: pbcopy not found on PATH; script printed to stdout only",
+            file=sys.stderr,
+        )
+        return
+    subprocess.run([pbcopy], input=script, text=True, check=False)
+
+
+def _analysis_identity(row: Any) -> tuple[object, object, object, object]:
+    """Extract ``(instrument, timeframe, strategy_name, suggest_action)``."""
+    if isinstance(row, dict):
+        return (
+            row.get("instrument"),
+            row.get("timeframe"),
+            row.get("strategy_name"),
+            row.get("suggest_action"),
+        )
+    return (
+        getattr(row, "instrument", None),
+        getattr(row, "timeframe", None),
+        getattr(row, "strategy_name", None),
+        getattr(row, "suggest_action", None),
+    )
+
+
+def cmd_pine(args: argparse.Namespace) -> int:
+    """Render the latest watchlist as Pine v6 (stdout / clipboard / ``--out``).
+
+    Stale and reduce_size flags are computed here; ``render_pine`` is clock-free.
+    ``load_latest_analysis`` is a guarded no-op until analyze-command lands.
+    """
+    db_path: str = args.db_path
+    db_file = Path(db_path)
+    if not db_file.is_file() or not os.access(db_file, os.R_OK):
+        print(
+            f"ERROR: database missing or unreadable: {db_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    from signals.pine import PineItem, render_pine
+    from signals.ranker import Candidate
+
+    try:
+        store = Store(db_path)
+    except OSError as exc:
+        print(f"ERROR: database unreadable: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        run_ts = store.latest_watchlist_run_ts()
+        if run_ts is None:
+            rows: list[dict[str, object]] = []
+        else:
+            run_dt = datetime.fromisoformat(run_ts.rstrip("Z")).replace(
+                tzinfo=timezone.utc
+            )
+            rows = store.load_watchlist(run_timestamp=run_dt)
+
+        analysis_rows: list[Any] = []
+        load_fn = getattr(store, "load_latest_analysis", None)
+        if callable(load_fn) and run_ts is not None:
+            analysis_rows = list(load_fn(watchlist_run=run_ts) or [])
+    except OSError as exc:
+        print(f"ERROR: database unreadable: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    skip_keys: set[tuple[object, object, object]] = set()
+    reduce_keys: set[tuple[object, object, object]] = set()
+    if analysis_rows:
+        for arow in analysis_rows:
+            instrument, timeframe, strategy_name, action = _analysis_identity(arow)
+            key = (instrument, timeframe, strategy_name)
+            if action == "skip":
+                skip_keys.add(key)
+            elif action == "reduce_size":
+                reduce_keys.add(key)
+
+    try:
+        max_candidate_age_bars = float(Settings().max_candidate_age_bars)
+    except (TypeError, ValueError, AttributeError, NameError):
+        max_candidate_age_bars = 1.0
+
+    now = _utc_now()
+    items: list[PineItem] = []
+    any_stale = False
+    for row in rows:
+        candidate = Candidate(**row)
+        ident = (
+            candidate.instrument,
+            candidate.timeframe,
+            candidate.strategy_name,
+        )
+        if ident in skip_keys:
+            continue
+        stale = (
+            _candidate_staleness_error(
+                candidate, max_candidate_age_bars, now=now
+            )
+            is not None
+        )
+        any_stale = any_stale or stale
+        items.append(
+            PineItem(
+                candidate=candidate,
+                stale=stale,
+                reduce_size=ident in reduce_keys,
+            )
+        )
+
+    script = render_pine(items)
+    sys.stdout.write(script)
+    if not script.endswith("\n"):
+        sys.stdout.write("\n")
+
+    if not items:
+        print("Fathom: no candidates", file=sys.stderr)
+
+    if any_stale:
+        print(
+            "warning: one or more watchlist candidates are stale",
+            file=sys.stderr,
+        )
+
+    out_path = getattr(args, "out", None)
+    if out_path:
+        Path(out_path).write_text(script, encoding="utf-8")
+
+    if not getattr(args, "no_clipboard", False):
+        _copy_script_to_clipboard(script)
+
     return 0
 
 
@@ -2264,6 +2444,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_scan(args)
     if args.command == "watchlist":
         return cmd_watchlist(args)
+    if args.command == "pine":
+        return cmd_pine(args)
     if args.command == "chart":
         return cmd_chart(args)
     if args.command == "execute":
