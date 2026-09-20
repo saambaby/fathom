@@ -68,9 +68,8 @@ merge leftover squash-PR branch tips (`docs/phase-09-veto-ledger`,
   that client on the live store.
 - No persisted `ReconcileReport` / `drift_flags`. `fathom review` reads
   last `account_state` + `as_of`, and must not call `reconcile()`.
-- `TIMEFRAME_BAR_LENGTH` still lives in `cli.py` until T5 relocates it to
-  `signals/timeframes.py`; `fathom ask` INV-21 stamps must import that
-  leaf module, never `cli`.
+- `TIMEFRAME_BAR_LENGTH` lives in `signals/timeframes.py` (relocated by T5);
+  `fathom ask` INV-21 stamps must import that leaf module, never `cli`.
 - T-08 is superseded by the phase-07 pine/analyze walk; remaining gates are
   T-11 → T-06 → T-05. `architecture.md` redraw is T6.
 - `fathom veto-report` CLI is owned by the veto-report spec; tracker exposes

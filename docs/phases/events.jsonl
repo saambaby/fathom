@@ -25,3 +25,9 @@
 {"ts": 1789902018.03, "iso": "2026-09-20T07:00:18-0400", "phase": "phase-07", "type": "review_pass", "task": "T3", "pr": "168", "reviewer": "68a40268"}
 {"ts": 1789902018.058, "iso": "2026-09-20T07:00:18-0400", "phase": "phase-07", "type": "pr_merged", "task": "T3", "pr": "168", "sha": "939b2e8"}
 {"ts": 1789902018.084, "iso": "2026-09-20T07:00:18-0400", "phase": "phase-07", "type": "task_dispatched", "task": "T5", "issue": "163", "wave": "2"}
+{"ts": 1789902048.164, "iso": "2026-09-20T07:00:48-0400", "phase": "phase-07", "type": "task_claimed", "task": "T5"}
+{"ts": 1789902674.041, "iso": "2026-09-20T07:11:14-0400", "phase": "phase-07", "type": "task_done", "task": "T5", "pr": "169"}
+{"ts": 1789902674.067, "iso": "2026-09-20T07:11:14-0400", "phase": "phase-07", "type": "pr_opened", "task": "T5", "pr": "169"}
+{"ts": 1789903030.746, "iso": "2026-09-20T07:17:10-0400", "phase": "phase-07", "type": "review_pass", "task": "T5", "pr": "169", "reviewer": "4e04d338"}
+{"ts": 1789903030.771, "iso": "2026-09-20T07:17:10-0400", "phase": "phase-07", "type": "pr_merged", "task": "T5", "pr": "169", "sha": "1083681"}
+{"ts": 1789903030.795, "iso": "2026-09-20T07:17:10-0400", "phase": "phase-07", "type": "blocked", "task": "T6", "reason": "human_admin"}

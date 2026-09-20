@@ -5,32 +5,40 @@
   "cap": 2,
   "dag_max_width": 4,
   "file_safe_width_wave1": 2,
-  "baseline": {
-    "sha_at_baseline": "d2340b4c9ae69d77ed88babe137e430bac55357c",
-    "pytest": "1233 passed, 1 skipped",
-    "mypy": "94 source files, 0 issues"
-  },
   "platform_fixes_on_main": [],
   "waves": {
     "1": {
       "dag": ["T1", "T2", "T3", "T4"],
-      "in_flight": [],
-      "in_review": [],
       "merged": ["T4", "T1", "T2", "T3"],
       "closed": true,
-      "lint_sweep": "n/a (no ruff/blocking_lint_rules)",
+      "lint_sweep": "n/a",
       "context_fold": "2026-09-20"
     },
-    "2": {"dag": ["T5"], "in_flight": ["T5"]},
-    "3": {"dag": ["T6"], "in_flight": []}
+    "2": {
+      "dag": ["T5"],
+      "merged": ["T5"],
+      "closed": true,
+      "context_fold": "2026-09-20"
+    },
+    "3": {
+      "dag": ["T6"],
+      "in_flight": [],
+      "blocked": ["T6"]
+    }
   },
   "tasks": {
     "T1": {"title": "pine-generation", "issue": 159, "status": "merged", "pr": 166, "sha": "3321ca0", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
     "T2": {"title": "hermes-teardown", "issue": 160, "status": "merged", "pr": 167, "sha": "e7bd265", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
     "T3": {"title": "ai-package-migration", "issue": 161, "status": "merged", "pr": 168, "sha": "939b2e8", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
     "T4": {"title": "market-brief", "issue": 162, "status": "merged", "pr": 165, "sha": "43c4a6f", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
-    "T5": {"title": "analyze-command", "issue": 163, "status": "dispatched", "track": "full", "role": "critical", "wave": 2, "depends_on": ["T1", "T3", "T4"]},
-    "T6": {"title": "phase-07-smoke", "issue": 164, "status": "pending", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual"}
+    "T5": {"title": "analyze-command", "issue": 163, "status": "merged", "pr": 169, "sha": "1083681", "track": "full", "role": "critical", "wave": 2, "depends_on": ["T1", "T3", "T4"]},
+    "T6": {"title": "phase-07-smoke", "issue": 164, "status": "blocked-on-human", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual"}
   },
-  "summary": "Wave 1 closed (T1–T4 merged). T3 #168 on main. T5 dispatched. T6 waits on T5."
+  "human_admin_batch": [
+    "Live LLM_API_KEY for fathom analyze e2e vs demo store",
+    "TradingView paste of analyze Pine on >=3 candidates across >=2 instruments",
+    "fathom execute --dry-run on demo (boundary survived rename)",
+    "Coordinator/operator: redraw docs/product/architecture.md (T2 AC 4) and record walk in docs/phases/phase-07/results.md"
+  ],
+  "summary": "All auto code tasks merged (T1–T5). T6 smoke/stack-assembly parked blocked-on-human (#164)."
 }

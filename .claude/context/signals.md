@@ -342,6 +342,17 @@ are caller-computed with `TIMEFRAME_BAR_LENGTH` still in `cli.py` until T5 moves
 `signals/timeframes.py`. `Store.latest_watchlist_run_ts()` is the analysis join key;
 `load_latest_analysis` is T5.
 
+## phase-07 T5 analyze (2026-09-20)
+
+`fathom analyze` is the order-free trade-time orchestrator (`signals/analyze.py`).
+`TIMEFRAME_BAR_LENGTH` lives in `signals/timeframes.py` (INV-21 single site).
+`analysis_log` is append-only; `load_latest_analysis(watchlist_run=)` returns rows
+only when the latest run's `watchlist_ts` matches (join source for standalone
+`fathom pine`). Phase-09: insert `record_news_risk_verdict` immediately after
+`news_risk_check`, before `narrate`; skip when `settings.env == "live"`.
+Do not write `veto_ledger` in this phase.
+
+
 
 ## P3-T-04 — 2026-05-29 (feat/p3-T-04-limits)
 

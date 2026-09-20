@@ -439,3 +439,7 @@ no AI/analysis surface may invoke execution; order authority is operator-run
 `fathom execute`. Pretrade imports `from ai.pretrade_check import OpenAICompatClient, pretrade_check`.
 T-08 retired; remaining operator gates T-11 → T-06 → T-05.
 
+`fathom analyze` (T5): scan → session brief → news-risk veto → narration → Pine.
+Clipboard stays in the CLI handler. `--instruments`/`--timeframes` pass through to `run_scan`.
+
+

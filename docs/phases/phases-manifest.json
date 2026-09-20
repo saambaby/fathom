@@ -89,7 +89,7 @@
       "status": "in_progress",
       "doc": "phase-07/phase.md",
       "state": "phase-07/orchestration-state.json",
-      "outcome": "Taskgraph approved 2026-09-20; Wave 1 dispatching (file-safe {T1,T4})."
+      "outcome": "T1–T5 merged (#166,#167,#168,#165,#169). Open: T6 smoke/acceptance walk (#164) blocked-on-human."
     },
     {
       "id": "phase-08",

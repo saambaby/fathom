@@ -386,5 +386,6 @@ row-count ACs). Same DB file the calendar writer uses.
 ## phase-07 T1 (2026-09-20)
 
 `Store.latest_watchlist_run_ts() -> str | None` is `SELECT MAX(run_timestamp) FROM watchlist`
-(RFC-3339 TEXT join key). T5 adds append-only `analysis_log` + `load_latest_analysis(watchlist_run=)`.
+(RFC-3339 TEXT join key). T5 adds append-only `analysis_log` +
+`load_latest_analysis(watchlist_run=)` (match-or-empty). No UPDATE path (INV-22).
 
