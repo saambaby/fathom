@@ -1,15 +1,15 @@
 """Deviation monitor delivery layer — DiscordWebhookClient + Alerter (P3-T-09).
 
 Turns a ``DeviationEvent`` (from ``monitoring/watcher.py``) into a one-line
-Discord alert posted directly to ``DISCORD_WEBHOOK_URL``.  This is the same
-channel the Phase 2 watchlist uses (DRIFT-06 resolution: the monitor is a
-standalone Python process, not a Hermes job — it posts directly via
-``DiscordWebhookClient``, no Hermes gateway).
+Discord alert posted directly to ``DISCORD_WEBHOOK_URL``.  Watchlist delivery
+is retired (phase-07); this webhook is deviation alerts only.  The monitor is a
+standalone Python process and posts via ``DiscordWebhookClient`` (no
+orchestration gateway).
 
 Invariants
 ----------
 * **INV-01** — outbound notification only; this module exposes no order /
-  execution capability and is NOT registered as a Hermes tool.  The Alerter
+  execution capability.  The Alerter
   sends a Discord message and nothing else.
 * **INV-03** — every alert contains a UTC RFC 3339 timestamp; ``created_at``
   is formatted with ``Z`` suffix.

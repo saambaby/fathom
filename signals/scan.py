@@ -23,7 +23,7 @@ risk placement modules are unreachable from this module.
 INV-03: all timestamps UTC RFC 3339 (``datetime.now(timezone.utc)``).
 INV-08: OANDA token / account ID never logged.
 INV-10: empty approved-set → empty watchlist, no exception.
-INV-13: returns ``Candidate[]`` — the frozen Hermes-facing wire contract.
+INV-13: returns ``Candidate[]`` — the frozen wire contract.
 """
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ def run_scan(
     INV-10: an empty approved-set is a valid result; ``[]`` is returned, not an
         exception.
     INV-13: the returned objects are ``Candidate`` instances (the frozen
-        Hermes-facing wire contract).
+        wire contract).
     """
     run_dt = datetime.now(tz=timezone.utc)
     _log.info("run_scan started at %s", run_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))

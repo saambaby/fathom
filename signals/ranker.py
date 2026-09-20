@@ -7,8 +7,8 @@ load-bearing contracts that the whole of Phase 2 builds on:
 * **INV-13 — the ``Candidate`` wire contract.**  ``Candidate`` is a flat
   (non-nested) pydantic model.  Its field names (snake_case), types, and shape
   are frozen: a ``fathom watchlist`` JSON response is always a JSON array of
-  ``Candidate`` objects serialised by this model, and the Hermes job, charts,
-  narration, and the portfolio layer all build against this exact shape.  A
+  ``Candidate`` objects serialised by this model, and the portfolio layer,
+  CLI, narration, pine renderer, and admin panel all build against this exact shape.  A
   serialisation round-trip test pins the shape (see ``tests/test_ranker.py``).
 
 * **INV-10 — the approved-set gate.**  ``Ranker`` only emits candidates for
@@ -83,12 +83,13 @@ EVAL_LOOKBACK_BARS: int = 400
 
 
 class Candidate(BaseModel):
-    """The frozen Hermes-facing wire contract (INV-13).
+    """The frozen Candidate wire contract (INV-13).
 
     Flat, snake_case, no nested ``signal`` object — the relevant ``Signal``
     fields are flattened so the ``fathom watchlist`` JSON is flat for
-    Hermes/Discord.  Field names, types, and shape are frozen; a change is a
-    breaking change to the Hermes integration and must be treated as an
+    live consumers (portfolio, CLI, narration, pine, panel).  Field names,
+    types, and shape are frozen; a change is a
+    breaking change to this wire contract and must be treated as an
     amendment to INV-13.
 
     Fields (exactly the INV-13 table):
@@ -139,7 +140,7 @@ class Candidate(BaseModel):
 # injected so the ranker is fully testable with mocks and so a later task can
 # wire the real sources without touching the pipeline.  Defaults are
 # permissive-but-honest: with no live spread feed available we cannot prove a
-# spread breach, so the default passes (the Hermes Claude layer is the finer
+# spread breach, so the default passes (the LLM news-risk layer is the finer
 # veto on survivors).  Both hooks must return a bool.
 
 

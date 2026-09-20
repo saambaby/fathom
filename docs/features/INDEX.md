@@ -44,15 +44,15 @@ One row per feature. Scannable in a single read — the cross-feature-consistenc
 |---|---|---|---|
 | signal-ranker | gate (INV-10) → filter → news → conflict → rank (by oos_sharpe_mean); emits the pinned `Candidate` (INV-13) | [signal-ranker.md](signal-ranker.md) | ready |
 | portfolio-limits | correlation-aware exposure, per-currency + max-concurrent caps | [portfolio-limits.md](portfolio-limits.md) | ready |
-| chart-generation | candle chart + entry/stop/target overlays → PNG (matplotlib) | [chart-generation.md](chart-generation.md) | ready |
+| chart-generation | candle chart + entry/stop/target overlays → PNG (matplotlib) | [chart-generation.md](chart-generation.md) | retired (phase-07) |
 | news-risk-assessment | Claude `{event_risk,reason,suggest_action}` model + validator (INV-02, malformed→skip) | [news-risk-assessment.md](news-risk-assessment.md) | ready |
 | watchlist-narration | Claude one-line rationale + deterministic fallback (cosmetic, NOT INV-02) | [watchlist-narration.md](watchlist-narration.md) | ready |
-| cli-commands | `fathom scan \| watchlist \| chart` (Hermes tools; the Hermes boundary) | [cli-commands.md](cli-commands.md) | ready |
-| hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | ready |
+| cli-commands | `fathom scan \| watchlist` (operator CLI; order authority stays on `fathom execute`) | [cli-commands.md](cli-commands.md) | ready |
+| hermes-job-definitions | plain-English daily Hermes job → Discord (configured not coded; capstone, INV-01) | [hermes-job-definitions.md](hermes-job-definitions.md) | retired (phase-07) |
 
 ## phase-03 — risk, execution & monitoring, demo only (specs ready; cross-spec audit passed 2026-05-29)
 
-Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`, never a Hermes tool). See [phase-3.md](../phases/phase-03/phase.md).
+Maps to product-spec Phase 4. The phase where Fathom gains order authority — kept on the deterministic side of INV-01 (operator-run `fathom execute`). See [phase-3.md](../phases/phase-03/phase.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
@@ -63,7 +63,7 @@ Maps to product-spec Phase 4. The phase where Fathom gains order authority — k
 | order-placement | atomic bracket submit to v20 practice; client-id idempotency; retries; slippage capture (INV-04/07/09) | [order-placement.md](order-placement.md) | ready |
 | reconciliation | broker-vs-db; broker is source of truth; startup + periodic | [reconciliation.md](reconciliation.md) | ready |
 | deviation-monitor | always-on adverse-path/slippage/vol/feed-health detection on open positions | [deviation-monitor.md](deviation-monitor.md) | ready |
-| monitor-alerts | format + deliver `DeviationEvent` to Discord via Hermes gateway; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
+| monitor-alerts | format + deliver `DeviationEvent` to Discord webhook; durable deviation log | [monitor-alerts.md](monitor-alerts.md) | ready |
 | execution-cli | `fathom execute <candidate>` operator join (the INV-01 enforcement point); `positions`/`reconcile` helpers | [execution-cli.md](execution-cli.md) | ready |
 
 ## phase-04 — admin panel & hardening, demo only (specs ready; cross-spec audit passed 2026-05-29)

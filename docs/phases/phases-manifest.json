@@ -34,11 +34,10 @@
       "id": "phase-02",
       "name": "Signal ranker -> watchlist, portfolio limits, charts, news-risk, narration, Hermes jobs",
       "commitment": "Phase N",
-      "status": "in_progress",
+      "status": "completed",
       "doc": "phase-02/phase.md",
       "results": "phase-02/results.md",
-      "outcome": "All 7 code/config tasks merged; Candidate pinned as INV-13.",
-      "open_gate": "P2-T-08 (#59) live Discord acceptance — operator gate, see ../operator-acceptance.md"
+      "outcome": "code merged; Discord watchlist delivery retired before operator acceptance (phase-07 teardown) — acceptance responsibility transfers to the phase-07 pine/analyze walk"
     },
     {
       "id": "phase-03",

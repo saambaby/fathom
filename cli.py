@@ -65,7 +65,7 @@ Phase 3: ``fathom execute`` / ``fathom positions`` / ``fathom reconcile`` (P3-T-
 ------------------------------------------------------------------------------------
 The canonical **INV-01 enforcement point**: ``fathom execute`` is the
 human-run CLI command that turns an approved watchlist candidate into a trade.
-It is NEVER a Hermes tool — execution authority belongs to the operator.
+Order authority lives solely behind this operator-run command (INV-01).
 
 Gate ordering (pretrade → sizing → limits → submit):
 1. Load candidate from the latest persisted watchlist (INV-13).
@@ -80,7 +80,7 @@ submission.  ``--yes`` skips the interactive confirm before a real submit.
 
 ``fathom positions`` and ``fathom reconcile`` are read-only operator helpers.
 
-INV-01: execute/positions/reconcile are NEVER registered as Hermes tools.
+INV-01: execute/positions/reconcile are operator-only; no AI/analysis surface may import or invoke them.
 INV-07: practice endpoint only (INV-09 one-code-path).
 INV-03: all timestamps UTC.
 INV-08: no secret logged.
@@ -114,8 +114,9 @@ from strategies.trend import DonchianBreakout, MACrossover
 
 # ---------------------------------------------------------------------------
 # Phase 3 execution imports (P3-T-10) — module-level for testability.
-# INV-01: these are imported for the operator CLI gate, NEVER registered as
-# Hermes tools.  The Hermes allow-list (scan/watchlist/chart) is unchanged.
+# INV-01: these are imported for the operator CLI gate only.  No AI/analysis
+# surface may import or invoke execution — the retired Hermes tool allow-list
+# (scan/watchlist/chart) is superseded.
 # ---------------------------------------------------------------------------
 # Lazy fallback: these may not be importable in minimal test envs without the
 # full stack installed.  They are only used inside the Phase 3 command
@@ -847,48 +848,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the pbcopy clipboard attempt.",
     )
 
-    # ---- chart --------------------------------------------------------------
-    ch = sub.add_parser(
-        "chart",
-        help="Render a candidate's chart PNG and print its path.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    ch.add_argument(
-        "instrument",
-        help="OANDA instrument identifier, e.g. EUR_USD.",
-    )
-    ch.add_argument(
-        "--timeframe",
-        default="H1",
-        help="Granularity of the candle data to plot.",
-    )
-    ch.add_argument(
-        "--db-path",
-        default="data/fathom.db",
-        help="Path to the SQLite store (candles + watchlist).",
-    )
-    ch.add_argument(
-        "--out-dir",
-        default="charts",
-        help="Directory in which to save the PNG.",
-    )
-    ch.add_argument(
-        "--history-years",
-        type=int,
-        default=1,
-        metavar="N",
-        help="Years of candle history to load for the chart window.",
-    )
-
     # ---- execute ------------------------------------------------------------
-    # INV-01: this subcommand is NEVER registered as a Hermes tool.
-    # The canonical human-operator execution gate (P3-T-10).
+    # INV-01: operator-only execution gate (P3-T-10).
     ex = sub.add_parser(
         "execute",
         help=(
             "Run a watchlist candidate through the full Phase 3 gate "
-            "(pretrade → sizing → limits → submit). INV-01: operator-only, "
-            "never a Hermes tool."
+            "(pretrade → sizing → limits → submit). INV-01: operator-only; "
+            "no AI/analysis surface may invoke this command."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -922,12 +889,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ---- positions ----------------------------------------------------------
-    # INV-01: read-only operator helper; never a Hermes tool.
+    # INV-01: read-only operator helper.
     pos = sub.add_parser(
         "positions",
         help=(
             "Print open Position[] JSON from the store. "
-            "INV-01: operator-only, never a Hermes tool."
+            "INV-01: operator-only."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -938,12 +905,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ---- reconcile ----------------------------------------------------------
-    # INV-01: operator-initiated broker-truth sync; never a Hermes tool.
+    # INV-01: operator-initiated broker-truth sync.
     rec = sub.add_parser(
         "reconcile",
         help=(
             "Run one reconciliation pass against the OANDA broker and print "
-            "the ReconcileReport. INV-01: operator-only, never a Hermes tool."
+            "the ReconcileReport. INV-01: operator-only."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1231,7 +1198,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         _log.info("fathom scan finished at %s. Watchlist is empty.", _utc_now_rfc3339())
         return 0
 
-    # Print Candidate[] JSON to stdout (the Hermes-facing wire contract, INV-13).
+    # Print Candidate[] JSON to stdout (the frozen wire contract, INV-13).
     output = json.dumps(
         [c.model_dump() for c in candidates],
         indent=2,
@@ -1441,105 +1408,11 @@ def cmd_pine(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# chart command
-# ---------------------------------------------------------------------------
-
-
-def cmd_chart(args: argparse.Namespace) -> int:
-    """Execute the ``fathom chart <instrument>`` command.
-
-    Reads the latest watchlist entry for ``<instrument>`` (optionally filtered
-    by ``--timeframe``), loads its candles, renders a PNG via
-    ``render_candidate_chart``, and prints the PNG path to stdout.
-
-    No live HTTP — reads from the SQLite store (candles + watchlist).
-    """
-    _log.info("fathom chart started at %s", _utc_now_rfc3339())
-
-    instrument: str = args.instrument
-    timeframe: str = args.timeframe
-    db_path: str = args.db_path
-    out_dir: str = args.out_dir
-
-    from signals.charts import render_candidate_chart
-    from signals.ranker import Candidate
-
-    store = Store(db_path)
-    try:
-        rows = store.load_watchlist()
-    finally:
-        store.close()
-
-    # Find the matching candidate from the latest watchlist run.
-    matching = [
-        r for r in rows
-        if r["instrument"] == instrument and r["timeframe"] == timeframe
-    ]
-    if not matching:
-        _log.error(
-            "No watchlist entry found for instrument=%r timeframe=%r "
-            "(run 'fathom scan' first, or check --timeframe).",
-            instrument,
-            timeframe,
-        )
-        print(
-            f"No watchlist entry for {instrument}/{timeframe}. "
-            "Run 'fathom scan' first.",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Use the first (highest-ranked) matching candidate.
-    candidate = Candidate(**matching[0])
-
-    # Load candles for the chart window.
-    start_chart, end_chart = _build_date_range(args.history_years)
-    store2 = Store(db_path)
-    try:
-        candles = store2.load_candles(
-            instrument=instrument,
-            granularity=timeframe,
-            start=start_chart,
-            end=end_chart,
-        )
-    finally:
-        store2.close()
-
-    if candles.empty:
-        _log.error(
-            "No candles in store for %s/%s. "
-            "Run 'fathom scan' (without --dry-run) first.",
-            instrument,
-            timeframe,
-        )
-        print(
-            f"No candles in store for {instrument}/{timeframe}.",
-            file=sys.stderr,
-        )
-        return 1
-
-    out_path = render_candidate_chart(
-        candidate=candidate,
-        candles=candles,
-        out_dir=out_dir,
-    )
-    # Print the PNG path to stdout — the caller/Hermes reads it.
-    print(out_path)
-
-    _log.info(
-        "fathom chart finished at %s. PNG: %s",
-        _utc_now_rfc3339(),
-        out_path,
-    )
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # Phase 3 — execute, positions, reconcile commands (P3-T-10)
 # ---------------------------------------------------------------------------
-# INV-01: these three subcommands are operator-only CLI commands.  They are
-# NEVER registered as Hermes tools.  The Phase 2 daily.md allow-list is
-# scan/watchlist/chart and remains unchanged.
+# INV-01: these three subcommands are operator-only.  No AI/analysis surface
+# may import or invoke them.  The retired Hermes job allow-list
+# (scan/watchlist/chart) and daily.md are superseded.
 #
 # Gate ordering for ``execute`` (exactly as specced):
 #   1. Load candidate from latest watchlist (INV-13).
@@ -1755,7 +1628,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
     """Execute the ``fathom execute <candidate-ref>`` command.
 
     Phase 3 gate (P3-T-10) — the canonical INV-01 enforcement point.
-    This command is NEVER a Hermes tool.
+    Operator-only; no AI/analysis surface may invoke this command.
 
     Gate ordering: load → reconcile → pretrade → sizing → limits → submit.
 
@@ -2231,7 +2104,7 @@ def cmd_positions(args: argparse.Namespace) -> int:
     Prints the store's open ``Position[]`` as JSON (INV-14 shape).
     No live HTTP — pure DB read.
 
-    INV-01: never a Hermes tool.
+    INV-01: operator-only.
     """
     _log.info("fathom positions started at %s.", _utc_now_rfc3339())
 
@@ -2274,7 +2147,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     Runs one broker-truth reconciliation pass and prints the
     ``ReconcileReport`` as JSON.
 
-    INV-01: never a Hermes tool.
+    INV-01: operator-only.
     INV-07: practice endpoint only (settings.env).
     INV-08: no token logged.
     INV-03: all timestamps UTC.
@@ -2446,8 +2319,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_watchlist(args)
     if args.command == "pine":
         return cmd_pine(args)
-    if args.command == "chart":
-        return cmd_chart(args)
     if args.command == "execute":
         return cmd_execute(args)
     if args.command == "positions":
