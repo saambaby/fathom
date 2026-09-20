@@ -50,9 +50,7 @@ from typing import Any, Literal, Optional, Protocol, Sequence
 
 from pydantic import BaseModel, ValidationError
 
-# Current path (T3 has not renamed yet). Importing here works until the
-# package move; T3 must not touch this file.
-from hermes_integration.pretrade_check import OpenAICompatClient
+from ai.pretrade_check import OpenAICompatClient
 
 _log = logging.getLogger(__name__)
 

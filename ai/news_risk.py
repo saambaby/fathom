@@ -13,19 +13,25 @@ The asymmetry (INV-02):
     The parser is therefore the safe boundary — wrap everything in
     try/except → skip default, not raise.
 
-No ``anthropic`` SDK dependency (D-P2-3): Claude is invoked Hermes-side.
-This module is fully unit-testable offline.
+``news_risk_check`` is the in-process call on the shared adapter.  The
+parser is unchanged (INV-02).  Offline testability: inject a stub via
+``client``.  No client + no ``LLM_API_KEY`` → skip default, zero network.
 
-INV-08: No secrets, tokens, or API keys are referenced here.
+INV-08: ``LLM_API_KEY`` is never logged.  The adapter holds it privately.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import pathlib
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
+
+from ai.llm_client import OpenAICompatClient, _ClientAdapter
+from signals.ranker import Candidate
 
 _log = logging.getLogger(__name__)
 
@@ -153,3 +159,120 @@ def parse_news_risk(raw: str) -> NewsRiskVerdict:
         return _safe_default()
 
     return verdict
+
+
+# ---------------------------------------------------------------------------
+# Prompt builder
+# ---------------------------------------------------------------------------
+
+_PROMPTS_DIR = pathlib.Path(__file__).parent / "prompts"
+_PROMPT_PATH = _PROMPTS_DIR / "news_risk.md"
+
+
+def _split_instrument(instrument: str) -> tuple[str, str]:
+    """EUR_USD → (EUR, USD).  Unknown shapes still fill both placeholders."""
+    parts = instrument.split("_", 1)
+    base = parts[0] if parts else instrument
+    quote = parts[1] if len(parts) > 1 else ""
+    return base, quote
+
+
+def _build_prompt(
+    candidate: Candidate,
+    calendar_events: str,
+    entry_window_utc: str,
+) -> str:
+    """Render ``prompts/news_risk.md`` with all six placeholders substituted."""
+    template = _PROMPT_PATH.read_text(encoding="utf-8")
+    base, quote = _split_instrument(candidate.instrument)
+    rendered = template.replace("{{instrument}}", candidate.instrument)
+    rendered = rendered.replace("{{base_currency}}", base)
+    rendered = rendered.replace("{{quote_currency}}", quote)
+    rendered = rendered.replace("{{direction}}", candidate.direction)
+    rendered = rendered.replace("{{entry_window_utc}}", entry_window_utc)
+    rendered = rendered.replace("{{calendar_events}}", calendar_events)
+    return rendered
+
+
+# ---------------------------------------------------------------------------
+# news_risk_check — public API (pretrade_check algorithm, INV-02 skip default)
+# ---------------------------------------------------------------------------
+
+
+def news_risk_check(
+    candidate: Candidate,
+    calendar_events: str,
+    entry_window_utc: str,
+    *,
+    client: _ClientAdapter | None = None,
+) -> NewsRiskVerdict:
+    """Run the in-process news-risk LLM call for a ranked ``Candidate``.
+
+    Algorithm (mirrors ``pretrade_check``):
+        1. If no ``client`` is provided and ``LLM_API_KEY`` is not set,
+           return the safe default ``skip`` immediately (offline-safe).
+        2. If no ``client`` is provided and a key is available, build the live
+           client via ``OpenAICompatClient.from_env()``.
+        3. Build the prompt from ``prompts/news_risk.md`` (six placeholders).
+        4. Call ``client.complete(prompt)`` — any transport exception is
+           caught, logged at WARNING, and returns the safe default ``skip``.
+        5. Route the raw response through ``parse_news_risk`` (INV-02).
+
+    Args:
+        candidate: The ranked ``Candidate`` under review.
+        calendar_events: Caller-rendered calendar text (this module does not
+            fetch the store).
+        entry_window_utc: Caller-computed entry window string.
+        client: Injectable adapter.  Pass a stub in tests.
+
+    Returns:
+        A ``NewsRiskVerdict``.  Always ``skip`` on any failure path (INV-02).
+    """
+    if client is None and not os.environ.get("LLM_API_KEY"):
+        _log.warning(
+            "news_risk_check: no client and LLM_API_KEY not set — "
+            "returning safe default skip (INV-02 offline path)"
+        )
+        return _safe_default()
+
+    active_client: _ClientAdapter
+    if client is None:
+        try:
+            from_env_client = OpenAICompatClient.from_env()
+            if from_env_client is None:
+                raise ValueError("LLM_API_KEY not set")
+            active_client = from_env_client
+        except Exception as exc:  # noqa: BLE001 — client construction failure
+            _log.warning(
+                "news_risk_check: failed to initialise live client (%s: %s) — "
+                "returning safe default (INV-02)",
+                type(exc).__name__,
+                exc,
+            )
+            return _safe_default()
+    else:
+        active_client = client
+
+    try:
+        prompt = _build_prompt(candidate, calendar_events, entry_window_utc)
+    except Exception as exc:  # noqa: BLE001 — prompt template missing / IO error
+        _log.warning(
+            "news_risk_check: failed to build prompt (%s: %s) — "
+            "returning safe default (INV-02)",
+            type(exc).__name__,
+            exc,
+        )
+        return _safe_default()
+
+    try:
+        raw = active_client.complete(prompt)
+    except Exception as exc:  # noqa: BLE001 — SDK/network error → safe default
+        _log.warning(
+            "news_risk_check: API call failed (%s: %s) — "
+            "returning safe default (INV-02)",
+            type(exc).__name__,
+            exc,
+        )
+        return _safe_default()
+
+    return parse_news_risk(raw)

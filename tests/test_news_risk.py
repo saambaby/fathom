@@ -1,4 +1,4 @@
-"""Tests for hermes_integration.news_risk — INV-02 enforcement.
+"""Tests for ai.news_risk — INV-02 enforcement.
 
 Coverage:
     - NewsRiskVerdict: valid construction, field access, strict enum rejection.
@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from hermes_integration.news_risk import NewsRiskVerdict, parse_news_risk
+from ai.news_risk import NewsRiskVerdict, news_risk_check, parse_news_risk
+from signals.ranker import Candidate
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -413,12 +416,12 @@ class TestParseNewsRiskLogging:
     """Failures are logged at WARNING; no secrets leak."""
 
     def test_logs_warning_on_invalid_json(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.news_risk"):
+        with caplog.at_level(logging.WARNING, logger="ai.news_risk"):
             parse_news_risk("not json at all")
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
     def test_logs_warning_on_empty(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.news_risk"):
+        with caplog.at_level(logging.WARNING, logger="ai.news_risk"):
             parse_news_risk("")
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
@@ -426,16 +429,160 @@ class TestParseNewsRiskLogging:
         raw = json.dumps(
             {"event_risk": "catastrophic", "reason": "x", "suggest_action": "skip"}
         )
-        with caplog.at_level(logging.WARNING, logger="hermes_integration.news_risk"):
+        with caplog.at_level(logging.WARNING, logger="ai.news_risk"):
             parse_news_risk(raw)
         assert any("safe default" in r.message.lower() for r in caplog.records)
 
     def test_no_secret_token_in_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         """INV-08: no secret values appear in log output."""
         sensitive = "sk-live-VERY_SECRET_TOKEN_12345"
-        with caplog.at_level(logging.DEBUG, logger="hermes_integration.news_risk"):
+        with caplog.at_level(logging.DEBUG, logger="ai.news_risk"):
             parse_news_risk(sensitive)
         for record in caplog.records:
             assert sensitive not in record.message, (
                 "INV-08: a secret token appeared in the log output"
             )
+
+
+# ---------------------------------------------------------------------------
+# news_risk_check — AC 3 (one table: offline / stub placeholders / fail-closed)
+# ---------------------------------------------------------------------------
+
+_CALENDAR_TEXT = "2026-09-20T12:30:00Z USD high NFP"
+_ENTRY_WINDOW = "2026-09-20T10:00:00Z/2026-09-20T14:00:00Z"
+_PLACEHOLDERS = (
+    "{{instrument}}",
+    "{{base_currency}}",
+    "{{quote_currency}}",
+    "{{direction}}",
+    "{{entry_window_utc}}",
+    "{{calendar_events}}",
+)
+
+
+def _candidate(**overrides: Any) -> Candidate:
+    defaults: dict[str, Any] = {
+        "instrument": "EUR_USD",
+        "timeframe": "H1",
+        "strategy_name": "macrossover_10_50",
+        "direction": "LONG",
+        "entry_ref": 1.0850,
+        "stop_distance": 0.0030,
+        "target_distance": 0.0045,
+        "oos_sharpe_mean": 0.42,
+        "quality_score": 0.75,
+        "rank": 1,
+        "spread_ok": True,
+        "session_ok": True,
+        "news_flag": False,
+        "generated_at": "2026-05-29T10:00:00Z",
+    }
+    defaults.update(overrides)
+    return Candidate(**defaults)
+
+
+class _CapturingStub:
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self._raw
+
+
+class _RaisingStub:
+    def complete(self, prompt: str) -> str:  # noqa: ARG002
+        raise RuntimeError("simulated transport error")
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["no_client_no_key", "stub_six_placeholders", "transport_or_parse_failure"],
+)
+def test_news_risk_check_offline_paths(
+    label: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC 3: no-key skip (zero I/O); stub fills six placeholders; failure → skip."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    candidate = _candidate()
+    proceed = json.dumps(
+        {
+            "event_risk": "low",
+            "reason": "quiet calendar",
+            "suggest_action": "proceed",
+        }
+    )
+
+    sock_calls = {"n": 0}
+
+    class _GuardedSocket(socket.socket):
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            sock_calls["n"] += 1
+            raise AssertionError("network I/O on news_risk offline path")
+
+    if label == "no_client_no_key":
+        monkeypatch.setattr(socket, "socket", _GuardedSocket)
+
+        class _NoHttpx:
+            def __init__(self, *args: Any, **kw: Any) -> None:
+                raise AssertionError("httpx Client constructed")
+
+        monkeypatch.setattr("httpx.Client", _NoHttpx)
+        v = news_risk_check(
+            candidate, _CALENDAR_TEXT, _ENTRY_WINDOW, client=None
+        )
+        assert v.suggest_action == "skip"
+        assert v.event_risk == "high"
+        assert sock_calls["n"] == 0
+        return
+
+    if label == "stub_six_placeholders":
+        stub = _CapturingStub(proceed)
+        v = news_risk_check(
+            candidate, _CALENDAR_TEXT, _ENTRY_WINDOW, client=stub
+        )
+        assert v.suggest_action == "proceed"
+        assert stub.prompts, "complete was not called"
+        prompt = stub.prompts[0]
+        for leftover in _PLACEHOLDERS:
+            assert leftover not in prompt
+        assert "EUR_USD" in prompt
+        assert "EUR" in prompt
+        assert "USD" in prompt
+        assert candidate.direction in prompt
+        assert _ENTRY_WINDOW in prompt
+        assert _CALENDAR_TEXT in prompt
+        return
+
+    # transport + parse failure both route to parse_news_risk / skip default
+    transport = news_risk_check(
+        candidate, _CALENDAR_TEXT, _ENTRY_WINDOW, client=_RaisingStub()
+    )
+    parsed = news_risk_check(
+        candidate,
+        _CALENDAR_TEXT,
+        _ENTRY_WINDOW,
+        client=_CapturingStub("not json"),
+    )
+    assert transport.suggest_action == "skip"
+    assert parsed.suggest_action == "skip"
+    assert transport.event_risk == "high"
+    assert parsed.event_risk == "high"
+
+
+def test_news_risk_check_key_absent_from_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC 6: LLM_API_KEY never appears in news_risk_check logs or verdict repr."""
+    secret = "sk-super-secret-news-risk"
+    monkeypatch.setenv("LLM_API_KEY", secret)
+    with caplog.at_level(logging.DEBUG, logger="ai.news_risk"):
+        v = news_risk_check(
+            _candidate(),
+            _CALENDAR_TEXT,
+            _ENTRY_WINDOW,
+            client=_RaisingStub(),
+        )
+    blob = " ".join(r.message for r in caplog.records) + repr(v)
+    assert secret not in blob

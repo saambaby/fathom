@@ -264,7 +264,6 @@ def test_ac6_pine_module_forbidden_imports() -> None:
         "risk",
         "cli",
         "ai",
-        "hermes_integration",
         "httpx",
         "oandapyV20",
         "urllib.request",

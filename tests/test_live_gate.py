@@ -388,7 +388,7 @@ class TestDemoPathUnchanged:
             captured["risk_fraction"] = risk_fraction
             return SizingResult(units=0, risk_amount=0.0, reason="spy stop")
 
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         demo_settings = _settings(env="demo")
 
@@ -423,7 +423,7 @@ class TestLivePathGate:
     def _live_patches(
         self, *, account_id: str = "001-001-1234567-001"
     ) -> tuple["Settings", object]:
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         live_settings = _settings(
             env="live",
@@ -507,7 +507,7 @@ class TestLivePathGate:
         live_settings = _settings(
             env="live", live_trading_enabled=False, oanda_account_id="001-001-1234567-001"
         )
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         submit = MagicMock(name="submit_order")
 
@@ -755,7 +755,7 @@ class TestLiveRequiresPersistedAttestation:
         mock_input.assert_called_once()
 
     def _patches(self) -> "tuple[Settings, object]":
-        from hermes_integration.pretrade_check import PretradeVerdict
+        from ai.pretrade_check import PretradeVerdict
 
         return (
             _settings(

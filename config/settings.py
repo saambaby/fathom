@@ -95,7 +95,7 @@ class Settings(BaseSettings):
 
     #: Model id for the veto call.  Pinned to the cheapest reliable
     #: structured-JSON tier (D-P3-E); must match
-    #: ``hermes_integration.pretrade_check.MODEL``.
+    #: ``ai.llm_client.MODEL``.
     llm_model: str = "gpt-5-nano"
 
     @model_validator(mode="after")
