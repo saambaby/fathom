@@ -966,6 +966,20 @@ class Store:
             )
         return result
 
+    def latest_watchlist_run_ts(self) -> str | None:
+        """Return ``MAX(run_timestamp)`` from ``watchlist`` as stored TEXT.
+
+        The RFC-3339 string is the join key for a later analysis_log read
+        (verbatim; not re-formatted). ``None`` when the table has no rows.
+        """
+        cursor = self._conn.execute(
+            "SELECT MAX(run_timestamp) FROM watchlist"
+        )
+        row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return str(row[0])
+
     # ------------------------------------------------------------------
     # Execution tables (Phase 3 — order-placement persists; reconciliation
     # later updates positions.realized_pl/closed_at).
