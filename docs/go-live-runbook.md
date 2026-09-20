@@ -42,8 +42,8 @@ suggestions; they are the INV-07 prerequisite (see `docs/product/invariants.md`)
 
 ### 1.1 Demo track record requirements
 
-- [ ] **Phase 2 T-08 acceptance closed:** the live Discord alert/watchlist delivery
-  is confirmed working and the operator has recorded the result.
+- [ ] **Phase 2 T-08 superseded:** phase-07 pine/analyze acceptance walk closed
+  (Discord watchlist delivery retired before operator acceptance).
 - [ ] **Phase 3 T-11 acceptance closed:** the live demo-loop (real OANDA demo
   account, real-time execution, real-time monitoring) has run for a sustained
   period with a positive, stable edge recorded.
@@ -65,7 +65,8 @@ suggestions; they are the INV-07 prerequisite (see `docs/product/invariants.md`)
 ### 1.3 Not yet met
 
 **As of this writing, none of the above prerequisites are met.** Phase 3 T-11,
-Phase 2 T-08, and Phase 4 T-06 are all still operator gates. Do not proceed past
+Phase 4 T-06, and the phase-07 pine/analyze walk (T-08 superseded) are all still
+operator gates. Do not proceed past
 this section until every box above is ticked with a dated, signed entry in
 Section 6.
 
@@ -355,7 +356,7 @@ subsequent ramp step. The operator fills this in; nothing is automated.
 Date: YYYY-MM-DD
 Operator: <name>
 Decision: GO | NO-GO | RAMP | STAND-DOWN
-INV-07 prerequisites closed: T-08 [Y/N] · T-11 [Y/N] · T-06 [Y/N]
+INV-07 prerequisites closed: T-08 superseded by pine/analyze [Y/N] · T-11 [Y/N] · T-06 [Y/N]
 fathom preflight output: [paste GO/NO-GO + check summary here]
 Notes: <rationale, observed edge, conditions>
 Signed off by: <reviewer name>
@@ -369,7 +370,7 @@ Signed off by: <reviewer name>
 Date:
 Operator:
 Decision:
-INV-07 prerequisites closed: T-08 [  ] · T-11 [  ] · T-06 [  ]
+INV-07 prerequisites closed: T-08 superseded by pine/analyze [  ] · T-11 [  ] · T-06 [  ]
 fathom preflight output:
 Fill confirmation (fathom positions output):
 scripts/run_monitor.py started at:

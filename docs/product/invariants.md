@@ -5,25 +5,27 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 ---
 
-## INV-01 · Hermes Must Not Place Orders
+## INV-01 · No AI/Analysis Surface May Place Orders
 
-**Rule:** Hermes Agent's autonomous layer ends at producing and delivering the watchlist. It must never directly call order-placement APIs or invoke the execution engine.
+**Rule:** No AI/analysis surface may import or invoke execution — order authority lives solely behind operator-run `fathom execute`.
 
-**Reason:** Hermes is an always-on agent that reads untrusted text from the internet (news feeds, calendar events). That profile must never hold direct order authority. The worst a prompt-injected headline can do is produce a bad *suggestion*; the deterministic execution layer can reject it. It must never produce a bad *trade*.
+**Reason:** Analysis surfaces consume untrusted text (news feeds, calendar events, model output). That profile must never hold direct order authority. The worst a prompt-injected headline can do is produce a bad *suggestion*; the deterministic execution layer can reject it. It must never produce a bad *trade*.
 
-**Enforcement:** Execution engine code must not be callable as a Hermes tool. Order placement lives in `execution/orders.py` and is invoked only by the deterministic execution path, never by a Hermes job.
+**Enforcement:** Execution engine code must not be callable from an AI/analysis package. Order placement lives in `execution/orders.py` and is invoked only by the deterministic execution path (`fathom execute`), never by an analysis module.
+
+**Note:** The retired Hermes job allow-list (scan/watchlist/chart) is superseded; this invariant is package-name-independent.
 
 **Enforcement (always-on UI / monitoring surfaces — added Phase 4):** No always-on or operator-facing read surface (`panel/`, the deviation monitor, any future dashboard) may reach order-placement or risk sizing/placement code — **directly or transitively**. Concretely: `panel/` and `monitoring/` must not import `execution.orders`, `execution.models.build_bracket`, `risk.sizing`, or `risk.limits` placement paths, and must not import `cli` (which carries those at module level). A read-only "refresh/scan" affordance must reach the ranker via an order-free entrypoint (`signals/scan.py::run_scan`), not via `cli.cmd_scan`. Enforced by a **transitive-import boundary test** over the surface's module graph — a UI button that can place a trade is exactly the hazard this invariant exists to prevent.
 
 ---
 
-## INV-02 · All Claude Outputs Feeding Automation Must Be Structured JSON with Safe Defaults
+## INV-02 · All LLM Outputs Feeding Automation Must Be Structured JSON with Safe Defaults
 
-**Rule:** Any Claude output that feeds an automated decision (signal ranking, pre-trade check, event-risk assessment) must be structured JSON, validated against a pydantic model. A malformed, low-confidence, or unparseable response must default to the safe action (skip / reduce size), never to "trade anyway."
+**Rule:** Any LLM output that feeds an automated decision (signal ranking, pre-trade check, event-risk assessment) must be structured JSON, validated against a pydantic model. A malformed, low-confidence, or unparseable response must default to the safe action (skip / reduce size), never to "trade anyway."
 
 **Reason:** Unstructured LLM output is too brittle to trust in automated paths. Validation at the boundary means a bad model response fails safely instead of silently.
 
-**Enforcement:** Every `anthropic` SDK call in the pipeline returns a typed pydantic model. Any parse/validation error → log and default to `suggest_action: skip`.
+**Enforcement:** Every LLM call in the pipeline goes through the OpenAI-compatible adapter and returns a typed pydantic model at a named parse boundary. Any parse/validation error → log and default to `suggest_action: skip`.
 
 ---
 
@@ -131,13 +133,13 @@ Each invariant has a name, the rule, and the reason — the reason is what lets 
 
 ---
 
-## INV-13 · The `Candidate` Model Is the Frozen Hermes-Facing Wire Contract
+## INV-13 · The `Candidate` Model Is the Frozen Wire Contract
 
-**Rule:** `signals/ranker.py`'s `Candidate` pydantic model is the stable output contract of the Phase 2 watchlist pipeline. Its field **names** (snake_case), **types**, and **flat (non-nested) shape** are frozen once the ranker ships. A `fathom watchlist` JSON response is always a JSON array of `Candidate` objects serialised by this model; the Hermes job, charts, narration, and portfolio layer all build against this exact shape. The pinned fields are: `instrument, timeframe, strategy_name, direction, entry_ref, stop_distance, target_distance, oos_sharpe_mean, quality_score, rank, spread_ok, session_ok, news_flag, generated_at` (UTC RFC-3339). Changes to field names/types/shape are **breaking changes to the Hermes integration** and must be treated as an amendment to this invariant.
+**Rule:** `signals/ranker.py`'s `Candidate` pydantic model is the stable output contract of the Phase 2 watchlist pipeline. Its field **names** (snake_case), **types**, and **flat (non-nested) shape** are frozen once the ranker ships. A `fathom watchlist` JSON response is always a JSON array of `Candidate` objects serialised by this model; the portfolio layer, CLI, narration, pine renderer, and admin panel all build against this exact shape. The pinned fields are: `instrument, timeframe, strategy_name, direction, entry_ref, stop_distance, target_distance, oos_sharpe_mean, quality_score, rank, spread_ok, session_ok, news_flag, generated_at` (UTC RFC-3339). Changes to field names/types/shape are **breaking changes to this wire contract** and must be treated as an amendment to this invariant.
 
-**Reason:** `Candidate` is consumed by `portfolio.py`, `charts.py`, `cli.py`, `narration.py`, and the Hermes daily job. Once shipped, a silent field rename ripples across all of them and breaks the Discord watchlist. Freezing the contract (as INV-11 freezes the `Signal` stop/target derivation) makes the dependency explicit and reviewable. Note: `timeframe` is the same dimension the approved-set/DB calls `granularity`; the INV-10 gate join is `signal.timeframe == approved_set.granularity`.
+**Reason:** `Candidate` is consumed by `portfolio.py`, `cli.py`, `narration.py`, `pine.py`, and `panel/`. Once shipped, a silent field rename ripples across all of them. Freezing the contract (as INV-11 freezes the `Signal` stop/target derivation) makes the dependency explicit and reviewable. Note: `timeframe` is the same dimension the approved-set/DB calls `granularity`; the INV-10 gate join is `signal.timeframe == approved_set.granularity`.
 
-**Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `chart-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. `Candidate` sets `model_config = {"frozen": True}` (pydantic v2), so in-process field assignment raises `ValidationError` at runtime, not just at review time; a test (`tests/test_ranker.py::test_candidate_is_frozen`) pins this. Reviewer checks any `Candidate` field change against this invariant.
+**Enforcement:** The field table lives in `docs/features/signal-ranker.md`; `cli-commands`, `pine-generation`, and `watchlist-narration` reference it rather than re-listing fields. A serialisation round-trip test pins the JSON shape. `Candidate` sets `model_config = {"frozen": True}` (pydantic v2), so in-process field assignment raises `ValidationError` at runtime, not just at review time; a test (`tests/test_ranker.py::test_candidate_is_frozen`) pins this. Reviewer checks any `Candidate` field change against this invariant.
 
 ---
 

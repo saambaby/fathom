@@ -1,8 +1,8 @@
 # Fathom
 
 Forex algorithmic trading system — OANDA-based, multi-strategy, demo-first.
-Code is still Hermes-orchestrated; phase-07 specs (ready) make it a standalone
-CLI (`fathom analyze` / `pine`) and tear Hermes/Discord down.
+Standalone CLI (`fathom scan` / `watchlist` / `pine` / `execute`); phase-07
+tears the retired Hermes/Discord watchlist orchestration down.
 
 ---
 
@@ -15,7 +15,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | Doc | What's in it |
 |---|---|
 | [`docs/phases/phases-manifest.json`](docs/phases/phases-manifest.json) | **Start here.** Canonical phase index — id, status, outcome, open gate. The single source of truth for "where are we". |
-| [`docs/operator-acceptance.md`](docs/operator-acceptance.md) | **Resume here.** The 4 remaining operator gates (T-08 → T-11 → T-06 → T-05) as one ordered checklist with exact commands + the credentials you must supply |
+| [`docs/operator-acceptance.md`](docs/operator-acceptance.md) | **Resume here.** The 3 remaining operator gates (T-11 → T-06 → T-05) as one ordered checklist with exact commands + the credentials you must supply |
 | [`docs/product/spec.md`](docs/product/spec.md) | Scope, confirmed decisions, build phases, honest caveats |
 | [`docs/product/architecture.md`](docs/product/architecture.md) | Container diagram, key boundaries, data flows, repo layout, stack |
 | [`docs/product/invariants.md`](docs/product/invariants.md) | INV-01–16 shipped; INV-17–19 reserved (phase-10); INV-20–22 from the 2026-09-01 spec sprint (one LLM adapter, one freshness definition, append-only measurement tables). Advisory LLM sites use `"analysis unavailable"`, not INV-02 skip. |
@@ -33,7 +33,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | `phase-00` | [PoC](docs/phases/phase-00/phase.md) | ✅ completed — 0/36 approved (honest negative) |
 | `phase-01.1` | [research engine](docs/phases/phase-01.1/phase.md) | ✅ completed — 10/72 approved |
 | `phase-01.2` | [live-data groundwork](docs/phases/phase-01.2/phase.md) | ✅ completed — stream + calendar accepted live |
-| `phase-02` | [watchlist → Discord](docs/phases/phase-02/phase.md) | 🔵 in_progress — code merged · ⏳ T-08 operator gate |
+| `phase-02` | [watchlist → Discord](docs/phases/phase-02/phase.md) | ✅ completed — code merged; Discord watchlist delivery retired before operator acceptance (phase-07 teardown) |
 | `phase-03` | [risk, execution & monitoring](docs/phases/phase-03/phase.md) | 🔵 in_progress — 10/10 units merged · ⏳ T-11 operator gate |
 | `phase-04` | [admin panel](docs/phases/phase-04/phase.md) | 🔵 in_progress — 5/5 units merged · ⏳ T-06 operator gate |
 | `phase-05` | [go-live decision](docs/phases/phase-05/phase.md) | ⛔ blocked — guardrails merged · T-05 operator-only + **INV-07-blocked** |
@@ -51,7 +51,7 @@ unit, `docs/reference/` is imported-but-unmaintained.
 
 ## Stack at a Glance
 
-Python 3.11+ · oandapyV20>=0.6 · pydantic>=2 · pydantic-settings>=2 · python-dotenv>=1.0 · pandas>=2.0 · python-dateutil>=2.8 · pyarrow>=14 · httpx>=0.27 · matplotlib>=3.7 · custom event-driven backtest engine · walk-forward validator · Hermes Agent (Nous Research) · OpenAI-compatible LLM adapter over httpx (`LLM_*` env: OpenAI / Groq / NIM / OpenRouter / Ollama) · SQLite→PostgreSQL · Parquet · Streamlit + TW Lightweight Charts
+Python 3.11+ · oandapyV20>=0.6 · pydantic>=2 · pydantic-settings>=2 · python-dotenv>=1.0 · pandas>=2.0 · python-dateutil>=2.8 · pyarrow>=14 · httpx>=0.27 · custom event-driven backtest engine · walk-forward validator · OpenAI-compatible LLM adapter over httpx (`LLM_*` env: OpenAI / Groq / NIM / OpenRouter / Ollama) · SQLite→PostgreSQL · Parquet · Streamlit + TW Lightweight Charts
 
 **Dev deps (optional group):** pytest>=7.4 · mypy>=1.8 · responses>=0.25 (HTTP mock for OANDA unit tests) · hypothesis>=6.0 (property-based tests for the backtest engine — no-look-ahead / fill / cost invariants)
 
@@ -77,10 +77,10 @@ fathom scan                   # refresh candles, rank approved strategies → Po
 fathom watchlist              # output latest persisted watchlist as Candidate[] JSON (INV-13)
 #   fathom watchlist [--db-path PATH]
 
-fathom chart <instrument>     # render candidate chart PNG, print path (Hermes tool)
-#   fathom chart EUR_USD [--timeframe H1] [--db-path PATH] [--out-dir DIR] [--history-years N]
+fathom pine                   # render latest watchlist as Pine Script v6 (stdout + clipboard)
+#   fathom pine [--db-path PATH] [--out FILE] [--no-clipboard]
 
-# Phase 3 (current) — P3-T-10 — INV-01 gate (operator-only, NEVER Hermes tools)
+# Phase 3 (current) — P3-T-10 — INV-01 gate (operator-only)
 fathom execute <candidate-ref>  # run full Phase 3 gate (pretrade → sizing → limits → submit)
 #   fathom execute "EUR_USD:D:BollingerReversion(20,2.0)" [--db-path PATH] [--dry-run] [--yes]
 #   candidate-ref format: instrument:timeframe:strategy_name (must be on latest watchlist)

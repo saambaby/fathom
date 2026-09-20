@@ -12,13 +12,13 @@ Single Python repo (not a monorepo) — "areas" are package directories.
 | `data` | `data/oanda_client.py`, `data/candles.py`, `data/store.py`, `data/stream.py`, `data/calendar.py` | OANDA access, candle fetch/cache, storage, live stream, calendar | partial (PoC: client+candles+store) |
 | `strategies` | `strategies/base.py`, `strategies/_indicators.py`, `strategies/trend.py`, `strategies/mean_reversion.py`, `strategies/momentum.py`, `strategies/breakout.py` | strategy interface + shared indicators (`atr()`) + implementations | partial (PoC: base + trend/MACrossover) |
 | `backtest` | `backtest/engine.py`, `backtest/costs.py`, `backtest/walkforward.py`, `backtest/metrics.py` | event-driven engine, cost model, walk-forward, metrics | shipped (PoC); `costs.py` extended in Phase 1 |
-| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/charts.py`, `signals/correlation.py`, `signals/scan.py` | ranker, portfolio caps, chart PNG; `correlation.py` shared Pearson (Phase 3); `scan.py` = order-free `run_scan` **extracted from `cli.cmd_scan` in Phase 4** | shipped (Phase 2); `correlation.py` P3, `scan.py` P4 |
+| `signals` | `signals/ranker.py`, `signals/portfolio.py`, `signals/correlation.py`, `signals/scan.py` | ranker, portfolio caps; `correlation.py` shared Pearson (Phase 3); `scan.py` = order-free `run_scan` **extracted from `cli.cmd_scan` in Phase 4**. Chart PNG (`signals/charts.py`) retired in phase-07. | shipped (Phase 2); `correlation.py` P3, `scan.py` P4 |
 | `panel` | `panel/app.py`, `panel/data.py` | read-only Streamlit dashboard + view models (charts/equity/blotter/watchlist/deviation log); INV-01 transitive boundary | Phase 4 |
-| `hermes_integration` | `hermes_integration/news_risk.py`, `narration.py`, `pretrade_check.py`, `prompts/`, `jobs/` | Claude response models+validators (INV-02); `pretrade_check.py` = in-process pre-trade veto (Phase 3) | shipped (Phase 2); `pretrade_check.py` new in Phase 3 |
+| `hermes_integration` | `hermes_integration/news_risk.py`, `narration.py`, `pretrade_check.py`, `prompts/` | Claude response models+validators (INV-02); `pretrade_check.py` = in-process pre-trade veto (Phase 3). `jobs/` retired in phase-07. | shipped (Phase 2); `pretrade_check.py` new in Phase 3 |
 | `risk` | `risk/sizing.py`, `risk/limits.py` | stop-derived sizing (INV-05), exposure/correlation caps + daily-loss kill switch | Phase 3 |
 | `execution` | `execution/models.py`, `execution/orders.py`, `execution/reconcile.py` | frozen Order/Fill/Position (INV-14), bracket submit + idempotency (INV-04/15), broker reconciliation (INV-16) | Phase 3 |
 | `monitoring` | `monitoring/watcher.py`, `monitoring/alerts.py` | always-on deviation detection; `DiscordWebhookClient` alert delivery | Phase 3 |
-| `cli` | `cli.py` | `fathom backtest` (P1), `scan\|watchlist\|chart` (P2), `execute\|positions\|reconcile` (P3) | new in Phase 1 |
+| `cli` | `cli.py` | `fathom backtest` (P1), `scan\|watchlist\|pine` (P2/P7), `execute\|positions\|reconcile` (P3) | new in Phase 1 |
 | `scripts` | `scripts/poc_run.py`, `scripts/run_monitor.py` | one-off runners; `run_monitor.py` = always-on monitor entrypoint (Phase 3) | shipped (PoC); monitor new in Phase 3 |
 | `tests` | `tests/`, `tests/integration/` | test suites (per-area files) | shipped (PoC) |
 | _future_ | `panel/` | Phase 4+ (admin panel) | not started |
@@ -58,14 +58,14 @@ Edits to these go through the **coordinator branch** or are **serialized** — n
 
 | Collision | Files | Resolution |
 |---|---|---|
-| `signal-ranker` defines the `Candidate` contract | `signals/ranker.py` | **load-bearing prerequisite** — `Candidate` shape is consumed by portfolio, cli, narration, charts. Ship/lock it first; downstream tasks depend on it. |
+| `signal-ranker` defines the `Candidate` contract | `signals/ranker.py` | **load-bearing prerequisite** — `Candidate` shape is consumed by portfolio, cli, narration, pine, panel. Ship/lock it first; downstream tasks depend on it. |
 | `portfolio-limits` | `signals/portfolio.py` (distinct file from ranker) | parallel-safe with other `signals/` files once `Candidate` is locked; logically sequenced after `signal-ranker`. |
 | `chart-generation` | `signals/charts.py` | distinct file → parallel-safe. New dep `matplotlib` → **coordinator** edits `pyproject.toml` + CLAUDE.md. |
 | `cli-commands` | `cli.py` (shared with Phase 1 `backtest`) | **ONLY Phase 2 task that edits `cli.py`** — no other Phase 2 worker touches it; it's the join point. Depends on ranker+portfolio+charts. |
 | `news-risk-assessment` + `watchlist-narration` | both under `hermes_integration/` but **different files** (`news_risk.py`+`prompts/news_risk.md` vs `narration.py`+`prompts/narration.md`) | parallel-safe (distinct files); `prompts/` dir is shared but the two files within it don't collide. No `anthropic` dep added (D-P2-3). |
-| `hermes-job-definitions` | `hermes_integration/jobs/daily.md` (config, not code) | capstone — depends on cli + both Claude specs; runs last. Its live Discord acceptance is a **manual/human-admin** task (D-P2-5). |
+| `hermes-job-definitions` | `hermes_integration/jobs/daily.md` (config, not code) | **retired (phase-07)** — capstone superseded; acceptance transferred to the pine/analyze walk. |
 
-**Safe-parallel set for Phase 2 (after `signal-ranker` locks the `Candidate` shape):** `{portfolio-limits (portfolio.py)}`, `{chart-generation (charts.py)}`, `{news-risk-assessment (hermes_integration/news_risk.py)}`, `{watchlist-narration (hermes_integration/narration.py)}` run concurrently — distinct files. `cli-commands (cli.py)` is the join (after ranker+portfolio+charts); `hermes-job-definitions` is the capstone (config + manual acceptance). `matplotlib` dep via coordinator.
+**Safe-parallel set for Phase 2 (after `signal-ranker` locks the `Candidate` shape):** `{portfolio-limits (portfolio.py)}`, `{chart-generation (charts.py)}`, `{news-risk-assessment (hermes_integration/news_risk.py)}`, `{watchlist-narration (hermes_integration/narration.py)}` run concurrently — distinct files. `cli-commands (cli.py)` is the join (after ranker+portfolio+charts); `hermes-job-definitions` was the capstone (now retired; acceptance transferred to pine/analyze). `matplotlib` dep via coordinator (removed in phase-07 teardown).
 
 ## Phase 3 dispatch implications (pre-resolved collisions)
 

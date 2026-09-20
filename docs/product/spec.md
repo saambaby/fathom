@@ -12,7 +12,7 @@ Fathom is a Python forex algorithmic trading system that:
 - Pulls and caches market data from OANDA's v20 API
 - Runs a library of quantitative strategies and validates them via rigorous backtesting
 - Generates and ranks trading signal candidates, filtered by spread, session liquidity, and news/event risk
-- Delivers a daily ranked watchlist (with charts and Claude-written rationale) to Discord via Hermes Agent
+- Presents the ranked watchlist on the operator CLI and as TradingView Pine (Discord/Hermes watchlist delivery superseded, phase-07)
 - Executes approved trades on OANDA through a deterministic, risk-gated engine
 - Monitors live positions for deviation and alerts on adverse conditions
 - Presents everything through a self-hosted admin panel
@@ -43,8 +43,8 @@ Fathom is a Python forex algorithmic trading system that:
 - Vectorised prototyping backtester + event-driven validation backtester with full cost modelling
 - Walk-forward analysis and approved-set table
 - Signal scoring, filtering, de-duplication, conflict policy, portfolio correlation limits
-- Hermes integration: CLI commands as tools, chart generation, prompt templates, daily + intraday job definitions
-- Deterministic pre-trade Claude check (via `anthropic` SDK)
+- ~~Hermes integration: CLI commands as tools, chart generation, prompt templates, daily + intraday job definitions~~ **superseded (phase-07)** — standalone CLI (`fathom scan` / `watchlist` / `pine`); analysis is on-demand
+- Deterministic pre-trade LLM check (OpenAI-compatible adapter)
 - Position sizing, exposure limits, daily kill switch — all deterministic Python
 - Execution engine: order placement, bracket stops/targets, idempotency, reconciliation
 - Always-on deviation monitor: adverse path, slippage, volatility spikes, feed health
@@ -70,13 +70,13 @@ Strategy interface + Signal model, four baseline strategies, vectorised prototyp
 
 **Exit criteria:** an honest approved-set table showing which (strategy, pair, timeframe) combos have a real out-of-sample edge.
 
-### Phase 3 — Signals, Ranking & Hermes Integration
-Signal scoring/filtering/conflict policy, portfolio limits, CLI commands (`fathom scan|watchlist|backtest|chart`), chart generation, Hermes prompt templates, daily + intraday job definitions, Hermes wired up delivering watchlist to Discord.
+### Phase 3 — Signals, Ranking & Watchlist (Hermes integration superseded, phase-07)
+Signal scoring/filtering/conflict policy, portfolio limits, CLI commands (`fathom scan|watchlist|backtest|pine`). Chart PNG generation and the Discord/Hermes daily job are **retired**.
 
-**Exit criteria:** a daily ranked watchlist with charts and Claude rationale lands in Discord on schedule.
+**Exit criteria (superseded):** a daily ranked watchlist with charts and Claude rationale landing in Discord is retired; acceptance transfers to the phase-07 pine/analyze walk.
 
 ### Phase 4 — Risk, Execution & Monitoring (demo only)
-Position sizing, risk limits, kill switch, execution engine with brackets and reconciliation (not under Hermes' autonomous discretion — watchlist approval gated), always-on deviation monitor.
+Position sizing, risk limits, kill switch, execution engine with brackets and reconciliation (order authority is operator-run `fathom execute` only — INV-01), always-on deviation monitor.
 
 **Exit criteria:** full loop runs on demo, places bracketed trades through the deterministic gate, alerts on deviation.
 
