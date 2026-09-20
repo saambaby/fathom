@@ -1,0 +1,96 @@
+{
+  "phase": "phase-07",
+  "base": "main",
+  "started_at": "2026-09-20T10:17:00Z",
+  "cap": 2,
+  "dag_max_width": 4,
+  "file_safe_width_wave1": 2,
+  "baseline": {
+    "sha_at_baseline": "d2340b4c9ae69d77ed88babe137e430bac55357c",
+    "pytest": "1233 passed, 1 skipped",
+    "mypy": "94 source files, 0 issues",
+    "install": "uv venv .venv; uv pip install -e '.[dev]'",
+    "health": "import cli OK; import panel.app OK (no long-running listener)"
+  },
+  "platform_fixes_on_main": [],
+  "ci_economics": {
+    "docs_paths_ignore": "unsafe — tests/test_docs_lint.py inventories Markdown",
+    "drop_pull_request_trigger": "blocked: coordinator role-lock cannot edit .github/workflows/ci.yml on main; not a Wave 1 start blocker"
+  },
+  "waves": {
+    "1": {
+      "dag": ["T1", "T2", "T3", "T4"],
+      "in_flight": ["T1", "T4"],
+      "held": ["T2", "T3"],
+      "held_why": "files overlap cli.py (T1/T2/T3) and pyproject.toml (T2/T3); T4 disjoint"
+    },
+    "2": {"dag": ["T5"], "in_flight": []},
+    "3": {"dag": ["T6"], "in_flight": []}
+  },
+  "tasks": {
+    "T1": {
+      "title": "pine-generation",
+      "issue": 159,
+      "status": "dispatched",
+      "role": "mechanical",
+      "track": "full",
+      "wave": 1,
+      "depends_on": [],
+      "worktree": "yes",
+      "files": ["signals/pine.py", "tests/test_pine.py", "data/store.py", "cli.py"]
+    },
+    "T2": {
+      "title": "hermes-teardown",
+      "issue": 160,
+      "status": "pending",
+      "role": "mechanical",
+      "track": "full",
+      "wave": 1,
+      "depends_on": [],
+      "worktree": "coordinator-branch",
+      "held_for": "T1 merge (cli.py serialize)"
+    },
+    "T3": {
+      "title": "ai-package-migration",
+      "issue": 161,
+      "status": "pending",
+      "role": "mechanical",
+      "track": "full",
+      "wave": 1,
+      "depends_on": [],
+      "worktree": "coordinator-branch",
+      "held_for": "T2 merge (shared platform files)"
+    },
+    "T4": {
+      "title": "market-brief",
+      "issue": 162,
+      "status": "dispatched",
+      "role": "mechanical",
+      "track": "full",
+      "wave": 1,
+      "depends_on": [],
+      "worktree": "yes",
+      "files": ["ai/brief.py", "ai/prompts/session.md", "tests/test_brief.py"]
+    },
+    "T5": {
+      "title": "analyze-command",
+      "issue": 163,
+      "status": "pending",
+      "role": "critical",
+      "track": "full",
+      "wave": 2,
+      "depends_on": ["T1", "T3", "T4"]
+    },
+    "T6": {
+      "title": "phase-07-smoke",
+      "issue": 164,
+      "status": "pending",
+      "role": "n/a",
+      "track": "full",
+      "wave": 3,
+      "depends_on": ["T5", "T2"],
+      "verification": "manual"
+    }
+  },
+  "summary": "Kickoff: taskgraph approved; baseline green; issues #159–#164; Wave 1 file-safe dispatch {T1,T4}."
+}

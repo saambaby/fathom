@@ -87,14 +87,16 @@
       "id": "phase-07",
       "name": "Standalone platform — de-Hermes, on-demand AI analyze, Pine output",
       "commitment": "Phase N",
-      "status": "not_started",
-      "doc": "phase-07/phase.md"
+      "status": "in_progress",
+      "doc": "phase-07/phase.md",
+      "state": "phase-07/orchestration-state.json",
+      "outcome": "Taskgraph approved 2026-09-20; Wave 1 dispatching (file-safe {T1,T4})."
     },
     {
       "id": "phase-08",
       "name": "Trader companion commands — review, journal, ask, deviation explainer",
       "commitment": "Phase N",
-      "status": "not_started",
+      "status": "planned",
       "doc": "phase-08/phase.md"
     },
     {

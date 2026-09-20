@@ -1,6 +1,6 @@
 # phase-07 — Standalone platform: de-Hermes, on-demand AI analyze, Pine output
 
-**Status:** not_started
+**Status:** in_progress
 **Commitment level:** Phase N — restructures the operator's daily workflow; ships to the operator immediately.
 **Time horizon:** open — next phase after phase-06 close
 **Depends on:** [`phase-06`](../phase-06/phase.md) (LLM provider adapter merged — WS1; CI merge gate)
