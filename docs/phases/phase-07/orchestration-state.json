@@ -99,5 +99,5 @@
       "verification": "manual"
     }
   },
-  "summary": "Wave 1: T4 #165 and T1 #166 MERGEABLE, both in 8-gate review. T2/T3 held until T1 merge."
+  "summary": "T4 merged via #165 (43c4a6f). T1 #166 still in 8-gate review; T2/T3 held until T1 merge."
 }
