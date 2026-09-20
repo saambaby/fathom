@@ -20,7 +20,9 @@
   "waves": {
     "1": {
       "dag": ["T1", "T2", "T3", "T4"],
-      "in_flight": ["T1", "T4"],
+      "in_flight": [],
+      "in_review": ["T1"],
+      "merged": ["T4"],
       "held": ["T2", "T3"],
       "held_why": "files overlap cli.py (T1/T2/T3) and pyproject.toml (T2/T3); T4 disjoint"
     },
@@ -31,12 +33,14 @@
     "T1": {
       "title": "pine-generation",
       "issue": 159,
-      "status": "dispatched",
+      "status": "in_review",
       "role": "mechanical",
       "track": "full",
       "wave": 1,
       "depends_on": [],
       "worktree": "yes",
+      "pr": 166,
+      "sha": "b254af0",
       "files": ["signals/pine.py", "tests/test_pine.py", "data/store.py", "cli.py"]
     },
     "T2": {
@@ -64,13 +68,16 @@
     "T4": {
       "title": "market-brief",
       "issue": 162,
-      "status": "dispatched",
+      "status": "merged",
       "role": "mechanical",
       "track": "full",
       "wave": 1,
       "depends_on": [],
       "worktree": "yes",
-      "files": ["ai/brief.py", "ai/prompts/session.md", "tests/test_brief.py"]
+      "pr": 165,
+      "sha": "43c4a6f",
+      "files": ["ai/brief.py", "ai/prompts/session.md", "tests/test_brief.py"],
+      "files_extra": ["ai/__init__.py"]
     },
     "T5": {
       "title": "analyze-command",
@@ -92,5 +99,5 @@
       "verification": "manual"
     }
   },
-  "summary": "Kickoff: taskgraph approved; baseline green; issues #159–#164; Wave 1 file-safe dispatch {T1,T4}."
+  "summary": "Wave 1: T4 #165 and T1 #166 MERGEABLE, both in 8-gate review. T2/T3 held until T1 merge."
 }

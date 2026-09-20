@@ -1,3 +1,11 @@
 {"ts": 1789899577.01, "iso": "2026-09-20T06:19:37-0400", "phase": "phase-07", "type": "phase_started", "by": "saambaby", "graph": "docs/phases/phase-07/taskgraph.md"}
 {"ts": 1789899577.038, "iso": "2026-09-20T06:19:37-0400", "phase": "phase-07", "type": "task_dispatched", "task": "T1", "issue": "159", "wave": "1"}
 {"ts": 1789899577.066, "iso": "2026-09-20T06:19:37-0400", "phase": "phase-07", "type": "task_dispatched", "task": "T4", "issue": "162", "wave": "1"}
+{"ts": 1789899626.847, "iso": "2026-09-20T06:20:26-0400", "phase": "phase-07", "type": "task_claimed", "task": "T1"}
+{"ts": 1789899627.32, "iso": "2026-09-20T06:20:27-0400", "phase": "phase-07", "type": "task_claimed", "task": "T4"}
+{"ts": 1789899924.517, "iso": "2026-09-20T06:25:24-0400", "phase": "phase-07", "type": "task_done", "task": "T4", "pr": "165", "sha": "c25e26d"}
+{"ts": 1789899924.544, "iso": "2026-09-20T06:25:24-0400", "phase": "phase-07", "type": "pr_opened", "task": "T4", "pr": "165"}
+{"ts": 1789900058.56, "iso": "2026-09-20T06:27:38-0400", "phase": "phase-07", "type": "task_done", "task": "T1", "pr": "166", "sha": "b254af0"}
+{"ts": 1789900058.591, "iso": "2026-09-20T06:27:38-0400", "phase": "phase-07", "type": "pr_opened", "task": "T1", "pr": "166"}
+{"ts": 1789900175.421, "iso": "2026-09-20T06:29:35-0400", "phase": "phase-07", "type": "review_pass", "task": "T4", "pr": "165", "reviewer": "9d4599db"}
+{"ts": 1789900175.45, "iso": "2026-09-20T06:29:35-0400", "phase": "phase-07", "type": "pr_merged", "task": "T4", "pr": "165", "sha": "43c4a6f"}
