@@ -86,18 +86,18 @@ Maps to product-spec Phase 6. **Go-live safety guardrails only — the live cuto
 | live-trading-gate | defense-in-depth live gate (ENV=live + `live_trading_enabled` + preflight pass + typed confirm) + reduced `live_risk_fraction` (0.10%); pure, default-refuse | [live-trading-gate.md](live-trading-gate.md) | ready |
 | go-live-runbook | the deliberate reviewed cutover procedure (INV-07 prerequisite, gate sequence, small-size start, rollback) — doc/config artifact | [go-live-runbook.md](go-live-runbook.md) | ready |
 
-## phase-07 — standalone platform: de-Hermes, analyze, Pine (specs ready)
+## phase-07 — standalone platform: de-Hermes, analyze, Pine (shipped)
 
-See [phase-07/phase.md](../phases/phase-07/phase.md). Pine generation is the
-riskiest-assumption probe and implements first.
+See [phase-07/phase.md](../phases/phase-07/phase.md) and
+[results.md](../phases/phase-07/results.md).
 
 | Feature | Summary | Spec file | Status |
 |---|---|---|---|
-| pine-generation | watchlist → Pine v6 indicator (level lines + labels, `syminfo.ticker` scoped); clipboard/stdout; deterministic, no LLM | [pine-generation.md](pine-generation.md) | ready |
-| ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | ready |
-| analyze-command | `fathom analyze` on-demand pipeline: scan → brief → veto → narration → Pine; `analysis_log` table; offline fail-safe | [analyze-command.md](analyze-command.md) | ready |
-| market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | ready |
-| hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | ready |
+| pine-generation | watchlist → Pine v6 indicator (level lines + labels, `syminfo.ticker` scoped); clipboard/stdout; deterministic, no LLM | [pine-generation.md](pine-generation.md) | shipped |
+| ai-package-migration | `hermes_integration/` → `ai/`; news-risk + narration LLM calls in-process on `OpenAICompatClient`; parsers/prompts unchanged | [ai-package-migration.md](ai-package-migration.md) | shipped |
+| analyze-command | `fathom analyze` on-demand pipeline: scan → brief → veto → narration → Pine; `analysis_log` table; offline fail-safe | [analyze-command.md](analyze-command.md) | shipped |
+| market-brief | brief + regime tag + session verdict models/prompts; advisory ⇒ fallback-text posture (not INV-02 veto) | [market-brief.md](market-brief.md) | shipped |
+| hermes-teardown | delete chart/PNG + daily job + Discord contract; retire T-08; docs re-baseline | [hermes-teardown.md](hermes-teardown.md) | shipped |
 
 ## phase-08 — trader companion commands (specs ready)
 

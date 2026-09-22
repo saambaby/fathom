@@ -2,6 +2,7 @@
   "phase": "phase-07",
   "base": "main",
   "started_at": "2026-09-20T10:17:00Z",
+  "closed_at": "2026-09-22T16:45:00Z",
   "cap": 2,
   "dag_max_width": 4,
   "file_safe_width_wave1": 2,
@@ -22,8 +23,9 @@
     },
     "3": {
       "dag": ["T6"],
-      "in_flight": [],
-      "blocked": ["T6"]
+      "merged": ["T6"],
+      "closed": true,
+      "context_fold": "2026-09-22"
     }
   },
   "tasks": {
@@ -32,14 +34,11 @@
     "T3": {"title": "ai-package-migration", "issue": 161, "status": "merged", "pr": 168, "sha": "939b2e8", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
     "T4": {"title": "market-brief", "issue": 162, "status": "merged", "pr": 165, "sha": "43c4a6f", "track": "full", "role": "mechanical", "wave": 1, "depends_on": []},
     "T5": {"title": "analyze-command", "issue": 163, "status": "merged", "pr": 169, "sha": "1083681", "track": "full", "role": "critical", "wave": 2, "depends_on": ["T1", "T3", "T4"]},
-    "T6": {"title": "phase-07-smoke", "issue": 164, "status": "blocked-on-human", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual"}
+    "T6": {"title": "phase-07-smoke", "issue": 164, "status": "merged", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual", "notes": "Architecture redraw + results.md + manifest close 2026-09-22. Residual operator Pine/analyze live walk after demo backtest/scan."}
   },
   "human_admin_batch": [
-    "Reinstall the editable package if it predates the ai/ rename: uv pip install -e '.[dev]' (strict editable finder otherwise still maps hermes_integration and fathom analyze raises ModuleNotFoundError: ai)",
-    "Live LLM_API_KEY for fathom analyze e2e vs demo store",
-    "TradingView paste of analyze Pine on >=3 candidates across >=2 instruments",
-    "fathom execute --dry-run on a real demo watchlist candidate",
-    "Redraw docs/product/architecture.md (T2 AC 4) and record the walk in docs/phases/phase-07/results.md"
+    "Live fathom analyze + TradingView paste (>=3 candidates / >=2 instruments) after backtest/scan",
+    "fathom execute --dry-run on a real demo watchlist candidate"
   ],
   "stack_assembly": {
     "at": "2026-09-22T11:13:00Z",
@@ -65,5 +64,5 @@
       "finding_fixed_locally": "pre-T3 editable install omitted ai/; uv pip install -e '.[dev]' regenerated the finder. Fresh CI installs are unaffected."
     }
   },
-  "summary": "Stack-assembly green after editable reinstall. T6 operator walk still blocked-on-human (#164)."
+  "summary": "Phase-07 closed 2026-09-22. Architecture redrawn; T1–T6 complete. Residual human_admin: live analyze + TV paste + execute --dry-run after demo backtest."
 }

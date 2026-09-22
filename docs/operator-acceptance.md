@@ -14,8 +14,10 @@ exact commands and prerequisites, so you can pick up cold.
 ## The 3 gates, in order
 
 > **P2-T-08 superseded:** the daily Discord watchlist gate is retired by phase-07
-> teardown. Acceptance transfers to the phase-07 pine/analyze walk (`fathom pine`,
-> then `fathom analyze` once it ships).
+> teardown. Acceptance transfers to the phase-07 pine/analyze walk (`fathom pine` /
+> `fathom analyze`) — see [`phase-07/results.md`](phases/phase-07/results.md).
+> Engineering for that walk is closed; residual operator paste/live-analyze evidence
+> is recorded there after demo backtest → scan.
 
 | Gate | Issue | Blocks |
 |---|---|---|

@@ -38,8 +38,8 @@ unit, `docs/reference/` is imported-but-unmaintained.
 | `phase-04` | [admin panel](docs/phases/phase-04/phase.md) | 🔵 in_progress — 5/5 units merged · ⏳ T-06 operator gate |
 | `phase-05` | [go-live decision](docs/phases/phase-05/phase.md) | ⛔ blocked — guardrails merged · T-05 operator-only + **INV-07-blocked** |
 | `phase-06` | [WS0: audit fixes, portability, CI](docs/phases/phase-06/phase.md) | 🔵 in_progress — 10/11 merged · open: #143 (blocked on human) |
-| `phase-07` | [standalone CLI: analyze, Pine, de-Hermes](docs/phases/phase-07/phase.md) | 🔵 in_progress — T1–T5 merged · ⏳ T6 operator/smoke walk |
-| `phase-08` | [companion: review, journal, ask](docs/phases/phase-08/phase.md) | ⚪ planned — [taskgraph](docs/phases/phase-08/taskgraph.md) awaiting approval; blocked on phase-07 merge |
+| `phase-07` | [standalone CLI: analyze, Pine, de-Hermes](docs/phases/phase-07/phase.md) | ✅ completed — T1–T5 merged · architecture redrawn · residual Pine/analyze live walk |
+| `phase-08` | [companion: review, journal, ask](docs/phases/phase-08/phase.md) | ⚪ planned — [taskgraph](docs/phases/phase-08/taskgraph.md) awaiting approval |
 | `phase-09` | [veto ledger + counterfactual report](docs/phases/phase-09/phase.md) | ⚪ not_started — **specs ready** |
 | `phase-10` | [AI research loop 10.1–10.5](docs/phases/phase-10/phase.md) | ⚪ not_started — Layer-4 **deferred** to epic kickoff |
 

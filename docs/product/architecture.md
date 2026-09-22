@@ -6,14 +6,14 @@
 graph TD
     subgraph ext["External Systems"]
         OANDA["OANDA v20 API\nREST + HTTP stream"]
-        HERMES["Hermes Agent\nNous Research orchestrator\ncron · memory · Discord gateway"]
-        DISCORD["Discord\nwatchlist + alerts"]
-        CLAUDE_API["Anthropic API\nClaude — pre-trade check"]
+        LLM_API["LLM provider\nOpenAI-compatible (LLM_* env)"]
         CALENDAR["Economic Calendar\n+ News Feed"]
+        TV["TradingView\nhuman dashboard — Pine paste (manual)"]
+        DISCORD["Discord\ndeviation alerts only (webhook)"]
     end
 
-    subgraph fathom["Fathom — Python codebase"]
-        CLI["CLI (cli.py)\nfathom scan|watchlist|backtest|chart"]
+    subgraph fathom["Fathom — standalone CLI"]
+        CLI["cli.py\nfathom analyze | pine | scan | watchlist\nbacktest | execute | positions | reconcile | preflight"]
 
         subgraph data_layer["Data Layer"]
             CLIENT["oanda_client.py\nREST + streaming"]
@@ -41,12 +41,16 @@ graph TD
         subgraph signal_layer["Signal Pipeline"]
             RANKER["ranker.py\nscore · filter · dedup · conflict policy"]
             PORTFOLIO["portfolio.py\ncorrelation + exposure limits"]
+            SCAN["scan.py\norder-free run_scan"]
+            PINE["pine.py\nwatchlist → Pine v6"]
         end
 
-        subgraph hermes_int["Hermes Integration"]
-            PROMPTS["prompts/\nnews-risk + narration templates"]
-            JOBS["jobs/\nHermes job definitions"]
-            PRETRADE["pretrade_check.py\nanthropid SDK · deterministic"]
+        subgraph ai_layer["AI Analysis (ai/)"]
+            BRIEF["brief.py\nregime · market brief · session verdict"]
+            NEWSRISK["news_risk.py\nin-process LLM + INV-02 parse"]
+            NARRATE["narration.py\nadvisory text"]
+            PRETRADE["pretrade_check.py\nin-process pre-trade veto"]
+            LLM_CLIENT["llm_client.py\nOpenAICompatClient (INV-20)"]
         end
 
         subgraph risk_layer["Risk Module"]
@@ -61,7 +65,7 @@ graph TD
 
         subgraph monitor_layer["Monitoring"]
             WATCHER["watcher.py\nalways-on deviation detection"]
-            ALERTS["alerts.py\nDiscord delivery via Hermes"]
+            ALERTS["alerts.py\nDiscordWebhookClient"]
         end
 
         PANEL["panel/app.py\nStreamlit + TW Lightweight Charts\ncharts · blotter · equity · watchlist · deviation log"]
@@ -70,43 +74,59 @@ graph TD
     TRADER(("Trader"))
 
     %% External connections
-    HERMES -->|"calls as tools"| CLI
-    CLI --> RANKER
-    CLI --> CANDLES
-    CLI --> ENGINE
     CLIENT -->|"REST + stream"| OANDA
     STREAM -->|"live ticks"| OANDA
     CALENDAR_MOD -->|"scheduled pull"| CALENDAR
-    PRETRADE -->|"structured JSON"| CLAUDE_API
-    ALERTS -->|"via Hermes gateway"| DISCORD
-    HERMES -->|"delivers watchlist"| DISCORD
+    BRIEF & NEWSRISK & NARRATE & PRETRADE -->|"via LLM_CLIENT"| LLM_API
+    ALERTS -->|"plain webhook"| DISCORD
+    PINE -. "clipboard paste (human)" .-> TV
+    ORDERS -->|"v20 REST"| OANDA
+    RECONCILE -->|"v20 REST"| OANDA
+
+    %% CLI entry
+    CLI --> SCAN
+    CLI --> RANKER
+    CLI --> CANDLES
+    CLI --> ENGINE
+    CLI --> PINE
+    CLI --> BRIEF
+    CLI --> NEWSRISK
+    CLI --> NARRATE
+    CLI --> PRETRADE
+    CLI --> SIZING
+    CLI --> ORDERS
+    CLI --> RECONCILE
 
     %% Internal flows
     CANDLES --> STORE
     STREAM --> STORE
     STORE --> ENGINE
     STORE --> RANKER
+    STORE --> SCAN
+    STORE --> PINE
+    STORE --> PANEL
     BASE --> TREND & MR & MOM & BRK
     TREND & MR & MOM & BRK -->|"Signal objects"| RANKER
     ENGINE --> COSTS
     ENGINE --> WF
     ENGINE --> METRICS
+    SCAN --> RANKER
     RANKER --> PORTFOLIO
-    PORTFOLIO -->|"ranked candidates"| HERMES
-    PORTFOLIO -->|"ranked candidates"| PRETRADE
-    PRETRADE -->|"approved signal"| SIZING
+    PORTFOLIO -->|"ranked candidates"| BRIEF
+    BRIEF --> NEWSRISK --> NARRATE
+    NEWSRISK & NARRATE -->|"analysis_log"| STORE
+    PORTFOLIO -->|"Candidate[]"| PRETRADE
+    PRETRADE -->|"proceed"| SIZING
     SIZING --> LIMITS
     LIMITS -->|"sized order"| ORDERS
-    ORDERS -->|"v20 REST"| OANDA
-    RECONCILE -->|"v20 REST"| OANDA
     STREAM -->|"live feed"| WATCHER
     WATCHER --> ALERTS
-    STORE --> PANEL
     WATCHER --> PANEL
     ORDERS --> STORE
 
     %% User
-    TRADER -->|"reviews watchlist\napproves demo trades"| DISCORD
+    TRADER -->|"fathom analyze / pine / execute"| CLI
+    TRADER -->|"pastes Pine"| TV
     TRADER -->|"monitors"| PANEL
 ```
 
@@ -119,16 +139,16 @@ Load-bearing decisions, numbered and dated. Status: **accepted** (in force) or
 overrides any older prose elsewhere in this doc or in [spec.md](spec.md) that says
 otherwise; the prose is redrawn when the implementing phase lands.
 
-### ADR-001 — Standalone CLI platform; Hermes orchestrator removed
-**Date:** 2026-09-01 · **Status:** accepted — lands in [phase-07](../phases/phase-07/phase.md)
-Fathom becomes a self-contained CLI trading platform. The external Hermes Agent (cron
-orchestration, Claude calls, Discord gateway) is removed; the LLM analysis it performed
-(news-risk veto, narration) moves in-process onto the ADR-002 adapter, and the daily
+### ADR-001 — Standalone CLI platform; external orchestrator removed
+**Date:** 2026-09-01 · **Status:** accepted (implemented in [phase-07](../phases/phase-07/phase.md))
+Fathom is a self-contained CLI trading platform. The retired external Hermes Agent (cron
+orchestration, Discord watchlist gateway) is gone; the LLM analysis it performed
+(news-risk veto, narration) runs in-process on the ADR-002 adapter, and the daily
 scheduled watchlist is replaced by on-demand analysis (ADR-004). INV-01 is unchanged in
 substance — order authority stays behind the operator-only `fathom execute` gate; the
-"Hermes must not place orders" boundary becomes "no AI/analysis surface may import or
-invoke execution". **Supersedes** spec.md Confirmed Decision #1 (Discord-via-Hermes
-delivery) and the Hermes half of Decision #2 and #6.
+boundary is "no AI/analysis surface may import or invoke execution". **Supersedes**
+spec.md Confirmed Decision #1 (Discord-via-Hermes delivery) and the Hermes half of
+Decision #2 and #6.
 
 ### ADR-002 — Provider-agnostic OpenAI-compatible LLM adapter
 **Date:** 2026-08-31 · **Status:** accepted (implemented in phase-06 / Workstream 1)
@@ -136,10 +156,10 @@ All LLM calls go through one `OpenAICompatClient` speaking the OpenAI chat-compl
 wire format over httpx, selected via `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`
 (OpenAI, Groq, NIM, OpenRouter, Ollama, …). No `anthropic` SDK dependency; no
 per-provider code paths. INV-02 parse boundaries with fail-closed safe defaults wrap
-every call.
+every automated call; advisory surfaces use deterministic display fallbacks (INV-20).
 
 ### ADR-003 — TradingView posture: Pine Script out, nothing TradingView-derived in
-**Date:** 2026-09-01 · **Status:** accepted — Pine output lands in [phase-07](../phases/phase-07/phase.md)
+**Date:** 2026-09-01 · **Status:** accepted (implemented in [phase-07](../phases/phase-07/phase.md))
 TradingView has no retail write API; third-party "TradingView MCP" servers are
 ToS-violating scrapers. Therefore **no TradingView-derived data ever enters the automated
 pipeline** (settled in [implementation-plan.md](../implementation-plan.md) Workstream 2),
@@ -149,24 +169,28 @@ charts. This replaces PNG chart rendering as the presentation layer (operator-co
 unused). Execution and market data stay on OANDA v20 exclusively.
 
 ### ADR-004 — On-demand analysis at trade time; no built-in scheduler
-**Date:** 2026-09-01 · **Status:** accepted — lands in [phase-07](../phases/phase-07/phase.md)
+**Date:** 2026-09-01 · **Status:** accepted (implemented in [phase-07](../phases/phase-07/phase.md))
 Analysis runs when the operator sits down to trade — one `fathom analyze` command (scan →
-news-risk → regime tag → market brief → session verdict → narration → Pine) — not on a
-cron schedule, and with no scheduler daemon inside Fathom. Discord watchlist delivery is
-retired with the Hermes job (ADR-001); terminal + TradingView is the delivery surface.
-(The deviation *monitor's* webhook alerting is a separate concern and keeps its channel.)
+session brief / regime tags → news-risk → narration → Pine) — not on a cron schedule, and
+with no scheduler daemon inside Fathom. Discord watchlist delivery is retired (ADR-001);
+terminal + TradingView is the delivery surface. (The deviation *monitor's* webhook
+alerting is a separate concern and keeps its Discord channel.)
 
 ---
 
 ## Key Boundaries
 
-### The Hermes Boundary
-Hermes Agent orchestrates everything up to and including the ranked watchlist. It calls `fathom scan` / `fathom chart` as CLI tools, runs Claude to assess news/event risk and write rationale, and delivers the result to Discord. **Hermes's authority ends at the watchlist.** It never calls the execution engine or places orders. See [INV-01](invariants.md#inv-01--hermes-must-not-place-orders).
+### The AI / Analysis Boundary
+`ai/` (brief, news-risk, narration, pretrade_check) and `signals/analyze` / `signals/pine`
+may rank, annotate, veto, and explain — they **never** import or invoke execution. Order
+authority lives solely behind operator-run `fathom execute`. See
+[INV-01](invariants.md#inv-01--no-aianalysis-surface-may-place-orders).
 
-### The Claude Boundary
-Claude is used in exactly two ways inside the Fathom pipeline:
-1. **News/event-risk assessment** — inside Hermes sessions; produces a structured `{event_risk, reason, suggest_action}` JSON payload per pair.
-2. **Pre-trade sanity check** — a deterministic call via the `anthropic` SDK immediately before order submission; a veto blocks the trade. Both return structured JSON; malformed → safe default (skip). See [INV-02](invariants.md#inv-02--all-claude-outputs-feeding-automation-must-be-structured-json-with-safe-defaults).
+### The LLM Boundary
+LLM calls go through `ai/llm_client.py::OpenAICompatClient` only (INV-20):
+1. **News/event-risk assessment** — in-process; structured `{event_risk, reason, suggest_action}` JSON per candidate; malformed → skip (INV-02).
+2. **Session brief / regime / narration** — advisory; offline or parse failure → deterministic display fallback ("analysis unavailable"), never a trade veto.
+3. **Pre-trade sanity check** — in-process immediately before order submission; veto aborts the trade; malformed → abort (INV-02).
 
 ### The Risk Gate
 Every signal from the ranker passes through `risk/sizing.py` (0.25% equity cap, stop-derived lot size) and `risk/limits.py` (exposure, correlation, daily kill switch) before reaching the execution engine. The gate is deterministic Python, fully unit-tested, and cannot be bypassed. See [INV-04](invariants.md#inv-04--every-trade-has-a-bracket-stop-loss--take-profit) and [INV-05](invariants.md#inv-05--per-trade-risk-capped-at-025-of-equity).
@@ -176,33 +200,35 @@ One code path; two endpoints. The `env: demo | live` switch in config selects th
 
 ---
 
-## Data Flow — Daily Watchlist Run
+## Data Flow — On-demand Analyze (`fathom analyze`)
 
 ```
-Hermes cron trigger
-  → fathom scan
-      → data layer refreshes candles + calendar
-      → strategy library evaluates all approved (strategy, pair, timeframe) combos
-      → signal ranker scores, filters, de-duplicates, applies portfolio limits
-      → returns ranked candidate list
-  → Hermes: Claude assesses news/event risk per candidate, writes rationale
-  → fathom chart <pair> per surviving candidate
-  → Hermes delivers ranked watchlist + charts to Discord
+Operator runs fathom analyze
+  → signals.scan.run_scan (order-free)
+      → refresh candles + calendar as needed
+      → rank approved (strategy, pair, timeframe) combos
+      → PortfolioLimiter → persist watchlist
+  → ai.brief.session_analysis (full watchlist context)
+  → per candidate: ai.news_risk.news_risk_check (INV-02 skip default)
+  → survivors: ai.narration.narrate
+  → append analysis_log rows
+  → signals.pine → stdout + clipboard (paste into TradingView)
 ```
 
-## Data Flow — Trade Execution (demo, Phase 4+)
+Offline (`LLM_API_KEY` unset): zero network; news-risk → skip; advisory surfaces →
+deterministic fallback text.
+
+## Data Flow — Trade Execution (demo)
 
 ```
-Trader approves watchlist entry (on demo)
-  → pretrade_check.py: final Claude sanity check via anthropic SDK
-      → malformed or veto → abort
-  → risk/sizing.py: lot size from stop distance + 0.25% equity cap
-  → risk/limits.py: exposure + correlation + daily-loss checks
-      → any limit breached → reject
-  → execution/orders.py: submit bracket order to OANDA v20 REST
-      → idempotent (client order ID); retries on network error
+Operator: fathom execute <candidate-ref>
+  → load candidate from latest watchlist
+  → fresh reconcile
+  → ai.pretrade_check (INV-02 abort default)
+  → risk/sizing.py → risk/limits.py
+  → execution/orders.py: bracket order to OANDA v20 REST
   → store.py: record fill
-  → monitor/watcher.py: begins tracking against live stream
+  → monitor/watcher.py: track against live stream
 ```
 
 ---
@@ -212,7 +238,7 @@ Trader approves watchlist entry (on demo)
 ```
 fathom/
 ├── CLAUDE.md
-├── cli.py                         # fathom scan|watchlist|backtest|chart
+├── cli.py                         # fathom analyze|pine|scan|watchlist|backtest|execute|…
 ├── pyproject.toml
 ├── .env.example
 ├── config/
@@ -236,11 +262,17 @@ fathom/
 │   └── metrics.py
 ├── signals/
 │   ├── ranker.py
-│   └── portfolio.py
-├── hermes_integration/
-│   ├── prompts/
-│   ├── jobs/
-│   └── pretrade_check.py
+│   ├── portfolio.py
+│   ├── scan.py
+│   ├── analyze.py
+│   └── pine.py
+├── ai/
+│   ├── llm_client.py
+│   ├── brief.py
+│   ├── news_risk.py
+│   ├── narration.py
+│   ├── pretrade_check.py
+│   └── prompts/
 ├── risk/
 │   ├── sizing.py
 │   └── limits.py
@@ -253,11 +285,10 @@ fathom/
 ├── panel/
 │   └── app.py
 ├── docs/
-│   ├── product-spec.md            # scope, decisions, build phases
-│   ├── invariants.md              # non-negotiable cross-cutting rules
-│   ├── architecture-overview.md   # this file
-│   ├── features/INDEX.md          # one-line feature summaries
-│   └── forex-algo-trading-plan.md # original design narrative
+│   ├── product/
+│   ├── features/
+│   ├── phases/
+│   └── reference/
 └── tests/
 ```
 
@@ -267,13 +298,15 @@ fathom/
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Language | Python 3.11+ | Typed (`pydantic`), `structlog` for logging |
+| Language | Python 3.11+ | Typed (`pydantic`), structured logging |
 | OANDA | `oandapyV20` / `httpx` | v20 REST + HTTP streaming (not WebSocket) |
-| Data | `pandas` / `numpy` / `polars` | Parquet via `pyarrow` |
-| Backtest | `backtesting.py` / `vectorbt` + custom event-driven | Prototype → validate |
-| Orchestration | Hermes Agent (Nous Research) | Cron, memory, Discord gateway, Claude routing |
-| LLM | Claude via Hermes + `anthropic` SDK | Hermes for daily reasoning; SDK for pre-trade check |
-| Config + models | `pydantic` v2 | All Signal/Order objects; config validation |
+| Data | `pandas` / `numpy` | Parquet via `pyarrow` |
+| Backtest | custom event-driven engine + walk-forward | Full-cost; no look-ahead |
+| Orchestration | none in-process | Operator CLI only (ADR-001 / ADR-004) |
+| LLM | OpenAI-compatible adapter over httpx | `LLM_*` env; INV-02 / INV-20 |
+| Presentation | Pine Script v6 (stdout + clipboard) | Manual TradingView paste (ADR-003) |
+| Config + models | `pydantic` v2 | All Signal/Order/Candidate objects; config validation |
 | Storage | SQLite → PostgreSQL/TimescaleDB; Parquet | Operational state + candle/tick archive |
 | Admin panel | Streamlit + TradingView Lightweight Charts | Apache 2.0; attribution logo required |
-| Quality | `pytest`, mypy/pyright, CI | Heavy coverage on risk + execution |
+| Alerts | Discord webhook (optional) | Deviation monitor only — not watchlist delivery |
+| Quality | `pytest`, mypy, CI | Heavy coverage on risk + execution + AI parse boundaries |

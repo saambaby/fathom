@@ -1,8 +1,8 @@
 # phase-08 — Trader companion commands: review, journal, ask, deviation explainer
 
-**Status:** not_started
+**Status:** planned — unblocked by phase-07 close; taskgraph awaiting approval
 **Commitment level:** Phase N — ships to the operator immediately as CLI commands on the phase-07 platform (not a throwaway PoC).
-**Time horizon:** open — after [`phase-07`](../phase-07/phase.md) lands `ai/` + the in-process call pattern
+**Time horizon:** open — phase-07 `ai/` + in-process call pattern available
 **Depends on:** [`phase-07`](../phase-07/phase.md) (`ai/llm_client.py::OpenAICompatClient`, prompt-template convention, `signals/timeframes.py` for INV-21)
 **Unlocks:** nothing hard — [`phase-09`](../phase-09/phase.md) is independent (shares the AI surface; journal's `operator_declined` reason strings are aligned with the ledger spec but the ledger is not a substrate)
 

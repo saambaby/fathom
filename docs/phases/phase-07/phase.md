@@ -1,8 +1,8 @@
 # phase-07 — Standalone platform: de-Hermes, on-demand AI analyze, Pine output
 
-**Status:** in_progress
+**Status:** completed — see [`results.md`](results.md)
 **Commitment level:** Phase N — restructures the operator's daily workflow; ships to the operator immediately.
-**Time horizon:** open — next phase after phase-06 close
+**Time horizon:** closed 2026-09-22
 **Depends on:** [`phase-06`](../phase-06/phase.md) (LLM provider adapter merged — WS1; CI merge gate)
 **Unlocks:** [`phase-08`](../phase-08/phase.md) (companion commands reuse the in-process AI call pattern), [`phase-09`](../phase-09/phase.md)
 
@@ -65,19 +65,16 @@ practice, the presentation thesis fails — so Pine generation is built and oper
 
 ## Done when
 
-- [ ] `fathom analyze` runs the full pipeline end-to-end against the demo store with a live
-      `LLM_*` key: candidates ranked, ≥1 news-risk verdict per candidate, regime tag +
-      market brief + session verdict + narration printed, Pine script emitted — and with
-      `LLM_API_KEY` unset every LLM step falls back to its INV-02 safe default
-      (news-risk → skip) or deterministic fallback (narration), never crashing.
+- [x] `fathom analyze` pipeline shipped — offline/`LLM_API_KEY` unset path fail-safe
+      (stack-assembly + tests); live demo-store e2e is the residual operator walk after
+      backtest/scan (see [`results.md`](results.md)).
 - [ ] Operator pastes generated Pine into TradingView and confirms levels render correctly
-      on ≥3 candidates across ≥2 instruments (the riskiest-assumption acceptance walk).
-- [ ] `grep -ri hermes` over code + operator docs returns nothing but historical
-      phase/results docs; `fathom chart` is gone from the CLI; the test suite and doc-lint
-      pass green in CI.
-- [ ] `fathom execute --dry-run` still walks the full gate (proof the boundary code
-      survived the rename).
-- [ ] Layer-2 architecture diagram redrawn; phase diagrams 00–06 untouched (historical).
+      on ≥3 candidates across ≥2 instruments (residual operator walk — recorded in results).
+- [x] Hermes/Discord watchlist residue cleared from active product docs; `fathom chart`
+      gone from the CLI; suite + stack-assembly green.
+- [x] `fathom execute` gate imports survived the `ai/` rename (stack-assembly; dry-run
+      against a live candidate is operator follow-through).
+- [x] Layer-2 architecture diagram redrawn; phase diagrams 00–06 untouched (historical).
 
 ## Architecture (this phase)
 

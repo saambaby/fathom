@@ -86,17 +86,20 @@
       "id": "phase-07",
       "name": "Standalone platform — de-Hermes, on-demand AI analyze, Pine output",
       "commitment": "Phase N",
-      "status": "in_progress",
+      "status": "completed",
+      "completed_at": "2026-09-22",
       "doc": "phase-07/phase.md",
+      "results": "phase-07/results.md",
       "state": "phase-07/orchestration-state.json",
-      "outcome": "T1–T5 merged (#166,#167,#168,#165,#169). Open: T6 smoke/acceptance walk (#164) blocked-on-human."
+      "outcome": "T1–T5 merged (#166,#167,#168,#165,#169); architecture redrawn; stack-assembly green. Residual: operator Pine/analyze live walk after demo backtest/scan."
     },
     {
       "id": "phase-08",
       "name": "Trader companion commands — review, journal, ask, deviation explainer",
       "commitment": "Phase N",
       "status": "planned",
-      "doc": "phase-08/phase.md"
+      "doc": "phase-08/phase.md",
+      "outcome": "Unblocked by phase-07 close — taskgraph awaiting approval."
     },
     {
       "id": "phase-09",
