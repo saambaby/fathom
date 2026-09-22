@@ -35,10 +35,35 @@
     "T6": {"title": "phase-07-smoke", "issue": 164, "status": "blocked-on-human", "track": "full", "role": "n/a", "wave": 3, "depends_on": ["T5", "T2"], "verification": "manual"}
   },
   "human_admin_batch": [
+    "Reinstall the editable package if it predates the ai/ rename: uv pip install -e '.[dev]' (strict editable finder otherwise still maps hermes_integration and fathom analyze raises ModuleNotFoundError: ai)",
     "Live LLM_API_KEY for fathom analyze e2e vs demo store",
     "TradingView paste of analyze Pine on >=3 candidates across >=2 instruments",
-    "fathom execute --dry-run on demo (boundary survived rename)",
-    "Coordinator/operator: redraw docs/product/architecture.md (T2 AC 4) and record walk in docs/phases/phase-07/results.md"
+    "fathom execute --dry-run on a real demo watchlist candidate",
+    "Redraw docs/product/architecture.md (T2 AC 4) and record the walk in docs/phases/phase-07/results.md"
   ],
-  "summary": "All auto code tasks merged (T1–T5). T6 smoke/stack-assembly parked blocked-on-human (#164)."
+  "stack_assembly": {
+    "at": "2026-09-22T11:13:00Z",
+    "verdict": "green",
+    "preflight": {
+      "listeners": "none — CLI entrypoint fathom; no HTTP service, CORS, or auth headers",
+      "env": "LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, ENV, MAX_CANDIDATE_AGE_BARS, DISCORD_WEBHOOK_URL all present in .env.example; no new vars; no build-args",
+      "store": "analysis_log CREATE on Store open; columns match the analyze-command wire table"
+    },
+    "event_flow": {
+      "analysis_log": "single writer data/store.py INSERT called from signals.analyze.run_analysis; consumer fathom pine via load_latest_analysis",
+      "veto_ledger": "not written (phase-09); not a missing consumer this phase",
+      "two_writer": "none"
+    },
+    "workaround_triage": "no P0 workaround phrasing in phase-07 specs or PR bodies",
+    "smoke": {
+      "fathom_help": "pine and analyze present; chart rejected (exit 2)",
+      "pine_missing_db": "exit 1",
+      "pine_empty": "exit 0, compiling no-candidates script",
+      "analyze_dry_run_empty_no_key": "exit 0, INV-10 message, no LLM",
+      "execute_dry_run_no_watchlist": "exit 1, honest 'No watchlist' — gate imports survived",
+      "panel_import": "ok from outside the repo cwd after reinstall",
+      "finding_fixed_locally": "pre-T3 editable install omitted ai/; uv pip install -e '.[dev]' regenerated the finder. Fresh CI installs are unaffected."
+    }
+  },
+  "summary": "Stack-assembly green after editable reinstall. T6 operator walk still blocked-on-human (#164)."
 }
